@@ -10,12 +10,7 @@ readme = "README_track2p_pyrecest_bridge.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
     "numpy",
-    "pyrecest @ git+https://github.com/FlorianPfaff/pyRecEst.git",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8",
+    "pyrecest @ git+https://github.com/FlorianPfaff/PyRecEst.git",
 ]
 
 [project.scripts]
@@ -26,3 +21,9 @@ Repository = "https://github.com/FlorianPfaff/track2p_pyrecest_bridge"
 
 [tool.setuptools]
 py-modules = ["track2p_pyrecest_bridge"]
+
+[tool.poetry]
+requires-poetry = ">=2.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8"
