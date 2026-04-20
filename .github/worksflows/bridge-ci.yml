@@ -1,0 +1,157 @@
+name: Bridge CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/track2p_pyrecest_bridge/**"
+      - "tests/**"
+      - "track2p_pyrecest_bridge.py"
+      - "test_track2p_pyrecest_bridge.py"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - "README.md"
+      - "README_track2p_pyrecest_bridge.md"
+      - ".github/workflows/bridge-ci.yml"
+  pull_request:
+    paths:
+      - "src/track2p_pyrecest_bridge/**"
+      - "tests/**"
+      - "track2p_pyrecest_bridge.py"
+      - "test_track2p_pyrecest_bridge.py"
+      - "pyproject.toml"
+      - "poetry.lock"
+      - "README.md"
+      - "README_track2p_pyrecest_bridge.md"
+      - ".github/workflows/bridge-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests-and-export:
+    name: Tests + export smoke (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pytest
+
+      - name: Run test suite
+        run: |
+          pytest -q tests
+
+      - name: Create synthetic Track2p-style subject
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import numpy as np
+
+          plane_dir = Path("ci_smoke/jm123/2024-05-01_a/data_npy/plane0")
+          plane_dir.mkdir(parents=True, exist_ok=True)
+
+          roi_masks = np.zeros((1, 2, 2), dtype=bool)
+          roi_masks[0, 0, 1] = True
+
+          np.save(plane_dir / "rois.npy", roi_masks)
+          np.save(plane_dir / "F.npy", np.array([[1.0, 2.0, 3.0]], dtype=float))
+          np.save(plane_dir / "fov.npy", np.ones((2, 2), dtype=float))
+          PY
+
+      - name: Run summary command
+        run: |
+          python -m track2p_pyrecest_bridge summary ci_smoke/jm123 --plane plane0 > summary.json
+          cat summary.json
+
+      - name: Run export command
+        run: |
+          python -m track2p_pyrecest_bridge export ci_smoke/jm123 ci_smoke/jm123_plane0.npz --plane plane0 > export-summary.json
+          cat export-summary.json
+
+      - name: Validate exported archive
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          import numpy as np
+
+          summary = json.loads(Path("summary.json").read_text())
+          export_summary = json.loads(Path("export-summary.json").read_text())
+
+          assert summary["n_sessions"] == 1
+          assert export_summary["n_sessions"] == 1
+
+          exported = np.load("ci_smoke/jm123_plane0.npz", allow_pickle=True)
+          required_keys = {
+              "session_0__measurements",
+              "session_0__state_means",
+              "session_0__state_covariances",
+          }
+          missing = required_keys.difference(exported.files)
+          assert not missing, f"missing keys: {sorted(missing)}"
+
+          assert exported["session_0__measurements"].shape == (2, 1)
+          assert exported["session_0__state_means"].shape == (4, 1)
+          assert exported["session_0__state_covariances"].shape == (4, 4, 1)
+
+          print("Archive keys:", sorted(exported.files))
+          PY
+
+      - name: Upload smoke-test artifact
+        if: matrix.python-version == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-smoke-export
+          path: |
+            ci_smoke/jm123_plane0.npz
+            summary.json
+            export-summary.json
+
+  package-smoke:
+    name: Build package and run module entry point
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m build
+
+      - name: Install built wheel without dependency resolution
+        run: |
+          python -m pip install --force-reinstall --no-deps dist/*.whl
+
+      - name: Verify module entry point from built package
+        run: |
+          python -m track2p_pyrecest_bridge --help > /dev/null
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bridge-package-dist
+          path: dist/*
