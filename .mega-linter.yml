@@ -1,0 +1,18 @@
+APPLY_FIXES: all
+
+PRE_COMMANDS:
+  - command: cat /etc/os-release
+  - command: pip install $GITHUB_WORKSPACE/alpine-wheels/*
+    venv: pylint
+
+PYTHON_PYLINT_CONFIG_FILE: LINTER_DEFAULT
+
+DISABLE_LINTERS:
+  - SPELL_CSPELL
+  - PYTHON_PYRIGHT
+  - REPOSITORY_DEVSKIM
+  - REPOSITORY_TRIVY # Reenable as soon as (if?) https://avd.aquasec.com/nvd/2021/cve-2021-29063/ confirms that 1.3.0 is no longer a risk
+  - JSON_JSONLINT # Disable because there is only .devcontainer.json, for which it throws an unwanted warning
+  - MAKEFILE_CHECKMAKE # Not using a Makefile
+  - SPELL_LYCHEE # Takes pretty long
+  - REPOSITORY_GRYPE # Throws false positives
