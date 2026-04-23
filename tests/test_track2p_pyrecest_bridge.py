@@ -210,31 +210,19 @@ def test_find_and_load_track2p_subject_sorts_sessions_and_loads_behavior(tmp_pat
     npt.assert_allclose(sessions[1].plane_data.traces, np.array([[10.0, 11.0, 12.0]]))
 
 
-def test_registered_pairwise_costs_and_association_bundles(tmp_path):  # pylint: disable=too-many-locals
+def test_registered_pairwise_costs_and_association_bundles(  # pylint: disable=too-many-locals
+    tmp_path,
+    registered_pair_masks,
+    write_raw_npy_session,
+):
     subject_dir = tmp_path / "jm314"
-    image_shape = (4, 6)
-
-    ref_masks = np.zeros((2, *image_shape), dtype=bool)
-    ref_masks[0, 0:2, 0:2] = True
-    ref_masks[1, 1:3, 3:5] = True
-
-    mov_masks_raw = np.zeros_like(ref_masks)
-    mov_masks_raw[0, 0:2, 1:3] = True
-    mov_masks_raw[1, 1:3, 4:6] = True
-
-    mov_masks_registered = np.zeros_like(ref_masks)
-    mov_masks_registered[0, 0:2, 0:2] = True
-    mov_masks_registered[1, 1:3, 3:5] = True
+    ref_masks, mov_masks_raw, mov_masks_registered = registered_pair_masks
 
     for session_name, roi_masks, offset in (
         ("2024-05-01_a", ref_masks, 0.0),
         ("2024-05-02_a", mov_masks_raw, 10.0),
     ):
-        plane_dir = subject_dir / session_name / "data_npy" / "plane0"
-        plane_dir.mkdir(parents=True)
-        np.save(plane_dir / "rois.npy", roi_masks)
-        np.save(plane_dir / "F.npy", np.array([[offset, offset + 1], [offset + 2, offset + 3]], dtype=float))
-        np.save(plane_dir / "fov.npy", np.ones(image_shape, dtype=float) * offset)
+        write_raw_npy_session(subject_dir, session_name, roi_masks, offset=offset)
 
     sessions = load_track2p_subject(subject_dir, plane_name="plane0", input_format="auto")
     assert len(sessions) == 2
