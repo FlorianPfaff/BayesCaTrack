@@ -15,6 +15,8 @@ on:
       - "README_track2p_pyrecest_bridge.md"
       - ".github/workflows/bridge-ci.yml"
   pull_request:
+    branches:
+      - main
     paths:
       - "src/track2p_pyrecest_bridge/**"
       - "tests/**"
@@ -38,8 +40,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
-    env:
-      PYTHONPATH: ${{ github.workspace }}/src
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -49,18 +50,29 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install test dependencies
+      - name: Install Poetry
         run: |
           python -m pip install --upgrade pip
-          python -m pip install numpy pytest
+          python -m pip install poetry
+
+      - name: Install dependencies
+        run: |
+          poetry env use "$(which python)"
+          poetry install
 
       - name: Run test suite
         run: |
-          pytest -q tests
+          mkdir -p test-results
+          poetry run python -m pytest \
+            --rootdir . \
+            -q \
+            --strict-config \
+            --junitxml=test-results/junit-py${{ matrix.python-version }}.xml \
+            tests
 
       - name: Create synthetic Track2p-style subject
         run: |
-          python - <<'PY'
+          poetry run python - <<'PY'
           from pathlib import Path
           import numpy as np
 
@@ -77,17 +89,20 @@ jobs:
 
       - name: Run summary command
         run: |
-          python -m track2p_pyrecest_bridge summary ci_smoke/jm123 --plane plane0 > summary.json
+          poetry run python -m track2p_pyrecest_bridge \
+            summary ci_smoke/jm123 --plane plane0 > summary.json
           cat summary.json
 
       - name: Run export command
         run: |
-          python -m track2p_pyrecest_bridge export ci_smoke/jm123 ci_smoke/jm123_plane0.npz --plane plane0 > export-summary.json
+          poetry run python -m track2p_pyrecest_bridge \
+            export ci_smoke/jm123 ci_smoke/jm123_plane0.npz \
+            --plane plane0 > export-summary.json
           cat export-summary.json
 
       - name: Validate exported archive
         run: |
-          python - <<'PY'
+          poetry run python - <<'PY'
           import json
           from pathlib import Path
           import numpy as np
@@ -114,6 +129,13 @@ jobs:
           print("Archive keys:", sorted(exported.files))
           PY
 
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-py${{ matrix.python-version }}
+          path: test-results/junit-py${{ matrix.python-version }}.xml
+
       - name: Upload smoke-test artifact
         if: matrix.python-version == '3.11'
         uses: actions/upload-artifact@v4
@@ -127,6 +149,7 @@ jobs:
   package-smoke:
     name: Build package and run module entry point
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
@@ -142,9 +165,9 @@ jobs:
           python -m pip install build
           python -m build
 
-      - name: Install built wheel without dependency resolution
+      - name: Install built wheel with dependencies
         run: |
-          python -m pip install --force-reinstall --no-deps dist/*.whl
+          python -m pip install --force-reinstall dist/*.whl
 
       - name: Verify module entry point from built package
         run: |
@@ -155,3 +178,25 @@ jobs:
         with:
           name: bridge-package-dist
           path: dist/*
+
+  publish-results:
+    name: Publish unit test results
+    needs:
+      - tests-and-export
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      pull-requests: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: test-results
+
+      - name: Publish test results
+        if: (!cancelled())
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: "test-results/**/*.xml"

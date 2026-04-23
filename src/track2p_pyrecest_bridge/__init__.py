@@ -47,6 +47,7 @@ _SESSION_NAME_PATTERN = re.compile(r"^(?P<session_date>\d{4}-\d{2}-\d{2})(?:_.+)
 
 
 @dataclass(frozen=True)
+# pylint: disable=too-many-instance-attributes
 class CalciumPlaneData:
     """ROI-level representation of one imaging plane from one session."""
 
@@ -62,6 +63,7 @@ class CalciumPlaneData:
     plane_name: str | None = None
     ops: dict[str, Any] | None = None
 
+    # pylint: disable=too-many-branches
     def __post_init__(self) -> None:
         roi_masks = np.asarray(self.roi_masks)
         if roi_masks.ndim != 3:
@@ -194,6 +196,7 @@ class CalciumPlaneData:
         diffs = centroids_self[:, None, :] - centroids_other[None, :, :]
         return np.linalg.norm(diffs, axis=2)
 
+    # pylint: disable=too-many-arguments,too-many-locals
     def build_pairwise_cost_matrix(
         self,
         other: "CalciumPlaneData",
@@ -212,7 +215,7 @@ class CalciumPlaneData:
         large_cost: float = 1.0e6,
         similarity_epsilon: float = 1.0e-6,
         return_components: bool = False,
-    ) -> np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]:
+    ) -> np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]:  # pylint: disable=too-many-arguments,too-many-locals
         """Build a soft ROI-aware association cost matrix.
 
         This method is the critical bridge between longitudinal calcium-imaging
@@ -574,6 +577,7 @@ class Track2pSession:
 
 
 @dataclass(frozen=True)
+# pylint: disable=too-many-instance-attributes
 class SessionAssociationBundle:
     """PyRecEst-ready association inputs for one reference/measurement pair.
 
@@ -604,7 +608,7 @@ class SessionAssociationBundle:
             "pairwise_cost_matrix": self.pairwise_cost_matrix,
         }
 
-
+# pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-statements
 def load_suite2p_plane(
     plane_dir: str | Path,
     *,
@@ -842,7 +846,7 @@ def load_track2p_subject(
 
     return sessions
 
-
+# pylint: disable=too-many-arguments,too-many-locals
 def build_session_pair_association_bundle(
     reference_session: Track2pSession,
     measurement_session: Track2pSession,
@@ -944,7 +948,7 @@ def build_session_pair_association_bundle(
         pairwise_components=pairwise_components,
     )
 
-
+# pylint: disable=too-many-arguments
 def build_consecutive_session_association_bundles(
     sessions: Sequence[Track2pSession],
     *,
@@ -989,7 +993,7 @@ def build_consecutive_session_association_bundles(
 
     return bundles
 
-
+# pylint: disable=too-many-arguments,too-many-locals
 def export_subject_to_npz(
     subject_dir: str | Path,
     output_path: str | Path,
@@ -1220,7 +1224,7 @@ def _pairwise_mask_cosine_similarity(
     )
     return numerator / denominator
 
-
+# pylint: disable=too-many-locals
 def _pairwise_roi_feature_distance(
     reference_plane: CalciumPlaneData,
     measurement_plane: CalciumPlaneData,
@@ -1414,7 +1418,8 @@ def _handle_export(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
-    return int(args._handler(args))
+    handler = getattr(args, "_handler")
+    return int(handler(args))
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -1,6 +1,6 @@
 import json
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 import types
 from pathlib import Path
@@ -62,7 +62,7 @@ def test_calcium_plane_data_centroids_state_moments_and_pyrecest_adapter(monkeyp
     npt.assert_allclose(plane.centroids(order="yx"), np.array([[1.0], [1.0]]))
 
     position_covariances = plane.position_covariances(order="xy", regularization=0.0)
-    expected_position_covariance = np.array([[[0.0], [0.0]], [[0.0], [1.0]]]).reshape(2, 2, 1)
+    expected_position_covariance = np.array([[[0.0], [0.0]], [[0.0], [1.0]]]).reshape((2, 2, 1))
     npt.assert_allclose(position_covariances, expected_position_covariance)
 
     means, covariances = plane.to_constant_velocity_state_moments(
@@ -210,7 +210,7 @@ def test_find_and_load_track2p_subject_sorts_sessions_and_loads_behavior(tmp_pat
     npt.assert_allclose(sessions[1].plane_data.traces, np.array([[10.0, 11.0, 12.0]]))
 
 
-def test_registered_pairwise_costs_and_association_bundles(tmp_path):
+def test_registered_pairwise_costs_and_association_bundles(tmp_path):  # pylint: disable=too-many-locals
     subject_dir = tmp_path / "jm314"
     image_shape = (4, 6)
 
@@ -299,7 +299,7 @@ def test_cli_summary_and_export(tmp_path):
     np.save(plane_dir / "F.npy", np.array([[1.0, 2.0, 3.0]], dtype=float))
     np.save(plane_dir / "fov.npy", np.ones((2, 2), dtype=float))
 
-    summary_proc = subprocess.run(
+    summary_proc = subprocess.run(  # nosec B603
         [sys.executable, "-m", "track2p_pyrecest_bridge", "summary", str(subject_dir)],
         check=True,
         env=MODULE_RUN_ENV,
@@ -311,7 +311,7 @@ def test_cli_summary_and_export(tmp_path):
     assert summary["sessions"][0]["n_rois"] == 1
 
     output_path = tmp_path / "jm123_plane0.npz"
-    export_proc = subprocess.run(
+    export_proc = subprocess.run(  # nosec B603
         [sys.executable, "-m", "track2p_pyrecest_bridge", "export", str(subject_dir), str(output_path)],
         check=True,
         env=MODULE_RUN_ENV,
