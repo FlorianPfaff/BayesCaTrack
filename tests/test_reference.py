@@ -117,7 +117,7 @@ def test_load_aligned_subject_reference_builds_identity_matrix(monkeypatch):
         lambda *args, **kwargs: fake_sessions,
     )
 
-    reference = load_aligned_subject_reference("/tmp/jm039", plane_name="plane0")
+    reference = load_aligned_subject_reference("subject_dir", plane_name="plane0")
 
     npt.assert_array_equal(
         reference.suite2p_indices,
