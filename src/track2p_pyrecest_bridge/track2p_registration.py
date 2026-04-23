@@ -1,3 +1,10 @@
+"""Track2p registration helpers for longitudinal association workflows.
+
+The base package already exposes ROI- and bundle-building primitives. This
+module adds the optional Track2p/elastix registration step needed to express
+later sessions in the reference frame of earlier sessions before association.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,8 +21,15 @@ from track2p_pyrecest_bridge import (
     load_track2p_subject,
 )
 
+__all__ = [
+    "build_registered_subject_association_bundles",
+    "register_consecutive_session_measurement_planes",
+    "register_plane_pair",
+]
+
 
 def _load_track2p_registration_backend() -> tuple[Any, Any]:
+    """Import the optional Track2p elastix registration backend."""
     try:
         from track2p.register.elastix import itk_reg_all_roi, reg_img_elastix
     except ImportError as exc:  # pragma: no cover
@@ -28,6 +42,7 @@ def _load_track2p_registration_backend() -> tuple[Any, Any]:
 def _coerce_registered_roi_masks(
     registered_roi_masks: Any, *, n_rois: int, image_shape: tuple[int, int]
 ) -> np.ndarray:
+    """Normalize registered masks to ``(n_roi, height, width)`` boolean form."""
     registered_roi_masks = np.asarray(registered_roi_masks)
     if registered_roi_masks.shape == (*image_shape, n_rois):
         return np.moveaxis(registered_roi_masks > 0, -1, 0)
@@ -44,6 +59,7 @@ def register_plane_pair(
     *,
     transform_type: str = "affine",
 ) -> CalciumPlaneData:
+    """Register ``moving_plane`` into ``reference_plane``'s coordinate frame."""
     if transform_type not in {"affine", "rigid"}:
         raise ValueError("transform_type must be either 'affine' or 'rigid'")
     if reference_plane.fov is None or moving_plane.fov is None:
@@ -71,6 +87,7 @@ def register_plane_pair(
 def register_consecutive_session_measurement_planes(
     sessions: Sequence[Track2pSession], *, transform_type: str = "affine"
 ) -> list[CalciumPlaneData]:
+    """Register each later session into the preceding session's frame."""
     sessions = list(sessions)
     if len(sessions) < 2:
         return []
@@ -99,6 +116,7 @@ def build_registered_subject_association_bundles(
     return_pairwise_components: bool = True,
     **suite2p_kwargs: Any,
 ) -> list[SessionAssociationBundle]:
+    """Load a subject, register consecutive sessions, and build association bundles."""
     sessions = load_track2p_subject(
         subject_dir,
         plane_name=plane_name,
