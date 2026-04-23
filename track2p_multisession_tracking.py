@@ -43,7 +43,7 @@ from track2p_pyrecest_bridge import (
 
 
 @dataclass(frozen=True)
-class MultisessionTrackingConfig:
+class MultisessionTrackingConfig:  # pylint: disable=too-many-instance-attributes
     """Configuration for global longitudinal neuron tracking."""
 
     max_session_gap: int = 1
@@ -414,7 +414,7 @@ def _subject_load_kwargs(
     return load_kwargs
 
 
-def track_subject_multisession(
+def track_subject_multisession(  # pylint: disable=too-many-arguments
     subject_dir: str | Path,
     *,
     plane_name: str = "plane0",
