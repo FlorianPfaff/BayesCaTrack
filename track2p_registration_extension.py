@@ -197,51 +197,29 @@ def _invert_affine(
     return inverse_matrix, inverse_offset
 
 
-# pylint: disable=too-many-arguments
-def _registration_kwargs(
-    *,
-    order: str,
-    weighted_centroids: bool,
-    registration_model: RegistrationModel,
-    registration_max_cost: float | None,
-    registration_max_iterations: int,
-    registration_tolerance: float,
-    min_matches: int | None,
-    allow_reflection: bool,
-    binarize_registered_masks: bool,
-    registered_mask_threshold: float,
-) -> _RegistrationKwargs:
+def _registration_kwargs(bundle_kwargs: Mapping[str, Any]) -> _RegistrationKwargs:
     return {
-        "order": order,
-        "weighted_centroids": weighted_centroids,
-        "registration_model": registration_model,
-        "registration_max_cost": registration_max_cost,
-        "registration_max_iterations": registration_max_iterations,
-        "registration_tolerance": registration_tolerance,
-        "min_matches": min_matches,
-        "allow_reflection": allow_reflection,
-        "binarize_registered_masks": binarize_registered_masks,
-        "registered_mask_threshold": registered_mask_threshold,
+        "order": bundle_kwargs["order"],
+        "weighted_centroids": bundle_kwargs["weighted_centroids"],
+        "registration_model": bundle_kwargs["registration_model"],
+        "registration_max_cost": bundle_kwargs["registration_max_cost"],
+        "registration_max_iterations": bundle_kwargs["registration_max_iterations"],
+        "registration_tolerance": bundle_kwargs["registration_tolerance"],
+        "min_matches": bundle_kwargs["min_matches"],
+        "allow_reflection": bundle_kwargs["allow_reflection"],
+        "binarize_registered_masks": bundle_kwargs["binarize_registered_masks"],
+        "registered_mask_threshold": bundle_kwargs["registered_mask_threshold"],
     }
 
 
-# pylint: disable=too-many-arguments
-def _association_bundle_kwargs(
-    *,
-    order: str,
-    weighted_centroids: bool,
-    velocity_variance: float,
-    regularization: float,
-    pairwise_cost_kwargs: Mapping[str, Any] | None,
-    return_pairwise_components: bool,
-) -> _AssociationBundleKwargs:
+def _association_bundle_kwargs(bundle_kwargs: Mapping[str, Any]) -> _AssociationBundleKwargs:
     return {
-        "order": order,
-        "weighted_centroids": weighted_centroids,
-        "velocity_variance": velocity_variance,
-        "regularization": regularization,
-        "pairwise_cost_kwargs": pairwise_cost_kwargs,
-        "return_pairwise_components": return_pairwise_components,
+        "order": bundle_kwargs["order"],
+        "weighted_centroids": bundle_kwargs["weighted_centroids"],
+        "velocity_variance": bundle_kwargs["velocity_variance"],
+        "regularization": bundle_kwargs["regularization"],
+        "pairwise_cost_kwargs": bundle_kwargs["pairwise_cost_kwargs"],
+        "return_pairwise_components": bundle_kwargs["return_pairwise_components"],
     }
 
 
@@ -550,26 +528,24 @@ def build_registered_session_pair_association_bundle(
 ) -> RegisteredSessionPairBundle:
     """Register the later session, then build the standard association bundle."""
 
-    registration_kwargs = _registration_kwargs(
-        order=order,
-        weighted_centroids=weighted_centroids,
-        registration_model=registration_model,
-        registration_max_cost=registration_max_cost,
-        registration_max_iterations=registration_max_iterations,
-        registration_tolerance=registration_tolerance,
-        min_matches=min_matches,
-        allow_reflection=allow_reflection,
-        binarize_registered_masks=binarize_registered_masks,
-        registered_mask_threshold=registered_mask_threshold,
-    )
-    association_kwargs = _association_bundle_kwargs(
-        order=order,
-        weighted_centroids=weighted_centroids,
-        velocity_variance=velocity_variance,
-        regularization=regularization,
-        pairwise_cost_kwargs=pairwise_cost_kwargs,
-        return_pairwise_components=return_pairwise_components,
-    )
+    bundle_kwargs: _RegisteredSessionPairKwargs = {
+        "order": order,
+        "weighted_centroids": weighted_centroids,
+        "velocity_variance": velocity_variance,
+        "regularization": regularization,
+        "registration_model": registration_model,
+        "registration_max_cost": registration_max_cost,
+        "registration_max_iterations": registration_max_iterations,
+        "registration_tolerance": registration_tolerance,
+        "min_matches": min_matches,
+        "allow_reflection": allow_reflection,
+        "pairwise_cost_kwargs": pairwise_cost_kwargs,
+        "return_pairwise_components": return_pairwise_components,
+        "binarize_registered_masks": binarize_registered_masks,
+        "registered_mask_threshold": registered_mask_threshold,
+    }
+    registration_kwargs = _registration_kwargs(bundle_kwargs)
+    association_kwargs = _association_bundle_kwargs(bundle_kwargs)
 
     plane_registration = register_measurement_plane_to_reference(
         reference_session.plane_data,
