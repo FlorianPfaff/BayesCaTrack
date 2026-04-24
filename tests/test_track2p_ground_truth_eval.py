@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# jscpd:ignore-start
 import csv
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_PATH = PROJECT_ROOT / "src"
 
 sys.path.insert(0, str(SRC_PATH))
+# jscpd:ignore-end
 
 from track2p_pyrecest_bridge.ground_truth_eval import (  # noqa: E402
     TrackTable,
