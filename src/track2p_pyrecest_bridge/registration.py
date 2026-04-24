@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Registration-aware tracking utilities for ``track2p_pyrecest_bridge``.
 
 The core bridge already knows how to:
@@ -14,6 +12,8 @@ session-to-session transform with PyRecEst point-set registration, warps ROI
 masks into the reference frame, and then delegates to the existing bridge for
 cost-matrix and association-bundle construction.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, TypedDict, Unpack
