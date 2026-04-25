@@ -6,7 +6,7 @@ import types
 import numpy as np
 import pytest
 
-from bayescatrack.association.pyrecest_global_assignment import tracks_to_suite2p_index_matrix
+from bayescatrack.association.pyrecest_global_assignment import session_edge_pairs, tracks_to_suite2p_index_matrix
 from bayescatrack.experiments.track2p_global_assignment_ablation import run_track2p_global_assignment_ablation
 
 
@@ -65,6 +65,17 @@ def _install_fake_multisession_assignment(monkeypatch):
     monkeypatch.setitem(sys.modules, "pyrecest.utils.multisession_assignment", fake_assignment)
 
 
+def test_session_edge_pairs_controls_skip_edges():
+    assert session_edge_pairs(4, max_gap=1) == ((0, 1), (1, 2), (2, 3))
+    assert session_edge_pairs(4, max_gap=2) == ((0, 1), (0, 2), (1, 2), (1, 3), (2, 3))
+    assert session_edge_pairs(1, max_gap=2) == ()
+
+    with pytest.raises(ValueError, match="max_gap"):
+        session_edge_pairs(3, max_gap=0)
+    with pytest.raises(ValueError, match="num_sessions"):
+        session_edge_pairs(-1, max_gap=1)
+
+
 def test_global_assignment_ablation_builds_skip_edges_and_scores(tmp_path, monkeypatch, write_raw_npy_session):
     subject_dir = tmp_path / "jm002"
     _write_subject(subject_dir, write_raw_npy_session)
@@ -81,6 +92,7 @@ def test_global_assignment_ablation_builds_skip_edges_and_scores(tmp_path, monke
     )
 
     assert result.variant == "Same costs + global assignment"
+    assert result.assignment.session_edges == ((0, 1), (0, 2), (1, 2))
     assert result.scores["pairwise_f1"] == pytest.approx(2 / 3)
     assert result.scores["complete_track_f1"] == pytest.approx(2 / 3)
     assert result.scores["complete_tracks"] == 1
