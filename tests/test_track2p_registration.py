@@ -1,8 +1,17 @@
+# jscpd:ignore-start
+import sys
+from pathlib import Path
+
 import numpy as np
 import numpy.testing as npt
 
-from track2p_pyrecest_bridge import CalciumPlaneData, load_track2p_subject
-from track2p_pyrecest_bridge.track2p_registration import (
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_PATH = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_PATH))
+# jscpd:ignore-end
+
+from track2p_pyrecest_bridge import CalciumPlaneData, load_track2p_subject  # noqa: E402
+from track2p_pyrecest_bridge.track2p_registration import (  # noqa: E402
     build_registered_subject_association_bundles,
     register_consecutive_session_measurement_planes,
     register_plane_pair,
