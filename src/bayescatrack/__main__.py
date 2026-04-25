@@ -6,6 +6,6 @@ if __package__ in {None, ""}:  # pragma: no cover
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from track2p_pyrecest_bridge import main
+from bayescatrack.core.bridge import main
 
 raise SystemExit(main())

@@ -46,7 +46,10 @@ filterwarnings = [
 py-version = "3.13"
 fail-under = 10
 ignore = ["CVS"]
-ignored-modules = ["pyrecest.backend", "healpy"]
+ignored-modules = [
+    "pyrecest.backend",
+    "healpy",
+]
 
 [tool.pylint."MESSAGES CONTROL"]
 disable = [

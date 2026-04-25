@@ -1,8 +1,8 @@
 """Ground-truth evaluation helpers for Track2p-style track tables.
 
-This module complements ``track2p_pyrecest_bridge.matching`` by loading
-Track2p-style ground-truth and prediction CSV files and scoring predicted track
-tables with exact full-track and prefix-horizon metrics.
+This module uses BayesCaTrack matching helpers to load Track2p-style ground-truth
+and prediction CSV files and score predicted track tables with exact full-track
+and prefix-horizon metrics.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-from track2p_pyrecest_bridge.matching import build_track_rows_from_matches
+from .matching import build_track_rows_from_matches
 
 _MISSING_VALUE_STRINGS = {"", "na", "nan", "none", "null", "-"}
 _TRACK_ID_HEADERS = {

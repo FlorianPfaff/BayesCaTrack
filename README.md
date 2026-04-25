@@ -1,10 +1,10 @@
 # BayesCaTrack
 
-BayesCaTrack is a recursive Bayesian cell tracking toolkit for Track2p-style and related calcium-imaging datasets. It currently focuses on Track2p / Suite2p data ingestion, ROI representation, registration-aware association costs, Track2p reference evaluation, and PyRecEst-ready exports.
+BayesCaTrack is a recursive Bayesian cell tracking toolkit for Track2p-style and related calcium-imaging datasets. It focuses on Track2p / Suite2p data ingestion, ROI representation, registration-aware association costs, Track2p reference evaluation, and PyRecEst-ready exports.
 
 ## Package layout
 
-The public package now follows this layout:
+The package now has a single public source namespace:
 
 ```text
 bayescatrack/
@@ -19,8 +19,6 @@ bayescatrack/
         track2p.py
   tests/
 ```
-
-During this transition the original `track2p_pyrecest_bridge` implementation remains in the repository as a compatibility backend behind the new `bayescatrack` namespace.
 
 ## What it gives you
 
@@ -115,5 +113,5 @@ scores = score_pairwise_matches(predicted_pairs, reference_pairs)
 ## Notes
 
 - The state layout is `[pos_1, vel_1, pos_2, vel_2]`.
-- The current package transition keeps the original bridge implementation importable while the BayesCaTrack layout is established.
+- BayesCaTrack is the canonical import namespace for the package.
 - `--validate-pyrecest` is useful when you want the export step to fail early if the current environment cannot instantiate the expected PyRecEst classes.

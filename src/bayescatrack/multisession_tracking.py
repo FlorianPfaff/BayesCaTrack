@@ -1,23 +1,15 @@
 #!/usr/bin/env python3
-"""Global multi-session tracking built on top of ``track2p_pyrecest_bridge``.
+"""Global multi-session tracking for BayesCaTrack.
 
-The current bridge repository already does the hard pairwise preprocessing:
-- loading Track2p/Suite2p session folders,
-- reconstructing ROI masks,
-- building ROI-aware pairwise cost matrices, and
-- packaging pairwise association inputs for PyRecEst.
+BayesCaTrack provides the pairwise preprocessing: loading Track2p/Suite2p
+session folders, reconstructing ROI masks, building ROI-aware pairwise cost
+matrices, and packaging pairwise association inputs for PyRecEst.
 
-What is still missing is the bridge layer that turns those pairwise costs into a
-single longitudinal identity assignment across all sessions. This module adds
-that piece while staying external to ``track2p_pyrecest_bridge.py`` so it can be
-used as a small additive patch against the current repository state.
-
-The core design choice is deliberate: registration is treated as an *input* to
-this layer, not as something reimplemented here. Whenever you have later-session
-ROIs already transformed into earlier-session coordinates, pass them via
-``pairwise_measurement_planes_in_reference_frames``. The existing bridge already
-supports this representation through ``CalciumPlaneData.with_replaced_masks`` and
-``build_session_pair_association_bundle``.
+This module turns those pairwise costs into a single longitudinal identity
+assignment across all sessions. Registration is treated as an input to this
+layer, not as something reimplemented here. Whenever you have later-session ROIs
+already transformed into earlier-session coordinates, pass them via
+``pairwise_measurement_planes_in_reference_frames``.
 """
 
 from __future__ import annotations
@@ -32,14 +24,14 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from track2p_pyrecest_bridge import (
+from bayescatrack import (
     CalciumPlaneData,
     SessionAssociationBundle,
     Track2pSession,
-    _suite2p_kwargs_from_args,
     build_session_pair_association_bundle,
     load_track2p_subject,
 )
+from bayescatrack.core._bridge_impl import _suite2p_kwargs_from_args
 
 
 @dataclass(frozen=True)
@@ -76,7 +68,7 @@ class MultisessionTrackingConfig:  # pylint: disable=too-many-instance-attribute
 
 @dataclass(frozen=True)
 class PairwiseTrackingBundle:
-    """Pairwise bridge output annotated with session indices."""
+    """Pairwise association output annotated with session indices."""
 
     source_session_index: int
     target_session_index: int
@@ -335,8 +327,8 @@ def track_sessions_multisession(
 ) -> LongitudinalTrackingResult:
     """Solve the global cross-session identity assignment problem.
 
-    This is the missing step between the current bridge's pairwise ROI-aware
-    costs and a Track2p-style benchmark output.
+    This is the step between BayesCaTrack's pairwise ROI-aware costs and a
+    Track2p-style benchmark output.
     """
 
     sessions = list(sessions)
@@ -546,7 +538,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         "--order",
         default="xy",
         choices=("xy", "yx"),
-        help="Coordinate order used in pairwise bridge computations",
+        help="Coordinate order used in pairwise association computations",
     )
     parser.add_argument(
         "--weighted-centroids",
