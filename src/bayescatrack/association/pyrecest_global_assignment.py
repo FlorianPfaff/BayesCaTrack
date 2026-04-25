@@ -8,7 +8,10 @@ from typing import Any, Literal
 
 import numpy as np
 
-from bayescatrack.association.calibrated_costs import CalibratedAssociationModel, calibrated_cost_matrix_from_bundle
+from bayescatrack.association.calibrated_costs import (
+    CalibratedAssociationModel,
+    calibrated_cost_matrix_from_bundle,
+)
 from bayescatrack.core.bridge import Track2pSession, build_session_pair_association_bundle
 from bayescatrack.track2p_registration import register_plane_pair
 
@@ -61,7 +64,6 @@ def session_edge_pairs(num_sessions: int, *, max_gap: int = 2) -> tuple[SessionE
 
 
 # pylint: disable=too-many-arguments,too-many-locals
-
 def build_registered_pairwise_costs(
     sessions: Sequence[Track2pSession],
     *,
@@ -112,7 +114,6 @@ def build_registered_pairwise_costs(
 
 
 # pylint: disable=too-many-arguments,too-many-locals
-
 def solve_global_assignment_for_sessions(
     sessions: Sequence[Track2pSession],
     *,
