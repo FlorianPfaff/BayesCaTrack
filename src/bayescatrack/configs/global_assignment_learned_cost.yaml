@@ -1,11 +1,11 @@
 method: global-assignment
+split: leave-one-subject-out
 plane_name: plane0
 input_format: auto
-cost: roi-aware
+cost: calibrated
 max_gap: 2
 transform_type: affine
 start_cost: 5.0
 end_cost: 5.0
 gap_penalty: 1.0
 cost_threshold: 6.0
-# Reserved for the calibrated PyRecEst logistic association model once validation splits are frozen.
