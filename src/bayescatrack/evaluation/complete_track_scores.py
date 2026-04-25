@@ -207,7 +207,7 @@ def _parse_optional_int(value: Any) -> int | None:
     return parsed if parsed >= 0 else None
 
 
-def _optional_int_candidate(value: Any) -> object:
+def _optional_int_candidate(value: Any) -> Any:
     if value is None:
         return _MISSING
     if isinstance(value, bytes):
