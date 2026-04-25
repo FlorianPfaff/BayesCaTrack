@@ -15,6 +15,7 @@ from bayescatrack.association.calibrated_costs import (
     fit_logistic_association_model,
 )
 from bayescatrack.association.pyrecest_global_assignment import (
+    session_edge_pairs,
     solve_global_assignment_for_sessions,
     tracks_to_suite2p_index_matrix,
 )
@@ -211,7 +212,7 @@ def _collect_training_examples(
         features, labels = collect_reference_training_examples(
             subject.sessions,
             subject.reference,
-            session_edges=_session_edge_pairs(len(subject.sessions), max_gap=config.max_gap),
+            session_edges=session_edge_pairs(len(subject.sessions), max_gap=config.max_gap),
             curated_only=config.curated_only,
             transform_type=config.transform_type,
             order=config.order,
@@ -227,16 +228,6 @@ def _collect_training_examples(
     if not feature_blocks:
         raise ValueError("At least one training subject is required")
     return np.concatenate(feature_blocks, axis=0), np.concatenate(label_blocks, axis=0)
-
-
-def _session_edge_pairs(num_sessions: int, *, max_gap: int) -> tuple[tuple[int, int], ...]:
-    if max_gap < 1:
-        raise ValueError("max_gap must be at least 1")
-    return tuple(
-        (source, target)
-        for source in range(max(0, num_sessions - 1))
-        for target in range(source + 1, min(num_sessions, source + max_gap + 1))
-    )
 
 
 def _reference_matrix(reference: Track2pReference, *, curated_only: bool) -> np.ndarray:
