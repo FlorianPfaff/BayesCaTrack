@@ -9,6 +9,17 @@ import numpy as np
 
 _MISSING_STRINGS = {"", "none", "nan", "null"}
 
+__all__ = (
+    "complete_track_set",
+    "normalize_track_matrix",
+    "pairwise_track_set",
+    "score_complete_tracks",
+    "score_pairwise_tracks",
+    "score_track_matrices",
+    "summarize_tracks",
+    "track_lengths",
+)
+
 
 def normalize_track_matrix(track_matrix: Any) -> np.ndarray:
     """Return an object matrix containing integer ROI indices or ``None``."""
@@ -84,19 +95,15 @@ def score_complete_tracks(
 
     predicted = complete_track_set(predicted_track_matrix, session_indices=session_indices)
     reference = complete_track_set(reference_track_matrix, session_indices=session_indices)
-    true_positives = len(predicted & reference)
-    false_positives = len(predicted - reference)
-    false_negatives = len(reference - predicted)
-    precision = _safe_ratio(true_positives, true_positives + false_positives)
-    recall = _safe_ratio(true_positives, true_positives + false_negatives)
-    f1 = _safe_ratio(2.0 * precision * recall, precision + recall)
+    counts = _set_classification_counts(predicted, reference)
+    metrics = _precision_recall_f1(*counts)
     return {
-        "complete_track_true_positives": true_positives,
-        "complete_track_false_positives": false_positives,
-        "complete_track_false_negatives": false_negatives,
-        "complete_track_precision": precision,
-        "complete_track_recall": recall,
-        "complete_track_f1": f1,
+        "complete_track_true_positives": counts[0],
+        "complete_track_false_positives": counts[1],
+        "complete_track_false_negatives": counts[2],
+        "complete_track_precision": metrics["precision"],
+        "complete_track_recall": metrics["recall"],
+        "complete_track_f1": metrics["f1"],
         "complete_tracks": len(predicted),
         "reference_complete_tracks": len(reference),
     }
@@ -112,19 +119,15 @@ def score_pairwise_tracks(
 
     predicted = pairwise_track_set(predicted_track_matrix, session_pairs=session_pairs)
     reference = pairwise_track_set(reference_track_matrix, session_pairs=session_pairs)
-    true_positives = len(predicted & reference)
-    false_positives = len(predicted - reference)
-    false_negatives = len(reference - predicted)
-    precision = _safe_ratio(true_positives, true_positives + false_positives)
-    recall = _safe_ratio(true_positives, true_positives + false_negatives)
-    f1 = _safe_ratio(2.0 * precision * recall, precision + recall)
+    counts = _set_classification_counts(predicted, reference)
+    metrics = _precision_recall_f1(*counts)
     return {
-        "pairwise_true_positives": true_positives,
-        "pairwise_false_positives": false_positives,
-        "pairwise_false_negatives": false_negatives,
-        "pairwise_precision": precision,
-        "pairwise_recall": recall,
-        "pairwise_f1": f1,
+        "pairwise_true_positives": counts[0],
+        "pairwise_false_positives": counts[1],
+        "pairwise_false_negatives": counts[2],
+        "pairwise_precision": metrics["precision"],
+        "pairwise_recall": metrics["recall"],
+        "pairwise_f1": metrics["f1"],
         "pairwise_links": len(predicted),
         "reference_pairwise_links": len(reference),
     }
@@ -166,23 +169,52 @@ def score_track_matrices(
 
 
 def _parse_optional_int(value: Any) -> int | None:
+    candidate = _coerce_optional_scalar(value)
+    if candidate is None:
+        return None
+    try:
+        integer_value = int(candidate)
+    except (TypeError, ValueError):
+        return None
+    return integer_value if integer_value >= 0 else None
+
+
+def _coerce_optional_scalar(value: Any) -> Any:
     if value is None:
         return None
     if isinstance(value, bytes):
         value = value.decode("utf-8")
     if isinstance(value, str):
-        value = value.strip()
-        if value.lower() in _MISSING_STRINGS:
-            return None
+        stripped = value.strip()
+        return None if stripped.lower() in _MISSING_STRINGS else stripped
     if isinstance(value, (float, np.floating)) and np.isnan(value):
         return None
-    try:
-        integer_value = int(value)
-    except (TypeError, ValueError):
-        return None
-    if integer_value < 0:
-        return None
-    return integer_value
+    return value
+
+
+def _set_classification_counts(
+    predicted: set[tuple[int, ...]],
+    reference: set[tuple[int, ...]],
+) -> tuple[int, int, int]:
+    return (
+        len(predicted & reference),
+        len(predicted - reference),
+        len(reference - predicted),
+    )
+
+
+def _precision_recall_f1(
+    true_positives: int,
+    false_positives: int,
+    false_negatives: int,
+) -> dict[str, float]:
+    precision = _safe_ratio(true_positives, true_positives + false_positives)
+    recall = _safe_ratio(true_positives, true_positives + false_negatives)
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1": _safe_ratio(2.0 * precision * recall, precision + recall),
+    }
 
 
 def _selected_sessions(matrix: np.ndarray, session_indices: Sequence[int] | None) -> list[int]:
