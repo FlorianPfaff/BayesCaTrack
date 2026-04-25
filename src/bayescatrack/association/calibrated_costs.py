@@ -8,7 +8,11 @@ from typing import Any
 
 import numpy as np
 
-from bayescatrack.core.bridge import SessionAssociationBundle, Track2pSession, build_session_pair_association_bundle
+from bayescatrack.core.bridge import (
+    SessionAssociationBundle,
+    Track2pSession,
+    build_session_pair_association_bundle,
+)
 from bayescatrack.reference import Track2pReference
 from bayescatrack.track2p_registration import register_plane_pair
 
@@ -80,7 +84,6 @@ def label_matrix_from_reference(
 
 
 # pylint: disable=too-many-arguments
-
 def collect_reference_training_examples(
     sessions: Sequence[Track2pSession],
     reference: Track2pReference,
@@ -159,7 +162,6 @@ def fit_logistic_association_model(
 
 
 # pylint: disable=too-many-arguments
-
 def fit_logistic_association_model_from_reference(
     sessions: Sequence[Track2pSession],
     reference: Track2pReference,
