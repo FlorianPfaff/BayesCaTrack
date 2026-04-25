@@ -1,4 +1,4 @@
-import bayescatrack.fov_registration as fov_registration
+from bayescatrack import fov_registration
 
 
 def test_fov_registration_module_exposes_expected_public_api():
