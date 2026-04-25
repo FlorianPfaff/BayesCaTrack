@@ -13,16 +13,6 @@ on:
       - "README.md"
       - ".github/workflows/bayescatrack-ci.yml"
   pull_request:
-    branches:
-      - main
-    paths:
-      - "src/bayescatrack/**"
-      - "src/track2p_pyrecest_bridge/**"
-      - "tests/**"
-      - "pyproject.toml"
-      - "poetry.lock"
-      - "README.md"
-      - ".github/workflows/bayescatrack-ci.yml"
   workflow_dispatch:
 
 permissions:
