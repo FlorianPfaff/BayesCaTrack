@@ -103,11 +103,11 @@ def run_track2p_loso_calibration(
 
     total_steps = len(subject_dirs) + len(subject_dirs) * (len(subject_dirs) + 1)
     progress = ProgressReporter(total_steps, enabled=config.progress, label="LOSO")
-    subjects = []
+    subject_data: list[SubjectCalibrationData] = []
     for subject_dir in subject_dirs:
         progress.step(f"loading {subject_dir.name}")
-        subjects.append(_load_subject_calibration_data(subject_dir, config=config))
-    subjects = tuple(subjects)
+        subject_data.append(_load_subject_calibration_data(subject_dir, config=config))
+    subjects = tuple(subject_data)
     feature_names = tuple(feature_names)
     folds: list[LosoCalibrationFold] = []
     for held_out_index, held_out in enumerate(subjects):
