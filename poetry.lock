@@ -1108,14 +1108,14 @@ diagrams = ["jinja2", "railroad-diagrams"]
 
 [[package]]
 name = "pyrecest"
-version = "1.1.0"
+version = "1.1.1"
 description = "Framework for recursive Bayesian estimation in Python."
 optional = false
 python-versions = "<3.15,>=3.11"
 groups = ["main"]
 files = [
-    {file = "pyrecest-1.1.0-py3-none-any.whl", hash = "sha256:1b06843811f2549e369cc8dbdb6474e00c621bc47fb40d2ea51526c8efb28983"},
-    {file = "pyrecest-1.1.0.tar.gz", hash = "sha256:622cdc96ae0e3213ab1a88e7de794e0e184ebdbed94ed2473e31d5d81f774dbb"},
+    {file = "pyrecest-1.1.1-py3-none-any.whl", hash = "sha256:109de03b43c0a67a96c92581fda2215638613e84a091dc85fb0082fe6e8429f2"},
+    {file = "pyrecest-1.1.1.tar.gz", hash = "sha256:ebe55284964948156dc62cc79aa9d4c17619b2f2508a4b5399f4e21e33fc8241"},
 ]
 
 [package.dependencies]
@@ -1126,6 +1126,11 @@ numpy = "*"
 pyshtools = "*"
 scipy = ">=1.17.1,<2.0.0"
 shapely = "*"
+
+[package.extras]
+healpy-support = ["healpy"]
+jax-support = ["autograd", "jax", "jaxlib"]
+pytorch-support = ["torch"]
 
 [[package]]
 name = "pyshtools"
@@ -1568,4 +1573,4 @@ viz = ["cartopy (>=0.24)", "matplotlib (>=3.10)", "nc-time-axis", "seaborn"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "96d21c36c2ebe6503b1e2059fe0c27e47967f9ea834822544ba61dc9a3a2f61d"
+content-hash = "424a03e81001022b08f96e437b7bd23ec563084eadb4013056b86807aa51812c"

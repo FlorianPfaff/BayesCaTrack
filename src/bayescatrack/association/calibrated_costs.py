@@ -147,7 +147,7 @@ def fit_logistic_association_model(
         from pyrecest.utils.association_models import LogisticPairwiseAssociationModel
     except ImportError as exc:  # pragma: no cover - exercised in runtime environments without PyRecEst
         raise ImportError(
-            "PyRecEst with pyrecest.utils.association_models is required to fit calibrated association costs."
+            "PyRecEst >= 1.1.1 with pyrecest.utils.association_models is required to fit calibrated association costs."
         ) from exc
 
     model = LogisticPairwiseAssociationModel(**dict(model_kwargs or {}))
