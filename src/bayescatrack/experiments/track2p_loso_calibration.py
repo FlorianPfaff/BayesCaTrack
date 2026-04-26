@@ -27,7 +27,7 @@ from bayescatrack.experiments.track2p_benchmark import (
     discover_subject_dirs,
     solve_configured_global_assignment,
 )
-from bayescatrack.reference import Track2pReference, load_track2p_reference
+from bayescatrack.reference import Track2pReference, load_aligned_subject_reference, load_track2p_reference
 
 
 @dataclass(frozen=True)
@@ -175,6 +175,12 @@ def _load_subject_calibration_data(subject_dir: Path, *, config: Track2pBenchmar
 
 def _load_training_reference(subject_dir: Path, *, config: Track2pBenchmarkConfig) -> Track2pReference:
     if config.reference is None:
+        if not (subject_dir / "track2p" / "track_ops.npy").exists():
+            return load_aligned_subject_reference(
+                subject_dir,
+                plane_name=config.plane_name,
+                input_format=config.input_format,
+            )
         return load_track2p_reference(subject_dir / "track2p", plane_name=config.plane_name)
 
     for candidate in _reference_candidates(subject_dir, config.reference):
