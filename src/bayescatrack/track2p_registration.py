@@ -63,8 +63,12 @@ def register_plane_pair(
     *,
     transform_type: str = "affine",
 ) -> CalciumPlaneData:
+    if transform_type == "none":
+        if reference_plane.image_shape != moving_plane.image_shape:
+            raise ValueError("transform_type='none' requires matching image shapes")
+        return moving_plane
     if transform_type not in {"affine", "rigid"}:
-        raise ValueError("transform_type must be either 'affine' or 'rigid'")
+        raise ValueError("transform_type must be 'affine', 'rigid', or 'none'")
     if reference_plane.fov is None or moving_plane.fov is None:
         raise ValueError("Both planes must provide FOV images for registration.")
 

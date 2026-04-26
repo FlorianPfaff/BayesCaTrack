@@ -207,7 +207,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid"),
+        choices=("affine", "rigid", "none"),
         help="Track2p registration transform type",
     )
     parser.add_argument("--start-cost", type=float, default=5.0, help="PyRecEst track start cost")
