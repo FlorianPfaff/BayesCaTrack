@@ -67,27 +67,6 @@ files = [
 ]
 
 [[package]]
-name = "bayesian-filters"
-version = "1.4.5"
-description = "Kalman filtering and optimal estimation library"
-optional = false
-python-versions = ">=3.9"
-groups = ["main"]
-files = [
-    {file = "bayesian_filters-1.4.5-py3-none-any.whl", hash = "sha256:6d9a6e019ad5166a4a12e95220a6dad1a9bd96b1a97ca4b7d363e061a7d8d1fb"},
-    {file = "bayesian_filters-1.4.5.tar.gz", hash = "sha256:93266955ed7ab08fb1180976d39861c5585bebce0cc6e32ed1eebf1c9f19cb0a"},
-]
-
-[package.dependencies]
-matplotlib = "*"
-numpy = "*"
-scipy = "*"
-
-[package.extras]
-dev = ["pytest (>=8.0.0)", "pytest-cov (>=4.0.0)"]
-docs = ["mkdocs (>=1.5.0)", "mkdocs-material (>=9.0.0)", "mkdocstrings[python] (>=0.24.0)"]
-
-[[package]]
 name = "beartype"
 version = "0.22.9"
 description = "Unbearably fast near-real-time pure-Python runtime-static type-checker."
@@ -1129,34 +1108,24 @@ diagrams = ["jinja2", "railroad-diagrams"]
 
 [[package]]
 name = "pyrecest"
-version = "1.0.2"
+version = "1.1.0"
 description = "Framework for recursive Bayesian estimation in Python."
 optional = false
-python-versions = ">=3.11,<3.15"
+python-versions = "<3.15,>=3.11"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "pyrecest-1.1.0-py3-none-any.whl", hash = "sha256:1b06843811f2549e369cc8dbdb6474e00c621bc47fb40d2ea51526c8efb28983"},
+    {file = "pyrecest-1.1.0.tar.gz", hash = "sha256:622cdc96ae0e3213ab1a88e7de794e0e184ebdbed94ed2473e31d5d81f774dbb"},
+]
 
 [package.dependencies]
-bayesian-filters = "*"
 beartype = "*"
 matplotlib = "*"
 mpmath = "*"
 numpy = "*"
 pyshtools = "*"
-scipy = "^1.17.1"
+scipy = ">=1.17.1,<2.0.0"
 shapely = "*"
-
-[package.extras]
-healpy-support = []
-jax-support = []
-pytorch-support = []
-
-[package.source]
-type = "git"
-url = "https://github.com/FlorianPfaff/PyRecEst.git"
-reference = "HEAD"
-resolved_reference = "85b1526eb3b5c20344b160e2b35e739d2a0adf54"
 
 [[package]]
 name = "pyshtools"
@@ -1599,4 +1568,4 @@ viz = ["cartopy (>=0.24)", "matplotlib (>=3.10)", "nc-time-axis", "seaborn"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "4a82f058bb3e6ae88d7ab50a6a37c0b11f8f782229ea81ab143cdd8bc12db3c7"
+content-hash = "96d21c36c2ebe6503b1e2059fe0c27e47967f9ea834822544ba61dc9a3a2f61d"

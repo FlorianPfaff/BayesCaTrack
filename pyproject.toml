@@ -10,14 +10,14 @@ readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
     "numpy",
-    "pyrecest @ git+https://github.com/FlorianPfaff/PyRecEst.git",
+    "pyrecest",
 ]
 
 [project.scripts]
 bayescatrack = "bayescatrack:main"
 
 [project.urls]
-Repository = "https://github.com/FlorianPfaff/bayescatrack"
+Repository = "https://github.com/FlorianPfaff/BayesCaTrack"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -42,7 +42,6 @@ line-length = 180
 
 [tool.pytest.ini_options]
 filterwarnings = [
-    "ignore::DeprecationWarning:bayesian_filters.*",
     "ignore::DeprecationWarning:mpmath.*",
     "ignore::scipy.optimize.OptimizeWarning",
 ]
