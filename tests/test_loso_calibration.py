@@ -46,6 +46,20 @@ def _write_subject(subject_dir, write_raw_npy_session):
     )
 
 
+def _write_aligned_subject(subject_dir, write_raw_npy_session):
+    masks = np.zeros((2, 4, 4), dtype=bool)
+    masks[0, 0:2, 0:2] = True
+    masks[1, 2:4, 2:4] = True
+
+    for session_index, session_name in enumerate(("2024-05-01_a", "2024-05-02_a", "2024-05-03_a")):
+        write_raw_npy_session(
+            subject_dir,
+            session_name,
+            masks.copy(),
+            offset=float(10 * session_index),
+        )
+
+
 def _install_fake_pyrecest(monkeypatch):
     fake_pyrecest = types.ModuleType("pyrecest")
     fake_utils = types.ModuleType("pyrecest.utils")
@@ -124,6 +138,43 @@ def test_loso_calibration_trains_on_other_subjects(tmp_path, monkeypatch, write_
         assert row["training_examples"] == 12
         assert row["positive_examples"] == 6
         assert row["negative_examples"] == 6
+
+
+def test_loso_calibration_uses_aligned_rows_when_track2p_reference_is_absent(tmp_path, monkeypatch, write_raw_npy_session):
+    subject_a = tmp_path / "jm001"
+    subject_b = tmp_path / "jm002"
+    _write_aligned_subject(subject_a, write_raw_npy_session)
+    _write_aligned_subject(subject_b, write_raw_npy_session)
+    _install_fake_pyrecest(monkeypatch)
+
+    from bayescatrack.association import calibrated_costs
+    from bayescatrack.association import pyrecest_global_assignment as global_assignment
+
+    monkeypatch.setattr(
+        calibrated_costs,
+        "register_plane_pair",
+        lambda _reference, moving, **_kwargs: moving,
+    )
+    monkeypatch.setattr(
+        global_assignment,
+        "register_plane_pair",
+        lambda _reference, moving, **_kwargs: moving,
+    )
+
+    results = run_track2p_benchmark(
+        Track2pBenchmarkConfig(
+            data=tmp_path,
+            method="global-assignment",
+            split="leave-one-subject-out",
+            cost="calibrated",
+            max_gap=2,
+            include_behavior=False,
+        )
+    )
+
+    assert [result.subject for result in results] == ["jm001", "jm002"]
+    assert {result.reference_source for result in results} == {"aligned_subject_rows"}
+    assert [result.to_dict()["pairwise_f1"] for result in results] == [pytest.approx(1.0), pytest.approx(1.0)]
 
 
 def test_loso_calibration_requires_calibrated_cost(tmp_path, write_raw_npy_session):
