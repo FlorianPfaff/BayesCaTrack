@@ -3,7 +3,7 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bayescatrack"
+name = "BayesCaTrack"
 version = "0.0.1"
 description = "Recursive Bayesian cell tracking toolkit for Track2p-style calcium-imaging data"
 readme = "README.md"
