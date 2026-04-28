@@ -116,10 +116,10 @@ def _parse_input_spec(spec: str) -> ComparisonInput:
     if "=" not in spec:
         path = Path(spec)
         return ComparisonInput(label=path.stem, path=path)
-    label, path = spec.split("=", 1)
+    label, path_text = spec.split("=", 1)
     if not label:
         raise ValueError("--input labels must not be empty")
-    return ComparisonInput(label=label, path=Path(path))
+    return ComparisonInput(label=label, path=Path(path_text))
 
 
 def _aggregate_approach(label: str, rows: Sequence[dict[str, str]]) -> dict[str, float | int | str]:
@@ -157,12 +157,18 @@ def _micro_f1(rows: Sequence[dict[str, str]], prefix: str) -> float:
 
 
 def _float_values(rows: Sequence[dict[str, str]], key: str) -> list[float]:
-    return [float(row[key]) for row in rows if row.get(key) not in {None, ""}]
+    values: list[float] = []
+    for row in rows:
+        value = row.get(key)
+        if value is None or value == "":
+            continue
+        values.append(float(value))
+    return values
 
 
 def _int_value(row: dict[str, str], key: str) -> int:
     value = row.get(key)
-    if value in {None, ""}:
+    if value is None or value == "":
         return 0
     return int(float(value))
 
