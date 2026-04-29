@@ -40,10 +40,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -52,7 +52,7 @@ jobs:
 
       - name: Restore cached Zenodo archive
         id: restore-zenodo
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: data-cache/data.zip
           key: ${{ env.ZENODO_CACHE_KEY }}
@@ -79,7 +79,7 @@ jobs:
 
       - name: Save Zenodo archive to cache
         if: steps.restore-zenodo.outputs.cache-hit != 'true' && hashFiles('data-cache/data.zip') != ''
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: data-cache/data.zip
           key: ${{ env.ZENODO_CACHE_KEY }}
