@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -131,14 +131,14 @@ jobs:
 
       - name: Upload JUnit results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: junit-py${{ matrix.python-version }}
           path: test-results/junit-py${{ matrix.python-version }}.xml
 
       - name: Upload smoke-test artifact
         if: matrix.python-version == '3.11'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bayescatrack-smoke-export
           path: |
@@ -152,7 +152,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -174,7 +174,7 @@ jobs:
           python -m bayescatrack --help > /dev/null
 
       - name: Upload package artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: bayescatrack-package-dist
           path: dist/*
@@ -191,7 +191,7 @@ jobs:
 
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: test-results
 
