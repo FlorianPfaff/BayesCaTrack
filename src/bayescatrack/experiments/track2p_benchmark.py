@@ -25,11 +25,14 @@ from bayescatrack.evaluation.track2p_metrics import normalize_track_matrix, scor
 from bayescatrack.ground_truth_eval import load_track2p_ground_truth_csv
 from bayescatrack.reference import Track2pReference, load_aligned_subject_reference, load_track2p_reference
 
+ReferenceKind = Literal["auto", "manual-gt", "track2p-output", "aligned-subject-rows"]
 BenchmarkMethod = Literal["track2p-baseline", "global-assignment"]
 BenchmarkSplit = Literal["subject", "leave-one-subject-out"]
 OutputFormat = Literal["table", "json", "csv"]
 GROUND_TRUTH_CSV_NAME = "ground_truth.csv"
 GROUND_TRUTH_REFERENCE_SOURCE = "ground_truth_csv"
+ALIGNED_REFERENCE_SOURCE = "aligned_subject_rows"
+TRACK2P_REFERENCE_SOURCES = frozenset({"track2p_output_suite2p_indices", "track2p_output_match_mat"})
 
 
 # pylint: disable=too-many-instance-attributes
@@ -43,7 +46,11 @@ class Track2pBenchmarkConfig:
     plane_name: str = "plane0"
     input_format: str = "auto"
     reference: Path | None = None
+    reference_kind: ReferenceKind = "auto"
+    allow_track2p_as_reference_for_smoke_test: bool = False
     curated_only: bool = False
+    seed_session: int = 0
+    restrict_to_reference_seed_rois: bool = True
     cost: AssociationCost = "registered-iou"
     max_gap: int = 2
     transform_type: str = "affine"
@@ -126,21 +133,18 @@ def run_track2p_benchmark(config: Track2pBenchmarkConfig) -> list[SubjectBenchma
     for subject_dir in subject_dirs:
         progress.step(f"running {subject_dir.name}")
         reference = _load_reference_for_subject(subject_dir, data_root=config.data, config=config)
+        _validate_reference_for_benchmark(reference, subject_dir=subject_dir, config=config)
         if reference.source == GROUND_TRUTH_REFERENCE_SOURCE:
-            _validate_reference_roi_indices(
-                reference,
-                _load_subject_sessions(subject_dir, config),
-            )
-        reference_matrix = _reference_matrix(reference, curated_only=config.curated_only)
+            _validate_reference_roi_indices(reference, _load_subject_sessions(subject_dir, config))
         predicted_matrix, variant = _predict_subject_tracks(subject_dir, config)
-        scores = score_track_matrices(predicted_matrix, reference_matrix)
+        scores = _score_prediction_against_reference(predicted_matrix, reference, config=config)
         results.append(
             SubjectBenchmarkResult(
                 subject=subject_dir.name,
                 variant=variant,
                 method=config.method,
                 scores=scores,
-                n_sessions=reference_matrix.shape[1],
+                n_sessions=reference.n_sessions,
                 reference_source=reference.source,
             )
         )
@@ -226,7 +230,25 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional ground_truth.csv file, ground-truth root, subject directory, or track2p folder",
     )
+    parser.add_argument(
+        "--reference-kind",
+        default="auto",
+        choices=("auto", "manual-gt", "track2p-output", "aligned-subject-rows"),
+        help="Declared reference type; manual-gt is required for paper-facing runs",
+    )
+    parser.add_argument(
+        "--allow-track2p-as-reference-for-smoke-test",
+        action="store_true",
+        help="Permit Track2p/aligned-row references for plumbing smoke tests only",
+    )
     parser.add_argument("--curated-only", action="store_true", help="Evaluate only reference tracks marked curated")
+    parser.add_argument("--seed-session", type=int, default=0, help="Reference seed session used for sparse-GT filtering")
+    parser.add_argument(
+        "--restrict-to-reference-seed-rois",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Score only predicted tracks whose seed-session ROI is in the reference seed set",
+    )
     parser.add_argument(
         "--cost",
         default="registered-iou",
@@ -352,6 +374,21 @@ def _variant_name(cost: AssociationCost) -> str:
 def _load_reference_for_subject(subject_dir: Path, *, data_root: Path, config: Track2pBenchmarkConfig) -> Track2pReference:
     data_root = Path(data_root)
     if config.reference is None:
+        if config.reference_kind == "manual-gt":
+            default_ground_truth_path = subject_dir / GROUND_TRUTH_CSV_NAME
+            if default_ground_truth_path.exists():
+                return _load_ground_truth_csv_reference(default_ground_truth_path, subject_dir=subject_dir)
+            raise ValueError(
+                f"--reference-kind manual-gt was requested, but {default_ground_truth_path} does not exist"
+            )
+        if config.reference_kind == "track2p-output":
+            track2p_dir = subject_dir / "track2p"
+            if track2p_dir.exists():
+                return load_track2p_reference(track2p_dir, plane_name=config.plane_name)
+            raise ValueError(f"--reference-kind track2p-output was requested, but {track2p_dir} does not exist")
+        if config.reference_kind == "aligned-subject-rows":
+            return _load_aligned_reference_for_config(subject_dir, config)
+
         default_ground_truth_path = subject_dir / GROUND_TRUTH_CSV_NAME
         if default_ground_truth_path.exists():
             return _load_ground_truth_csv_reference(default_ground_truth_path, subject_dir=subject_dir)
@@ -361,6 +398,29 @@ def _load_reference_for_subject(subject_dir: Path, *, data_root: Path, config: T
         return _load_aligned_reference_for_config(subject_dir, config)
 
     reference_root = Path(config.reference)
+    if config.reference_kind == "manual-gt":
+        if reference_root.is_file():
+            return _load_ground_truth_csv_reference(reference_root, subject_dir=subject_dir)
+        ground_truth_path = _resolve_ground_truth_csv_path(subject_dir, data_root=data_root, reference_root=reference_root)
+        if ground_truth_path is None:
+            raise ValueError(
+                "--reference-kind manual-gt was requested, but no ground_truth.csv could be resolved "
+                f"for subject {subject_dir.name!r} under {reference_root}"
+            )
+        return _load_ground_truth_csv_reference(ground_truth_path, subject_dir=subject_dir)
+
+    if config.reference_kind == "track2p-output":
+        reference_path = _resolve_track2p_reference_path(subject_dir, data_root=data_root, reference_root=reference_root)
+        if reference_path is None:
+            raise ValueError(
+                "--reference-kind track2p-output was requested, but no Track2p reference could be resolved "
+                f"for subject {subject_dir.name!r} under {reference_root}"
+            )
+        return load_track2p_reference(reference_path, plane_name=config.plane_name)
+
+    if config.reference_kind == "aligned-subject-rows":
+        return _load_aligned_reference_for_config(subject_dir, config)
+
     ground_truth_path = _resolve_ground_truth_csv_path(subject_dir, data_root=data_root, reference_root=reference_root)
     if ground_truth_path is not None:
         return _load_ground_truth_csv_reference(ground_truth_path, subject_dir=subject_dir)
@@ -369,6 +429,24 @@ def _load_reference_for_subject(subject_dir: Path, *, data_root: Path, config: T
     if reference_path is not None:
         return load_track2p_reference(reference_path, plane_name=config.plane_name)
     return _load_aligned_reference_for_config(subject_dir, config)
+
+
+def _validate_reference_for_benchmark(
+    reference: Track2pReference,
+    *,
+    subject_dir: Path,
+    config: Track2pBenchmarkConfig,
+) -> None:
+    if reference.source == GROUND_TRUTH_REFERENCE_SOURCE:
+        return
+    if config.allow_track2p_as_reference_for_smoke_test:
+        return
+    raise ValueError(
+        f"Subject {subject_dir.name!r} resolved reference source {reference.source!r}, "
+        "which is not independent manual ground truth. Provide --reference pointing at "
+        "ground_truth.csv or a ground-truth root with --reference-kind manual-gt. "
+        "For plumbing checks only, pass --allow-track2p-as-reference-for-smoke-test."
+    )
 
 
 def _resolve_ground_truth_csv_path(subject_dir: Path, *, data_root: Path, reference_root: Path) -> Path | None:
@@ -440,6 +518,58 @@ def _load_ground_truth_csv_reference(ground_truth_path: Path, *, subject_dir: Pa
         curated_mask=np.ones((track_table.n_tracks,), dtype=bool),
         source=GROUND_TRUTH_REFERENCE_SOURCE,
     )
+
+
+def _score_prediction_against_reference(
+    predicted_matrix: np.ndarray,
+    reference: Track2pReference,
+    *,
+    config: Track2pBenchmarkConfig,
+) -> dict[str, float | int]:
+    reference_matrix = _reference_matrix(reference, curated_only=config.curated_only)
+    predicted = normalize_track_matrix(predicted_matrix)
+    if predicted.shape[1] != reference_matrix.shape[1]:
+        raise ValueError("Predicted and reference matrices must have the same number of sessions")
+
+    predicted_before_filter = int(predicted.shape[0])
+    reference_seed_rois: set[int] = set()
+    if config.restrict_to_reference_seed_rois:
+        reference_seed_rois = _reference_seed_roi_set(reference_matrix, seed_session=config.seed_session)
+        predicted = _filter_tracks_by_reference_seed_rois(
+            predicted,
+            reference_matrix,
+            seed_session=config.seed_session,
+        )
+
+    scores = score_track_matrices(predicted, reference_matrix)
+    if config.restrict_to_reference_seed_rois:
+        scores = {
+            **scores,
+            "seed_session": int(config.seed_session),
+            "reference_seed_rois": int(len(reference_seed_rois)),
+            "evaluated_prediction_tracks": int(predicted.shape[0]),
+            "dropped_prediction_tracks": int(predicted_before_filter - predicted.shape[0]),
+        }
+    return scores
+
+
+def _filter_tracks_by_reference_seed_rois(
+    predicted_matrix: np.ndarray,
+    reference_matrix: np.ndarray,
+    *,
+    seed_session: int,
+) -> np.ndarray:
+    reference_seed_rois = _reference_seed_roi_set(reference_matrix, seed_session=seed_session)
+    if not reference_seed_rois:
+        return predicted_matrix[:0]
+    keep = [row[seed_session] in reference_seed_rois for row in predicted_matrix]
+    return predicted_matrix[np.asarray(keep, dtype=bool)]
+
+
+def _reference_seed_roi_set(reference_matrix: np.ndarray, *, seed_session: int) -> set[int]:
+    if seed_session < 0 or seed_session >= reference_matrix.shape[1]:
+        raise IndexError(f"seed_session {seed_session} out of bounds for {reference_matrix.shape[1]} sessions")
+    return {int(value) for value in reference_matrix[:, seed_session] if value is not None}
 
 
 def _load_aligned_reference_for_config(subject_dir: Path, config: Track2pBenchmarkConfig) -> Track2pReference:
@@ -539,7 +669,11 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
         plane_name=args.plane_name,
         input_format=args.input_format,
         reference=args.reference,
+        reference_kind=args.reference_kind,
+        allow_track2p_as_reference_for_smoke_test=args.allow_track2p_as_reference_for_smoke_test,
         curated_only=args.curated_only,
+        seed_session=args.seed_session,
+        restrict_to_reference_seed_rois=args.restrict_to_reference_seed_rois,
         cost=args.cost,
         max_gap=args.max_gap,
         transform_type=args.transform_type,
@@ -586,6 +720,10 @@ def _csv_fieldnames(rows: Sequence[dict[str, float | int | str]]) -> list[str]:
         "pairwise_recall",
         "complete_tracks",
         "mean_track_length",
+        "seed_session",
+        "reference_seed_rois",
+        "evaluated_prediction_tracks",
+        "dropped_prediction_tracks",
         "training_examples",
         "positive_examples",
         "negative_examples",

@@ -95,11 +95,20 @@ def _install_fake_multisession_assignment(monkeypatch):
     monkeypatch.setitem(sys.modules, "pyrecest.utils.multisession_assignment", fake_assignment)
 
 
-def test_track2p_baseline_benchmark_scores_track2p_output(tmp_path, write_raw_npy_session):
+def test_track2p_baseline_benchmark_scores_track2p_output_only_as_smoke_test(tmp_path, write_raw_npy_session):
     subject_dir = tmp_path / "jm001"
     _write_subject(subject_dir, write_raw_npy_session)
 
-    rows = run_track2p_benchmark(Track2pBenchmarkConfig(data=tmp_path, method="track2p-baseline"))
+    with pytest.raises(ValueError, match="not independent manual ground truth"):
+        run_track2p_benchmark(Track2pBenchmarkConfig(data=tmp_path, method="track2p-baseline"))
+
+    rows = run_track2p_benchmark(
+        Track2pBenchmarkConfig(
+            data=tmp_path,
+            method="track2p-baseline",
+            allow_track2p_as_reference_for_smoke_test=True,
+        )
+    )
 
     assert len(rows) == 1
     result = rows[0].to_dict()
@@ -114,7 +123,13 @@ def test_track2p_baseline_benchmark_scores_aligned_rows_without_track2p_output(t
     subject_dir = tmp_path / "jm001"
     _write_subject(subject_dir, write_raw_npy_session, write_reference=False)
 
-    rows = run_track2p_benchmark(Track2pBenchmarkConfig(data=tmp_path, method="track2p-baseline"))
+    rows = run_track2p_benchmark(
+        Track2pBenchmarkConfig(
+            data=tmp_path,
+            method="track2p-baseline",
+            allow_track2p_as_reference_for_smoke_test=True,
+        )
+    )
 
     result = rows[0].to_dict()
     assert result["variant"] == "Track2p default"
@@ -147,11 +162,7 @@ def test_ground_truth_csv_validation_catches_filtered_stat_rows(tmp_path):
     _write_suite2p_session(subject_dir, "2024-05-02_a", iscell=iscell)
     _write_ground_truth_csv(subject_dir, ("2024-05-01_a", "2024-05-02_a"), ((0, 0), (1, 1)))
 
-    config = Track2pBenchmarkConfig(
-        data=subject_dir,
-        method="track2p-baseline",
-        input_format="suite2p",
-    )
+    config = Track2pBenchmarkConfig(data=subject_dir, method="track2p-baseline", input_format="suite2p")
     with pytest.raises(ValueError, match="--include-non-cells"):
         run_track2p_benchmark(config)
 
@@ -167,7 +178,31 @@ def test_ground_truth_csv_validation_catches_filtered_stat_rows(tmp_path):
     result = rows[0].to_dict()
     assert result["reference_source"] == "ground_truth_csv"
     assert result["pairwise_recall"] == pytest.approx(1.0)
-    assert result["pairwise_precision"] == pytest.approx(2 / 3)
+    assert result["pairwise_precision"] == pytest.approx(1.0)
+    assert result["dropped_prediction_tracks"] == 1
+
+
+def test_ground_truth_scoring_filters_predictions_to_reference_seed_rois(tmp_path):
+    subject_dir = tmp_path / "jm004"
+    iscell = np.ones((3, 2), dtype=float)
+    _write_suite2p_session(subject_dir, "2024-05-01_a", iscell=iscell)
+    _write_suite2p_session(subject_dir, "2024-05-02_a", iscell=iscell)
+    _write_ground_truth_csv(subject_dir, ("2024-05-01_a", "2024-05-02_a"), ((0, 0), (1, 1)))
+
+    rows = run_track2p_benchmark(
+        Track2pBenchmarkConfig(
+            data=subject_dir,
+            method="track2p-baseline",
+            input_format="suite2p",
+            include_non_cells=True,
+        )
+    )
+
+    result = rows[0].to_dict()
+    assert result["reference_seed_rois"] == 2
+    assert result["evaluated_prediction_tracks"] == 2
+    assert result["dropped_prediction_tracks"] == 1
+    assert result["pairwise_precision"] == pytest.approx(1.0)
 
 
 def test_global_assignment_benchmark_uses_skip_edges(tmp_path, monkeypatch, write_raw_npy_session):
@@ -185,6 +220,7 @@ def test_global_assignment_benchmark_uses_skip_edges(tmp_path, monkeypatch, writ
             method="global-assignment",
             cost="registered-iou",
             max_gap=2,
+            allow_track2p_as_reference_for_smoke_test=True,
         )
     )
 

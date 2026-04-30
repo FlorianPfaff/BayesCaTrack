@@ -68,20 +68,30 @@ python -m bayescatrack export /path/to/jm039 /tmp/jm039_plane0.npz \
   --validate-pyrecest
 ```
 
-Run the Track2p default benchmark row:
+Run the Track2p default benchmark row against independent manual ground truth:
 
 ```bash
 python -m bayescatrack benchmark track2p \
   --data /path/to/track2p_zenodo \
-  --method track2p-baseline
+  --method track2p-baseline \
+  --reference /path/to/manual_ground_truth_root \
+  --reference-kind manual-gt
 ```
 
-If a subject directory contains `ground_truth.csv`, the benchmark uses it as
-the reference. You can also point `--reference` at a `ground_truth.csv` file or
-at a separate ground-truth root. Ground-truth ROI indices are validated against
-the loaded Suite2p ROI indices, so references that use raw `stat.npy` row
-indices will fail clearly if Suite2p cell filtering removed any referenced ROI;
-use `--include-non-cells` when benchmarking against all `stat.npy` rows.
+If a subject directory contains `ground_truth.csv`, the benchmark can use it as
+the reference automatically. You can also point `--reference` at a
+`ground_truth.csv` file or at a separate ground-truth root and declare
+`--reference-kind manual-gt`. Ground-truth ROI indices are validated against the
+loaded Suite2p ROI indices, so references that use raw `stat.npy` row indices
+will fail clearly if Suite2p cell filtering removed any referenced ROI; use
+`--include-non-cells` when benchmarking against all `stat.npy` rows.
+
+The benchmark refuses Track2p outputs and already row-aligned Suite2p rows as
+references by default because those are not independent evidence for a
+paper-facing comparison. For plumbing checks only, pass
+`--allow-track2p-as-reference-for-smoke-test`. Sparse manual ground truth is
+handled by scoring only predicted tracks whose seed-session ROI appears in the
+reference seed set; this avoids counting unlabelled cells as false positives.
 
 Create a small synthetic Suite2p-style subject for benchmark development:
 
@@ -112,6 +122,8 @@ python -m bayescatrack benchmark track2p \
   --data /path/to/track2p_zenodo \
   --method global-assignment \
   --cost registered-iou \
+  --reference /path/to/manual_ground_truth_root \
+  --reference-kind manual-gt \
   --max-gap 2
 ```
 
@@ -122,6 +134,8 @@ python -m bayescatrack benchmark track2p \
   --data /path/to/track2p_zenodo \
   --method global-assignment \
   --cost roi-aware \
+  --reference /path/to/manual_ground_truth_root \
+  --reference-kind manual-gt \
   --max-gap 2
 ```
 
@@ -133,6 +147,8 @@ python -m bayescatrack benchmark track2p \
   --method global-assignment \
   --cost calibrated \
   --split leave-one-subject-out \
+  --reference /path/to/manual_ground_truth_root \
+  --reference-kind manual-gt \
   --max-gap 2
 ```
 

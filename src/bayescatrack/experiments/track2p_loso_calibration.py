@@ -20,7 +20,6 @@ from bayescatrack.association.pyrecest_global_assignment import (
     tracks_to_suite2p_index_matrix,
 )
 from bayescatrack.core.bridge import Track2pSession
-from bayescatrack.evaluation.complete_track_scores import normalize_track_matrix, score_track_matrices
 from bayescatrack.experiments.track2p_benchmark import (
     GROUND_TRUTH_REFERENCE_SOURCE,
     ProgressReporter,
@@ -29,6 +28,8 @@ from bayescatrack.experiments.track2p_benchmark import (
     discover_subject_dirs,
     _load_reference_for_subject,
     _load_subject_sessions,
+    _score_prediction_against_reference,
+    _validate_reference_for_benchmark,
     _validate_reference_roi_indices,
     solve_configured_global_assignment,
 )
@@ -139,7 +140,7 @@ def run_track2p_loso_calibration(
             calibrated_model=calibrated_model,
         )
         predicted_matrix = tracks_to_suite2p_index_matrix(assignment.result.tracks, held_out.sessions)
-        scores = score_track_matrices(predicted_matrix, _reference_matrix(held_out.reference, curated_only=config.curated_only))
+        scores = _score_prediction_against_reference(predicted_matrix, held_out.reference, config=config)
         scores = {
             **scores,
             "training_examples": int(training_labels.shape[0]),
@@ -169,6 +170,7 @@ def run_track2p_loso_calibration(
 def _load_subject_calibration_data(subject_dir: Path, *, config: Track2pBenchmarkConfig) -> SubjectCalibrationData:
     sessions = tuple(_load_subject_sessions(subject_dir, config))
     reference = _load_reference_for_subject(subject_dir, data_root=config.data, config=config)
+    _validate_reference_for_benchmark(reference, subject_dir=subject_dir, config=config)
     if reference.source == GROUND_TRUTH_REFERENCE_SOURCE:
         _validate_reference_roi_indices(reference, sessions)
     if len(sessions) != reference.n_sessions:
@@ -219,12 +221,3 @@ def _reference_training_options(config: Track2pBenchmarkConfig, feature_names: S
         feature_names=tuple(feature_names),
         pairwise_cost_kwargs=config.pairwise_cost_kwargs,
     )
-
-
-def _reference_matrix(reference: Track2pReference, *, curated_only: bool) -> np.ndarray:
-    matrix = normalize_track_matrix(reference.suite2p_indices)
-    if not curated_only:
-        return matrix
-    if reference.curated_mask is None:
-        raise ValueError("curated_only was requested, but the reference has no curation mask")
-    return matrix[np.asarray(reference.curated_mask, dtype=bool)]

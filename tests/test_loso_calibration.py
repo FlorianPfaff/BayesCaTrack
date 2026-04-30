@@ -109,7 +109,7 @@ def _install_registration_passthrough(monkeypatch):
     monkeypatch.setattr(global_assignment, "register_plane_pair", passthrough)
 
 
-def _run_loso_calibration(tmp_path, monkeypatch, subject_writer):
+def _run_loso_calibration(tmp_path, monkeypatch, subject_writer, *, allow_smoke_reference=False):
     for subject_name in ("jm001", "jm002"):
         subject_writer(tmp_path / subject_name)
 
@@ -123,6 +123,7 @@ def _run_loso_calibration(tmp_path, monkeypatch, subject_writer):
             cost="calibrated",
             max_gap=2,
             include_behavior=False,
+            allow_track2p_as_reference_for_smoke_test=allow_smoke_reference,
         )
     )
 
@@ -132,6 +133,7 @@ def test_loso_calibration_trains_on_other_subjects(tmp_path, monkeypatch, write_
         tmp_path,
         monkeypatch,
         lambda subject_dir: _write_subject(subject_dir, write_raw_npy_session),
+        allow_smoke_reference=True,
     )
 
     assert [result.subject for result in results] == ["jm001", "jm002"]
@@ -150,11 +152,21 @@ def test_loso_calibration_uses_aligned_rows_when_track2p_reference_is_absent(tmp
         tmp_path,
         monkeypatch,
         lambda subject_dir: _write_aligned_subject(subject_dir, write_raw_npy_session),
+        allow_smoke_reference=True,
     )
 
     assert [result.subject for result in results] == ["jm001", "jm002"]
     assert {result.reference_source for result in results} == {"aligned_subject_rows"}
     assert [result.to_dict()["pairwise_f1"] for result in results] == [pytest.approx(1.0), pytest.approx(1.0)]
+
+
+def test_loso_calibration_rejects_track2p_reference_by_default(tmp_path, monkeypatch, write_raw_npy_session):
+    with pytest.raises(ValueError, match="not independent manual ground truth"):
+        _run_loso_calibration(
+            tmp_path,
+            monkeypatch,
+            lambda subject_dir: _write_subject(subject_dir, write_raw_npy_session),
+        )
 
 
 def test_loso_calibration_uses_ground_truth_csv_when_present(tmp_path, monkeypatch, write_raw_npy_session):
