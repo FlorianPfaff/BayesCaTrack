@@ -83,6 +83,28 @@ the loaded Suite2p ROI indices, so references that use raw `stat.npy` row
 indices will fail clearly if Suite2p cell filtering removed any referenced ROI;
 use `--include-non-cells` when benchmarking against all `stat.npy` rows.
 
+Create a small synthetic Suite2p-style subject for benchmark development:
+
+```python
+from bayescatrack.datasets.track2p import (
+    SyntheticFalsePositiveRoi,
+    SyntheticTrack2pSubjectConfig,
+    write_synthetic_track2p_subject,
+)
+
+generated = write_synthetic_track2p_subject(
+    "/tmp/bayescatrack-synthetic",
+    SyntheticTrack2pSubjectConfig(
+        subject_name="jm_synthetic",
+        missing_detections=((1, 2),),
+        non_cell_tracks=(0,),
+        false_positive_rois=(
+            SyntheticFalsePositiveRoi(session_index=1, center_yx=(15.0, 15.0)),
+        ),
+    ),
+)
+```
+
 Run the clean global-assignment ablation with registered IoU costs and skip edges:
 
 ```bash
