@@ -69,3 +69,35 @@ def test_aggregate_rows_reports_macro_and_micro_f1(tmp_path):
     assert rows[0]["complete_track_f1_macro"] == pytest.approx(0.75)
     assert rows[0]["complete_track_f1_micro"] == pytest.approx(22 / 24)
     assert "test approach" in format_markdown_table(rows)
+
+
+def test_markdown_table_highlights_best_cells():
+    rows = [
+        {
+            "approach": "Base",
+            "subjects": 10,
+            "pairwise_f1_macro": 0.60,
+            "pairwise_f1_sd": 0.01,
+            "pairwise_f1_micro": 0.50,
+            "complete_track_f1_macro": 0.40,
+            "complete_track_f1_sd": 0.03,
+            "complete_track_f1_micro": 0.20,
+        },
+        {
+            "approach": "Bayes",
+            "subjects": 10,
+            "pairwise_f1_macro": 0.80,
+            "pairwise_f1_sd": 0.02,
+            "pairwise_f1_micro": 0.90,
+            "complete_track_f1_macro": 0.70,
+            "complete_track_f1_sd": 0.04,
+            "complete_track_f1_micro": 0.88,
+        },
+    ]
+
+    table = format_markdown_table(rows, highlight_best=True)
+
+    assert "**0.800**" in table
+    assert "**0.900**" in table
+    assert "**0.700**" in table
+    assert "**0.880**" in table
