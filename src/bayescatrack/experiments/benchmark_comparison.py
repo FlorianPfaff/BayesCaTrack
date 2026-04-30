@@ -40,7 +40,13 @@ def aggregate_rows(rows: Sequence[dict[str, str]]) -> list[dict[str, float | int
     return [_aggregate_approach(label, [row for row in rows if row["approach"] == label]) for label in labels]
 
 
-def write_comparison(rows: Sequence[dict[str, float | int | str]], output_path: Path, output_format: str) -> None:
+def write_comparison(
+    rows: Sequence[dict[str, float | int | str]],
+    output_path: Path,
+    output_format: str,
+    *,
+    highlight_best: bool = False,
+) -> None:
     """Write aggregate comparison rows as Markdown or CSV."""
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,13 +56,21 @@ def write_comparison(rows: Sequence[dict[str, float | int | str]], output_path: 
             writer.writeheader()
             writer.writerows(rows)
         return
-    output_path.write_text(format_markdown_table(rows) + "\n", encoding="utf-8")
+    output_path.write_text(
+        format_markdown_table(rows, highlight_best=highlight_best) + "\n",
+        encoding="utf-8",
+    )
 
 
-def format_markdown_table(rows: Sequence[dict[str, float | int | str]]) -> str:
+def format_markdown_table(
+    rows: Sequence[dict[str, float | int | str]],
+    *,
+    highlight_best: bool = False,
+) -> str:
     """Format aggregate rows as a compact Markdown comparison table."""
 
     columns = _aggregate_columns()
+    best_by_metric = _compute_best_values(rows) if highlight_best else {}
     headers = {
         "approach": "approach",
         "subjects": "n",
@@ -71,7 +85,19 @@ def format_markdown_table(rows: Sequence[dict[str, float | int | str]]) -> str:
     separator = "| " + " | ".join(["---"] + ["---:"] * (len(columns) - 1)) + " |"
     body = [header, separator]
     for row in rows:
-        body.append("| " + " | ".join(_format_value(row[column]) for column in columns) + " |")
+        body.append(
+            "| "
+            + " | ".join(
+                _format_value(
+                    row[column],
+                    bold=highlight_best
+                    and column in best_by_metric
+                    and _value_is_best(_as_float(row[column]), best_by_metric[column]),
+                )
+                for column in columns
+            )
+            + " |"
+        )
     return "\n".join(body)
 
 
@@ -89,8 +115,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
         metavar="LABEL=CSV",
         help="Labeled benchmark CSV to include; repeat for each approach",
     )
-    parser.add_argument("--output", type=Path, default=None, help="Optional output table path")
-    parser.add_argument("--format", choices=("markdown", "csv"), default="markdown", help="Output table format")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional output table path",
+    )
+    parser.add_argument(
+        "--format",
+        choices=("markdown", "csv"),
+        default="markdown",
+        help="Output table format",
+    )
+    parser.add_argument(
+        "--highlight-best",
+        action="store_true",
+        help="Highlight best metric values in Markdown output",
+    )
     return parser
 
 
@@ -102,13 +143,13 @@ def main(argv: list[str] | None = None) -> int:
     inputs = [_parse_input_spec(spec) for spec in args.input]
     rows = aggregate_rows(load_labeled_rows(inputs))
     if args.output is not None:
-        write_comparison(rows, args.output, args.format)
+        write_comparison(rows, args.output, args.format, highlight_best=args.highlight_best)
     elif args.format == "csv":
         writer = csv.DictWriter(sys.stdout, fieldnames=_aggregate_columns())
         writer.writeheader()
         writer.writerows(rows)
     else:
-        print(format_markdown_table(rows))
+        print(format_markdown_table(rows, highlight_best=args.highlight_best))
     return 0
 
 
@@ -186,10 +227,40 @@ def _aggregate_columns() -> list[str]:
     ]
 
 
-def _format_value(value: float | int | str) -> str:
+def _compute_best_values(
+    rows: Sequence[dict[str, float | int | str]],
+) -> dict[str, float]:
+    columns = {
+        "pairwise_f1_macro",
+        "pairwise_f1_micro",
+        "complete_track_f1_macro",
+        "complete_track_f1_micro",
+    }
+    if not rows:
+        return {}
+    return {column: max(_as_float(row[column]) for row in rows) for column in columns}
+
+
+def _value_is_best(actual: float, expected: float) -> bool:
+    return abs(actual - expected) < 1e-12
+
+
+def _format_value(value: float | int | str, *, bold: bool = False) -> str:
     if isinstance(value, float):
-        return f"{value:.3f}"
-    return str(value)
+        formatted = f"{value:.3f}"
+    elif isinstance(value, int):
+        formatted = str(value)
+    else:
+        formatted = str(value)
+    return f"**{formatted}**" if bold else formatted
+
+
+def _as_float(value: float | int | str) -> float:
+    if isinstance(value, bool):
+        raise ValueError("Benchmark metric values must be numeric")
+    if isinstance(value, (float, int)):
+        return float(value)
+    return float(value)
 
 
 if __name__ == "__main__":  # pragma: no cover
