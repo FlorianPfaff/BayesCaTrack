@@ -138,6 +138,49 @@ python -m bayescatrack benchmark track2p \
 
 The benchmark prints a compact table by default and can also write JSON or CSV via `--format json --output results.json` or `--format csv --output results.csv`.
 
+Run a reproducible benchmark suite from one JSON manifest:
+
+```json
+{
+  "defaults": {
+    "data": "data/jm039",
+    "input_format": "suite2p",
+    "include_behavior": false,
+    "include_non_cells": true
+  },
+  "runs": [
+    {
+      "name": "track2p-default",
+      "method": "track2p-baseline",
+      "output": "results/track2p_default.csv"
+    },
+    {
+      "name": "registered-iou",
+      "method": "global-assignment",
+      "cost": "registered-iou",
+      "max_gap": 2,
+      "output": "results/registered_iou.csv"
+    }
+  ],
+  "comparisons": [
+    {
+      "name": "summary",
+      "inputs": {
+        "Track2p default": "track2p-default",
+        "BayesCaTrack registered IoU": "registered-iou"
+      },
+      "output": "results/comparison.md"
+    }
+  ]
+}
+```
+
+```bash
+python -m bayescatrack benchmark suite benchmarks.json --summary-format table
+```
+
+Manifest paths are resolved relative to the manifest file. This makes it possible to keep the same benchmark definition for synthetic fixtures, the current Zenodo-aligned data, and the future pre-Track2p Suite2p folders once they are available.
+
 ## Python example
 
 ```python
