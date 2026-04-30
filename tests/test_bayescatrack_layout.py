@@ -36,3 +36,9 @@ def test_bayescatrack_track2p_benchmark_help():
     proc = run_module("-m", "bayescatrack", "benchmark", "track2p", "--help")
     assert "track2p-baseline" in proc.stdout
     assert "global-assignment" in proc.stdout
+
+
+def test_bayescatrack_benchmark_suite_help():
+    proc = run_module("-m", "bayescatrack", "benchmark", "suite", "--help")
+    assert "JSON benchmark manifest" in proc.stdout
+    assert "--summary-format" in proc.stdout
