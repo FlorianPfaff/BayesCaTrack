@@ -152,7 +152,9 @@ def test_loso_calibration_trains_on_other_subjects(tmp_path, monkeypatch, write_
         assert row["calibration_examples"] == 12
         assert row["calibration_positive_examples"] == 6
         assert row["calibration_negative_examples"] == 6
-        assert row["brier_score"] == pytest.approx(0.25)
+        assert row["calibration_brier_score"] == pytest.approx(0.25)
+        assert row["calibration_ece"] == pytest.approx(0.0)
+        assert row["calibration_mce"] == pytest.approx(0.0)
 
 
 def test_loso_calibration_uses_aligned_rows_when_track2p_reference_is_absent(tmp_path, monkeypatch, write_raw_npy_session):

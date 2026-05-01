@@ -20,7 +20,7 @@ from bayescatrack.association.pyrecest_global_assignment import (
     tracks_to_suite2p_index_matrix,
 )
 from bayescatrack.core.bridge import Track2pSession
-from bayescatrack.evaluation.calibration_metrics import brier_score
+from bayescatrack.evaluation.calibration_diagnostics import calibration_summary
 from bayescatrack.experiments.track2p_benchmark import (
     GROUND_TRUTH_REFERENCE_SOURCE,
     ProgressReporter,
@@ -191,13 +191,7 @@ def _score_holdout_calibration(
     )
     probabilities = np.asarray(calibrated_model.model.predict_match_probability(features), dtype=float).reshape(-1)
     labels = np.asarray(labels).reshape(-1)
-    positives = int(np.sum(labels))
-    return {
-        "brier_score": brier_score(probabilities, labels),
-        "calibration_examples": int(labels.shape[0]),
-        "calibration_positive_examples": positives,
-        "calibration_negative_examples": int(labels.shape[0] - positives),
-    }
+    return calibration_summary(probabilities, labels)
 
 
 def _load_subject_calibration_data(subject_dir: Path, *, config: Track2pBenchmarkConfig) -> SubjectCalibrationData:

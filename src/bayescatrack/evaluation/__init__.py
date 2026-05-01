@@ -7,7 +7,9 @@ from . import track2p_metrics as _track2p_metrics
 brier_score = _calibration_diagnostics.brier_score
 calibration_summary = _calibration_diagnostics.calibration_summary
 complete_track_set = _scores.complete_track_set
+expected_calibration_error = _calibration_diagnostics.expected_calibration_error
 format_reliability_bin_table = _calibration_diagnostics.format_reliability_bin_table
+maximum_calibration_error = _calibration_diagnostics.maximum_calibration_error
 normalize_track_matrix = _scores.normalize_track_matrix
 pairwise_track_set = _scores.pairwise_track_set
 reliability_bin_table = _calibration_diagnostics.reliability_bin_table

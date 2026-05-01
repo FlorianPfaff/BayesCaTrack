@@ -13,7 +13,9 @@ __all__ = (
     "CalibrationBinRow",
     "brier_score",
     "calibration_summary",
+    "expected_calibration_error",
     "format_reliability_bin_table",
+    "maximum_calibration_error",
     "reliability_bin_table",
 )
 
@@ -68,6 +70,20 @@ def reliability_bin_table(
     return rows
 
 
+def expected_calibration_error(probabilities: Any, labels: Any, *, n_bins: int = 10) -> float:
+    """Return equal-width expected calibration error for binary probabilities."""
+
+    rows = reliability_bin_table(probabilities, labels, n_bins=n_bins, include_empty_bins=False)
+    return float(sum(float(row["weight"]) * float(row["absolute_calibration_error"]) for row in rows))
+
+
+def maximum_calibration_error(probabilities: Any, labels: Any, *, n_bins: int = 10) -> float:
+    """Return maximum equal-width calibration error over non-empty bins."""
+
+    rows = reliability_bin_table(probabilities, labels, n_bins=n_bins, include_empty_bins=False)
+    return float(max((float(row["absolute_calibration_error"]) for row in rows), default=0.0))
+
+
 def calibration_summary(
     probabilities: Any,
     labels: Any,
@@ -77,18 +93,23 @@ def calibration_summary(
     """Return Brier, ECE, and MCE-style scalar calibration diagnostics."""
 
     probabilities, labels = _validate_probability_label_inputs(probabilities, labels)
+    n_bins = _validate_n_bins(n_bins)
     rows = reliability_bin_table(probabilities, labels, n_bins=n_bins, include_empty_bins=False)
+    positive_examples = int(np.sum(labels))
+    expected_error = float(sum(float(row["weight"]) * float(row["absolute_calibration_error"]) for row in rows))
+    maximum_error = float(max((float(row["absolute_calibration_error"]) for row in rows), default=0.0))
     return {
         "calibration_examples": int(probabilities.shape[0]),
-        "calibration_bins": int(_validate_n_bins(n_bins)),
+        "calibration_positive_examples": positive_examples,
+        "calibration_negative_examples": int(probabilities.shape[0] - positive_examples),
+        "calibration_bins": int(n_bins),
+        "calibration_n_bins": int(n_bins),
         "calibration_occupied_bins": int(len(rows)),
         "calibration_brier_score": brier_score(probabilities, labels),
-        "calibration_expected_error": float(
-            sum(float(row["weight"]) * float(row["absolute_calibration_error"]) for row in rows)
-        ),
-        "calibration_maximum_error": float(
-            max((float(row["absolute_calibration_error"]) for row in rows), default=0.0)
-        ),
+        "calibration_expected_error": expected_error,
+        "calibration_ece": expected_error,
+        "calibration_maximum_error": maximum_error,
+        "calibration_mce": maximum_error,
         "calibration_mean_predicted_probability": float(np.mean(probabilities)),
         "calibration_empirical_positive_rate": float(np.mean(labels)),
     }
