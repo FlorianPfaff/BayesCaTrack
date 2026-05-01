@@ -3,12 +3,10 @@
 from . import complete_track_scores as _scores
 from . import track2p_metrics as _track2p_metrics
 
-DEFAULT_COMPLETE_TRACK_FIXED_PRECISIONS = _scores.DEFAULT_COMPLETE_TRACK_FIXED_PRECISIONS
 complete_track_set = _scores.complete_track_set
 normalize_track_matrix = _scores.normalize_track_matrix
 pairwise_track_set = _scores.pairwise_track_set
 score_complete_tracks = _scores.score_complete_tracks
-score_complete_tracks_at_fixed_precision = _scores.score_complete_tracks_at_fixed_precision
 score_pairwise_tracks = _scores.score_pairwise_tracks
 score_track_matrices = _scores.score_track_matrices
 summarize_tracks = _scores.summarize_tracks
