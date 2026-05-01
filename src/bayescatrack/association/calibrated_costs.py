@@ -22,6 +22,8 @@ DEFAULT_ASSOCIATION_FEATURES = (
     "one_minus_iou",
     "one_minus_mask_cosine",
     "area_ratio_cost",
+    "covariance_shape_cost",
+    "covariance_logdet_cost",
     "roi_feature_cost",
     "cell_probability_cost",
 )
@@ -40,6 +42,11 @@ class CalibratedAssociationModel:
         features = pairwise_feature_tensor(pairwise_components, feature_names=self.feature_names)
         return np.asarray(self.model.pairwise_cost_matrix(features), dtype=float)
 
+    def pairwise_cost_matrix_from_bundle(self, bundle: SessionAssociationBundle) -> np.ndarray:
+        """Convert a full association bundle into calibrated assignment costs."""
+
+        return self.pairwise_cost_matrix_from_components(pairwise_components_from_bundle(bundle))
+
 
 # pylint: disable=too-many-instance-attributes
 @dataclass(frozen=True)
@@ -54,6 +61,33 @@ class ReferenceTrainingOptions:
     regularization: float = 1.0e-6
     feature_names: tuple[str, ...] = DEFAULT_ASSOCIATION_FEATURES
     pairwise_cost_kwargs: Mapping[str, Any] | None = None
+
+
+def pairwise_components_from_bundle(
+    bundle: SessionAssociationBundle,
+    *,
+    covariance_epsilon: float = 1.0e-6,
+) -> dict[str, np.ndarray]:
+    """Return pairwise components augmented with covariance-shape similarities.
+
+    The base ROI-aware components are produced by ``CalciumPlaneData``. Covariance
+    terms are computed here from the PyRecEst-ready association bundle, so the
+    calibrated model can use shape/eccentricity evidence without changing the
+    generic pairwise-cost construction.
+    """
+
+    components = {key: np.asarray(value) for key, value in bundle.pairwise_components.items()}
+    covariance_shape_cost, covariance_logdet_cost, covariance_shape_similarity = (
+        _pairwise_covariance_shape_components(
+            _reference_position_covariances(bundle.reference_state_covariances),
+            _measurement_position_covariances(bundle.measurement_covariances),
+            epsilon=covariance_epsilon,
+        )
+    )
+    components.setdefault("covariance_shape_cost", covariance_shape_cost)
+    components.setdefault("covariance_logdet_cost", covariance_logdet_cost)
+    components.setdefault("covariance_shape_similarity", covariance_shape_similarity)
+    return components
 
 
 def pairwise_feature_tensor(
@@ -117,7 +151,8 @@ def collect_reference_training_examples(
         if session_a < 0 or session_b >= len(sessions) or session_a >= session_b:
             raise ValueError(f"Invalid training edge {(session_a, session_b)}")
         bundle = _build_training_bundle(sessions, session_a, session_b, options)
-        features = pairwise_feature_tensor(bundle.pairwise_components, feature_names=options.feature_names)
+        components = pairwise_components_from_bundle(bundle)
+        features = pairwise_feature_tensor(components, feature_names=options.feature_names)
         labels = label_matrix_from_reference(
             reference,
             session_a,
@@ -190,7 +225,7 @@ def calibrated_cost_matrix_from_bundle(
 ) -> np.ndarray:
     """Return calibrated assignment costs for one registration-aware association bundle."""
 
-    return calibrated_model.pairwise_cost_matrix_from_components(bundle.pairwise_components)
+    return calibrated_model.pairwise_cost_matrix_from_bundle(bundle)
 
 
 def _build_training_bundle(
@@ -222,6 +257,8 @@ def _component_feature(pairwise_components: Mapping[str, Any], feature_name: str
         return 1.0 - _finite_component(pairwise_components, "iou")
     if feature_name == "one_minus_mask_cosine":
         return 1.0 - _finite_component(pairwise_components, "mask_cosine_similarity")
+    if feature_name == "one_minus_covariance_shape_similarity":
+        return 1.0 - _finite_component(pairwise_components, "covariance_shape_similarity")
     return _finite_component(pairwise_components, feature_name)
 
 
@@ -232,3 +269,65 @@ def _finite_component(pairwise_components: Mapping[str, Any], component_name: st
     if values.ndim != 2:
         raise ValueError(f"Pairwise component {component_name!r} must be two-dimensional")
     return np.nan_to_num(values, nan=0.0, posinf=1.0e6, neginf=-1.0e6)
+
+
+def _reference_position_covariances(reference_state_covariances: Any) -> np.ndarray:
+    covariances = np.asarray(reference_state_covariances, dtype=float)
+    if covariances.ndim != 3 or covariances.shape[:2] != (4, 4):
+        raise ValueError("reference_state_covariances must have shape (4, 4, n_roi)")
+    return covariances[[0, 2], :, :][:, [0, 2], :]
+
+
+def _measurement_position_covariances(measurement_covariances: Any) -> np.ndarray:
+    covariances = np.asarray(measurement_covariances, dtype=float)
+    if covariances.ndim != 3 or covariances.shape[:2] != (2, 2):
+        raise ValueError("measurement_covariances must have shape (2, 2, n_roi)")
+    return covariances
+
+
+def _pairwise_covariance_shape_components(
+    covariances_self: np.ndarray,
+    covariances_other: np.ndarray,
+    *,
+    epsilon: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return covariance-based ROI shape and scale-difference components."""
+
+    covariances_self = np.asarray(covariances_self, dtype=float)
+    covariances_other = np.asarray(covariances_other, dtype=float)
+    if covariances_self.ndim != 3 or covariances_self.shape[:2] != (2, 2):
+        raise ValueError("covariances_self must have shape (2, 2, n_roi)")
+    if covariances_other.ndim != 3 or covariances_other.shape[:2] != (2, 2):
+        raise ValueError("covariances_other must have shape (2, 2, n_roi)")
+    if epsilon <= 0.0:
+        raise ValueError("epsilon must be strictly positive")
+
+    n_self = covariances_self.shape[2]
+    n_other = covariances_other.shape[2]
+    if n_self == 0 or n_other == 0:
+        empty = np.zeros((n_self, n_other), dtype=float)
+        return empty, empty.copy(), empty.copy()
+
+    covariances_self = 0.5 * (covariances_self + np.swapaxes(covariances_self, 0, 1))
+    covariances_other = 0.5 * (covariances_other + np.swapaxes(covariances_other, 0, 1))
+    moved_self = np.moveaxis(covariances_self, -1, 0)
+    moved_other = np.moveaxis(covariances_other, -1, 0)
+
+    traces_self = np.maximum(np.trace(moved_self, axis1=1, axis2=2), epsilon)
+    traces_other = np.maximum(np.trace(moved_other, axis1=1, axis2=2), epsilon)
+    normalized_self = moved_self / traces_self[:, None, None]
+    normalized_other = moved_other / traces_other[:, None, None]
+
+    shape_diffs = normalized_self[:, None, :, :] - normalized_other[None, :, :, :]
+    covariance_shape_cost = np.linalg.norm(shape_diffs, axis=(2, 3)) / np.sqrt(2.0)
+    covariance_shape_similarity = np.exp(-covariance_shape_cost)
+
+    determinants_self = np.maximum(np.linalg.det(moved_self), epsilon)
+    determinants_other = np.maximum(np.linalg.det(moved_other), epsilon)
+    covariance_logdet_cost = np.abs(np.log(determinants_self[:, None] / determinants_other[None, :]))
+
+    return (
+        np.nan_to_num(covariance_shape_cost, nan=0.0, posinf=1.0e6, neginf=0.0),
+        np.nan_to_num(covariance_logdet_cost, nan=0.0, posinf=1.0e6, neginf=0.0),
+        np.nan_to_num(covariance_shape_similarity, nan=0.0, posinf=1.0, neginf=0.0),
+    )
