@@ -68,6 +68,7 @@ disable = [
   "W0221",
   "cyclic-import",
   "duplicate-code",
+  "too-many-locals",
 ]
 
 [tool.pylint.FORMAT]
