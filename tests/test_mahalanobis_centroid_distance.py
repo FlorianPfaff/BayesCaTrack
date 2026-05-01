@@ -8,7 +8,7 @@ from bayescatrack.association.calibrated_costs import (
     DEFAULT_ASSOCIATION_FEATURES,
     pairwise_feature_tensor,
 )
-from bayescatrack.core import CalciumPlaneData
+from bayescatrack.core.bridge import CalciumPlaneData
 
 
 def _plane_from_rectangles(rectangles: list[tuple[int, int, int, int]]) -> CalciumPlaneData:
