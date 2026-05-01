@@ -1,10 +1,12 @@
 import numpy as np
 import numpy.testing as npt
+import pytest
 
 from bayescatrack.association.calibrated_costs import (
     DEFAULT_ASSOCIATION_FEATURES,
     pairwise_components_from_bundle,
     pairwise_feature_tensor,
+    with_session_gap_component,
 )
 from bayescatrack.core.bridge import SessionAssociationBundle
 
@@ -78,3 +80,23 @@ def test_default_calibrated_features_include_covariance_shape_components():
     assert "covariance_logdet_cost" in DEFAULT_ASSOCIATION_FEATURES
     assert features.shape == (1, 2, len(DEFAULT_ASSOCIATION_FEATURES))
     assert np.all(np.isfinite(features))
+
+
+def test_default_calibrated_features_include_session_gap_component():
+    reference_covariances = np.stack([np.diag([4.0, 1.0])], axis=-1)
+    measurement_covariances = np.stack([np.diag([4.0, 1.0]), np.diag([1.0, 4.0])], axis=-1)
+    components = pairwise_components_from_bundle(
+        _association_bundle(reference_covariances, measurement_covariances),
+        session_gap=2,
+    )
+    features = pairwise_feature_tensor(components, feature_names=DEFAULT_ASSOCIATION_FEATURES)
+    session_gap_index = DEFAULT_ASSOCIATION_FEATURES.index("session_gap")
+
+    assert "session_gap" in DEFAULT_ASSOCIATION_FEATURES
+    npt.assert_allclose(components["session_gap"], np.full((1, 2), 2.0))
+    npt.assert_allclose(features[:, :, session_gap_index], np.full((1, 2), 2.0))
+
+
+def test_session_gap_component_requires_positive_gap():
+    with pytest.raises(ValueError, match="session_gap must be positive"):
+        with_session_gap_component({"centroid_distance": np.zeros((1, 1))}, session_gap=0)

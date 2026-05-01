@@ -168,7 +168,7 @@ def score_track_matrices(
     session_pairs: Iterable[tuple[int, int]] | None = None,
     complete_session_indices: Sequence[int] | None = None,
 ) -> dict[str, float | int]:
-    """Return pairwise, complete-track, false-continuation, and length metrics."""
+    """Return pairwise, complete-track, false-continuation, length, and track-error metrics."""
     predicted = normalize_track_matrix(predicted_track_matrix)
     reference = normalize_track_matrix(reference_track_matrix)
     if predicted.shape[1] != reference.shape[1]:
@@ -178,6 +178,14 @@ def score_track_matrices(
     scores.update(score_complete_tracks(predicted, reference, session_indices=complete_session_indices))
     scores.update(score_false_continuations(predicted, reference, session_pairs=session_pairs))
     scores.update(summarize_tracks(predicted))
+
+    from .track_error_ledger import summarize_track_errors
+
+    track_error_scores = dict(summarize_track_errors(predicted, reference, session_pairs=session_pairs))
+    false_continuation_link_rate = track_error_scores.pop("false_continuation_rate", None)
+    scores.update(track_error_scores)
+    if false_continuation_link_rate is not None:
+        scores["false_continuation_link_rate"] = false_continuation_link_rate
     return scores
 
 

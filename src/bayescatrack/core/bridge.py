@@ -4,6 +4,9 @@
 
 from .._exports import BRIDGE_PUBLIC_NAMES
 from . import _bridge_impl
+from . import _mahalanobis as _mahalanobis
+
+_mahalanobis.install_mahalanobis_pairwise_features(_bridge_impl.CalciumPlaneData)
 
 CalciumPlaneData = _bridge_impl.CalciumPlaneData
 SessionAssociationBundle = _bridge_impl.SessionAssociationBundle

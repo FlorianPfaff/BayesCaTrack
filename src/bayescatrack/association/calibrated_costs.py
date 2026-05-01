@@ -22,6 +22,7 @@ _ACTIVITY_FEATURES = {
 
 DEFAULT_ASSOCIATION_FEATURES = (
     "centroid_distance",
+    "mahalanobis_centroid_distance",
     "one_minus_iou",
     "one_minus_mask_cosine",
     "area_ratio_cost",
@@ -31,6 +32,7 @@ DEFAULT_ASSOCIATION_FEATURES = (
     "cell_probability_cost",
     "activity_similarity_cost",
     "activity_similarity_available",
+    "session_gap",
 )
 
 
@@ -45,8 +47,17 @@ class CalibratedAssociationModel:
         features = pairwise_feature_tensor(pairwise_components, feature_names=self.feature_names)
         return np.asarray(self.model.pairwise_cost_matrix(features), dtype=float)
 
-    def pairwise_cost_matrix_from_bundle(self, bundle: SessionAssociationBundle) -> np.ndarray:
-        return self.pairwise_cost_matrix_from_components(pairwise_components_from_bundle(bundle))
+    def pairwise_cost_matrix_from_bundle(
+        self,
+        bundle: SessionAssociationBundle,
+        *,
+        session_gap: int | float = 1.0,
+    ) -> np.ndarray:
+        """Convert a full association bundle into calibrated assignment costs."""
+
+        return self.pairwise_cost_matrix_from_components(
+            pairwise_components_from_bundle(bundle, session_gap=session_gap)
+        )
 
     def pairwise_probability_matrix_from_components(self, pairwise_components: Mapping[str, Any]) -> np.ndarray:
         """Convert pairwise components into calibrated match probabilities."""
@@ -54,10 +65,17 @@ class CalibratedAssociationModel:
         features = pairwise_feature_tensor(pairwise_components, feature_names=self.feature_names)
         return self.predict_match_probability(features)
 
-    def pairwise_probability_matrix_from_bundle(self, bundle: SessionAssociationBundle) -> np.ndarray:
+    def pairwise_probability_matrix_from_bundle(
+        self,
+        bundle: SessionAssociationBundle,
+        *,
+        session_gap: int | float = 1.0,
+    ) -> np.ndarray:
         """Convert a full association bundle into calibrated match probabilities."""
 
-        return self.pairwise_probability_matrix_from_components(pairwise_components_from_bundle(bundle))
+        return self.pairwise_probability_matrix_from_components(
+            pairwise_components_from_bundle(bundle, session_gap=session_gap)
+        )
 
     def predict_match_probability(self, features: Any) -> np.ndarray:
         """Return calibrated match probabilities for feature vectors or pairwise tensors."""
@@ -89,8 +107,30 @@ class ReferenceTrainingOptions:
     pairwise_cost_kwargs: Mapping[str, Any] | None = None
 
 
-def pairwise_components_from_bundle(bundle: SessionAssociationBundle, *, covariance_epsilon: float = 1.0e-6) -> dict[str, np.ndarray]:
-    """Return base pairwise components augmented with covariance-shape terms."""
+@dataclass(frozen=True)
+class ReferencePairwiseExamples:
+    """Labeled candidate ROI pairs for one registered session edge."""
+
+    session_a: int
+    session_b: int
+    features: np.ndarray
+    labels: np.ndarray
+    reference_roi_indices: np.ndarray
+    measurement_roi_indices: np.ndarray
+    feature_names: tuple[str, ...]
+
+    @property
+    def gap(self) -> int:
+        return int(self.session_b - self.session_a)
+
+
+def pairwise_components_from_bundle(
+    bundle: SessionAssociationBundle,
+    *,
+    covariance_epsilon: float = 1.0e-6,
+    session_gap: int | float = 1.0,
+) -> dict[str, np.ndarray]:
+    """Return base pairwise components augmented with covariance-shape and session-gap terms."""
 
     components = {key: np.asarray(value) for key, value in bundle.pairwise_components.items()}
     covariance_shape_cost, covariance_logdet_cost, covariance_shape_similarity = _pairwise_covariance_shape_components(
@@ -101,6 +141,26 @@ def pairwise_components_from_bundle(bundle: SessionAssociationBundle, *, covaria
     components.setdefault("covariance_shape_cost", covariance_shape_cost)
     components.setdefault("covariance_logdet_cost", covariance_logdet_cost)
     components.setdefault("covariance_shape_similarity", covariance_shape_similarity)
+    return with_session_gap_component(components, session_gap=session_gap)
+
+
+def with_session_gap_component(
+    pairwise_components: Mapping[str, Any],
+    *,
+    session_gap: int | float,
+) -> dict[str, np.ndarray]:
+    """Return pairwise components augmented with a constant positive session-gap plane."""
+
+    session_gap = float(session_gap)
+    if session_gap <= 0.0:
+        raise ValueError("session_gap must be positive")
+    components = {key: np.asarray(value) for key, value in pairwise_components.items()}
+    if not components:
+        raise ValueError("At least one pairwise component is required to infer the session-gap shape")
+    reference_shape = next(iter(components.values())).shape
+    if len(reference_shape) != 2:
+        raise ValueError("Pairwise components must be two-dimensional")
+    components["session_gap"] = np.full(reference_shape, session_gap, dtype=float)
     return components
 
 
@@ -151,15 +211,37 @@ def collect_reference_training_examples(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Collect pairwise feature vectors and binary labels from Track2p reference identities."""
 
+    example_blocks = collect_reference_pairwise_example_blocks(
+        sessions,
+        reference,
+        session_edges=session_edges,
+        options=options,
+    )
+    feature_blocks = [block.features.reshape(-1, block.features.shape[-1]) for block in example_blocks]
+    label_blocks = [block.labels.reshape(-1) for block in example_blocks]
+    if not feature_blocks:
+        raise ValueError("At least one training edge is required")
+    return np.concatenate(feature_blocks, axis=0), np.concatenate(label_blocks, axis=0)
+
+
+def collect_reference_pairwise_example_blocks(
+    sessions: Sequence[Track2pSession],
+    reference: Track2pReference,
+    *,
+    session_edges: Sequence[tuple[int, int]],
+    options: ReferenceTrainingOptions | None = None,
+) -> tuple[ReferencePairwiseExamples, ...]:
+    """Collect labeled pairwise feature tensors with ROI and session metadata."""
+
     sessions = list(sessions)
     options = options or ReferenceTrainingOptions()
-    feature_blocks: list[np.ndarray] = []
-    label_blocks: list[np.ndarray] = []
+    blocks: list[ReferencePairwiseExamples] = []
     for session_a, session_b in session_edges:
         if session_a < 0 or session_b >= len(sessions) or session_a >= session_b:
             raise ValueError(f"Invalid training edge {(session_a, session_b)}")
         bundle = _build_training_bundle(sessions, session_a, session_b, options)
-        features = pairwise_feature_tensor(pairwise_components_from_bundle(bundle), feature_names=options.feature_names)
+        components = pairwise_components_from_bundle(bundle, session_gap=session_b - session_a)
+        features = pairwise_feature_tensor(components, feature_names=options.feature_names)
         labels = label_matrix_from_reference(
             reference,
             session_a,
@@ -168,11 +250,20 @@ def collect_reference_training_examples(
             measurement_roi_indices=bundle.measurement_roi_indices,
             curated_only=options.curated_only,
         )
-        feature_blocks.append(features.reshape(-1, features.shape[-1]))
-        label_blocks.append(labels.reshape(-1))
-    if not feature_blocks:
+        blocks.append(
+            ReferencePairwiseExamples(
+                session_a=int(session_a),
+                session_b=int(session_b),
+                features=features,
+                labels=labels,
+                reference_roi_indices=np.asarray(bundle.reference_roi_indices, dtype=int).reshape(-1),
+                measurement_roi_indices=np.asarray(bundle.measurement_roi_indices, dtype=int).reshape(-1),
+                feature_names=tuple(options.feature_names),
+            )
+        )
+    if not blocks:
         raise ValueError("At least one training edge is required")
-    return np.concatenate(feature_blocks, axis=0), np.concatenate(label_blocks, axis=0)
+    return tuple(blocks)
 
 
 def fit_logistic_association_model(
@@ -211,10 +302,15 @@ def fit_logistic_association_model_from_reference(
     return fit_logistic_association_model(features, labels, feature_names=options.feature_names, sample_weight=sample_weight, model_kwargs=model_kwargs)
 
 
-def calibrated_cost_matrix_from_bundle(bundle: SessionAssociationBundle, calibrated_model: CalibratedAssociationModel) -> np.ndarray:
+def calibrated_cost_matrix_from_bundle(
+    bundle: SessionAssociationBundle,
+    calibrated_model: CalibratedAssociationModel,
+    *,
+    session_gap: int | float = 1.0,
+) -> np.ndarray:
     """Return calibrated assignment costs for one registration-aware association bundle."""
 
-    return calibrated_model.pairwise_cost_matrix_from_bundle(bundle)
+    return calibrated_model.pairwise_cost_matrix_from_bundle(bundle, session_gap=session_gap)
 
 
 def _build_training_bundle(sessions: Sequence[Track2pSession], session_a: int, session_b: int, options: ReferenceTrainingOptions) -> SessionAssociationBundle:
@@ -245,6 +341,8 @@ def _component_feature(pairwise_components: Mapping[str, Any], feature_name: str
         return 1.0 - _finite_component(pairwise_components, "activity_similarity")
     if feature_name in _ACTIVITY_FEATURES and feature_name not in pairwise_components:
         return _zero_like_pairwise_component(pairwise_components)
+    if feature_name == "session_gap" and feature_name not in pairwise_components:
+        return np.ones_like(_zero_like_pairwise_component(pairwise_components))
     return _finite_component(pairwise_components, feature_name)
 
 

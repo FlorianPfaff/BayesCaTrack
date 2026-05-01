@@ -11,7 +11,9 @@ on:
       - "pyproject.toml"
       - "poetry.lock"
       - "README.md"
+      - ".github/scripts/**"
       - ".github/workflows/bayescatrack-ci.yml"
+      - ".github/workflows/track2p-benchmark.yml"
   pull_request:
     branches:
       - main
@@ -22,7 +24,9 @@ on:
       - "pyproject.toml"
       - "poetry.lock"
       - "README.md"
+      - ".github/scripts/**"
       - ".github/workflows/bayescatrack-ci.yml"
+      - ".github/workflows/track2p-benchmark.yml"
   workflow_dispatch:
 
 permissions:
