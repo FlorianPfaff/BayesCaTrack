@@ -3,8 +3,10 @@ import pytest
 
 from bayescatrack.evaluation.complete_track_scores import (
     complete_track_set,
+    identity_switch_events,
     pairwise_track_set,
     score_complete_tracks,
+    score_identity_switches,
     score_pairwise_tracks,
     score_track_matrices,
     track_lengths,
@@ -51,6 +53,63 @@ def test_complete_track_and_pairwise_scoring():
     assert scores["complete_tracks"] == 2
     assert scores["mean_track_length"] == pytest.approx(8 / 3)
     np.testing.assert_array_equal(track_lengths(predicted), np.array([3, 2, 3]))
+
+
+def test_identity_switch_diagnostics_count_reference_track_changes():
+    reference = np.array(
+        [
+            [0, 10, 20, 30],
+            [1, 11, 21, 31],
+        ],
+        dtype=object,
+    )
+    predicted = np.array(
+        [
+            [0, 10, None, None],
+            [None, None, 20, 30],
+            [1, 11, 21, 31],
+        ],
+        dtype=object,
+    )
+
+    assert identity_switch_events(predicted, reference) == [
+        {
+            "reference_track": 0,
+            "previous_session": 1,
+            "session": 2,
+            "previous_predicted_track": 0,
+            "predicted_track": 1,
+            "previous_roi": 10,
+            "roi": 20,
+        }
+    ]
+
+    scores = score_identity_switches(predicted, reference)
+    assert scores["identity_switches"] == 1
+    assert scores["reference_tracks"] == 2
+    assert scores["reference_tracks_with_predictions"] == 2
+    assert scores["reference_tracks_with_identity_switches"] == 1
+    assert scores["identity_switches_per_reference_track"] == pytest.approx(0.5)
+    assert scores["identity_switches_per_matched_reference_track"] == pytest.approx(0.5)
+
+    matrix_scores = score_track_matrices(predicted, reference)
+    assert matrix_scores["identity_switches"] == 1
+
+
+def test_identity_switch_diagnostics_ignore_misses_without_track_change():
+    reference = np.array([[0, 10, 20]], dtype=object)
+    predicted = np.array([[0, None, 20]], dtype=object)
+
+    assert identity_switch_events(predicted, reference) == []
+    assert score_identity_switches(predicted, reference)["identity_switches"] == 0
+
+
+def test_identity_switch_diagnostics_reject_duplicate_predicted_roi_in_session():
+    reference = np.array([[0, 10]], dtype=object)
+    predicted = np.array([[0, 10], [0, None]], dtype=object)
+
+    with pytest.raises(ValueError, match="ROI 0 more than once in session 0"):
+        score_identity_switches(predicted, reference)
 
 
 def test_complete_tracks_at_fixed_precision_sweeps_scored_thresholds():
