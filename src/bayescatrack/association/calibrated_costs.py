@@ -89,6 +89,23 @@ class ReferenceTrainingOptions:
     pairwise_cost_kwargs: Mapping[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class ReferencePairwiseExamples:
+    """Labeled candidate ROI pairs for one registered session edge."""
+
+    session_a: int
+    session_b: int
+    features: np.ndarray
+    labels: np.ndarray
+    reference_roi_indices: np.ndarray
+    measurement_roi_indices: np.ndarray
+    feature_names: tuple[str, ...]
+
+    @property
+    def gap(self) -> int:
+        return int(self.session_b - self.session_a)
+
+
 def pairwise_components_from_bundle(bundle: SessionAssociationBundle, *, covariance_epsilon: float = 1.0e-6) -> dict[str, np.ndarray]:
     """Return base pairwise components augmented with covariance-shape terms."""
 
@@ -151,10 +168,31 @@ def collect_reference_training_examples(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Collect pairwise feature vectors and binary labels from Track2p reference identities."""
 
+    example_blocks = collect_reference_pairwise_example_blocks(
+        sessions,
+        reference,
+        session_edges=session_edges,
+        options=options,
+    )
+    feature_blocks = [block.features.reshape(-1, block.features.shape[-1]) for block in example_blocks]
+    label_blocks = [block.labels.reshape(-1) for block in example_blocks]
+    if not feature_blocks:
+        raise ValueError("At least one training edge is required")
+    return np.concatenate(feature_blocks, axis=0), np.concatenate(label_blocks, axis=0)
+
+
+def collect_reference_pairwise_example_blocks(
+    sessions: Sequence[Track2pSession],
+    reference: Track2pReference,
+    *,
+    session_edges: Sequence[tuple[int, int]],
+    options: ReferenceTrainingOptions | None = None,
+) -> tuple[ReferencePairwiseExamples, ...]:
+    """Collect labeled pairwise feature tensors with ROI and session metadata."""
+
     sessions = list(sessions)
     options = options or ReferenceTrainingOptions()
-    feature_blocks: list[np.ndarray] = []
-    label_blocks: list[np.ndarray] = []
+    blocks: list[ReferencePairwiseExamples] = []
     for session_a, session_b in session_edges:
         if session_a < 0 or session_b >= len(sessions) or session_a >= session_b:
             raise ValueError(f"Invalid training edge {(session_a, session_b)}")
@@ -168,11 +206,20 @@ def collect_reference_training_examples(
             measurement_roi_indices=bundle.measurement_roi_indices,
             curated_only=options.curated_only,
         )
-        feature_blocks.append(features.reshape(-1, features.shape[-1]))
-        label_blocks.append(labels.reshape(-1))
-    if not feature_blocks:
+        blocks.append(
+            ReferencePairwiseExamples(
+                session_a=int(session_a),
+                session_b=int(session_b),
+                features=features,
+                labels=labels,
+                reference_roi_indices=np.asarray(bundle.reference_roi_indices, dtype=int).reshape(-1),
+                measurement_roi_indices=np.asarray(bundle.measurement_roi_indices, dtype=int).reshape(-1),
+                feature_names=tuple(options.feature_names),
+            )
+        )
+    if not blocks:
         raise ValueError("At least one training edge is required")
-    return np.concatenate(feature_blocks, axis=0), np.concatenate(label_blocks, axis=0)
+    return tuple(blocks)
 
 
 def fit_logistic_association_model(
