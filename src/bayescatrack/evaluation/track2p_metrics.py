@@ -14,9 +14,12 @@ from .calibration_metrics import brier_score
 from .complete_track_scores import *  # noqa: F401,F403
 from .complete_track_scores import __all__ as _complete_track_score_exports
 from .complete_track_scores import normalize_track_matrix, score_track_matrices
+from .track_error_ledger import *  # noqa: F401,F403
+from .track_error_ledger import __all__ as _track_error_ledger_exports
 
 __all__ = [
     *_complete_track_score_exports,
+    *_track_error_ledger_exports,
     "brier_score",
     "score_track_matrix_against_reference",
 ]
