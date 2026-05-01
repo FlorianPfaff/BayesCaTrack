@@ -5,6 +5,7 @@ from bayescatrack.evaluation.complete_track_scores import (
     complete_track_set,
     pairwise_track_set,
     score_complete_tracks,
+    score_false_continuations,
     score_pairwise_tracks,
     score_track_matrices,
     track_lengths,
@@ -51,6 +52,48 @@ def test_complete_track_and_pairwise_scoring():
     assert scores["complete_tracks"] == 2
     assert scores["mean_track_length"] == pytest.approx(8 / 3)
     np.testing.assert_array_equal(track_lengths(predicted), np.array([3, 2, 3]))
+
+
+def test_false_continuation_rate_counts_labeled_wrong_continuations():
+    reference = np.array(
+        [
+            [0, 10, None],
+            [1, None, 21],
+        ],
+        dtype=object,
+    )
+    predicted = np.array(
+        [
+            [0, 10, 30],
+            [1, 11, 21],
+            [99, 100, 101],
+        ],
+        dtype=object,
+    )
+
+    scores = score_false_continuations(predicted, reference)
+
+    assert scores["valid_continuations"] == 1
+    assert scores["false_continuations"] == 2
+    assert scores["labeled_predicted_continuations"] == 3
+    assert scores["unknown_source_continuations"] == 3
+    assert scores["false_continuation_rate"] == pytest.approx(2 / 3)
+
+    combined_scores = score_track_matrices(predicted, reference)
+    assert combined_scores["false_continuation_rate"] == pytest.approx(2 / 3)
+
+
+def test_false_continuation_rate_uses_requested_session_pairs():
+    reference = np.array([[0, None, 20]], dtype=object)
+    predicted = np.array([[0, 10, 20]], dtype=object)
+
+    adjacent_scores = score_false_continuations(predicted, reference)
+    assert adjacent_scores["false_continuations"] == 1
+    assert adjacent_scores["unknown_source_continuations"] == 1
+
+    skip_scores = score_false_continuations(predicted, reference, session_pairs=[(0, 2)])
+    assert skip_scores["valid_continuations"] == 1
+    assert skip_scores["false_continuation_rate"] == pytest.approx(0.0)
 
 
 def test_complete_tracks_at_fixed_precision_sweeps_scored_thresholds():
