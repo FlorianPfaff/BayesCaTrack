@@ -1,13 +1,15 @@
 """Calibration diagnostics for pairwise association probabilities."""
 
+# pylint: disable=undefined-all-variable
+
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, TypeAlias
 
 import numpy as np
 
-CalibrationBinRow = dict[str, float | int | None]
+CalibrationBinRow: TypeAlias = dict[str, float | int | None]
 
 __all__ = (
     "CalibrationBinRow",
@@ -74,14 +76,25 @@ def expected_calibration_error(probabilities: Any, labels: Any, *, n_bins: int =
     """Return equal-width expected calibration error for binary probabilities."""
 
     rows = reliability_bin_table(probabilities, labels, n_bins=n_bins, include_empty_bins=False)
-    return float(sum(float(row["weight"]) * float(row["absolute_calibration_error"]) for row in rows))
+    return float(
+        sum(
+            _required_float(row, "weight")
+            * _required_float(row, "absolute_calibration_error")
+            for row in rows
+        )
+    )
 
 
 def maximum_calibration_error(probabilities: Any, labels: Any, *, n_bins: int = 10) -> float:
     """Return maximum equal-width calibration error over non-empty bins."""
 
     rows = reliability_bin_table(probabilities, labels, n_bins=n_bins, include_empty_bins=False)
-    return float(max((float(row["absolute_calibration_error"]) for row in rows), default=0.0))
+    return float(
+        max(
+            (_required_float(row, "absolute_calibration_error") for row in rows),
+            default=0.0,
+        )
+    )
 
 
 def calibration_summary(
@@ -96,8 +109,19 @@ def calibration_summary(
     n_bins = _validate_n_bins(n_bins)
     rows = reliability_bin_table(probabilities, labels, n_bins=n_bins, include_empty_bins=False)
     positive_examples = int(np.sum(labels))
-    expected_error = float(sum(float(row["weight"]) * float(row["absolute_calibration_error"]) for row in rows))
-    maximum_error = float(max((float(row["absolute_calibration_error"]) for row in rows), default=0.0))
+    expected_error = float(
+        sum(
+            _required_float(row, "weight")
+            * _required_float(row, "absolute_calibration_error")
+            for row in rows
+        )
+    )
+    maximum_error = float(
+        max(
+            (_required_float(row, "absolute_calibration_error") for row in rows),
+            default=0.0,
+        )
+    )
     return {
         "calibration_examples": int(probabilities.shape[0]),
         "calibration_positive_examples": positive_examples,
@@ -190,6 +214,13 @@ def _empty_bin_row(bin_index: int, edges: np.ndarray) -> CalibrationBinRow:
         "bin_brier_score": None,
         "weight": 0.0,
     }
+
+
+def _required_float(row: Mapping[str, object], key: str) -> float:
+    value = row[key]
+    if value is None:
+        raise ValueError(f"Reliability bin row {key!r} must not be empty")
+    return float(value)
 
 
 def _format_table_value(value: object) -> str:
