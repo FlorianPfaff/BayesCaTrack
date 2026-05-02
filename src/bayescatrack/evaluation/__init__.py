@@ -6,6 +6,7 @@ from . import track2p_metrics as _track2p_metrics
 from . import track_error_ledger as _track_error_ledger
 
 brier_score = _calibration_diagnostics.brier_score
+CalibrationBinRow = _calibration_diagnostics.CalibrationBinRow
 calibration_summary = _calibration_diagnostics.calibration_summary
 complete_track_set = _scores.complete_track_set
 expected_calibration_error = _calibration_diagnostics.expected_calibration_error
