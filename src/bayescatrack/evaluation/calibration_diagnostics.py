@@ -216,7 +216,7 @@ def _empty_bin_row(bin_index: int, edges: np.ndarray) -> CalibrationBinRow:
     }
 
 
-def _required_float(row: Mapping[str, object], key: str) -> float:
+def _required_float(row: Mapping[str, float | int | None], key: str) -> float:
     value = row[key]
     if value is None:
         raise ValueError(f"Reliability bin row {key!r} must not be empty")
