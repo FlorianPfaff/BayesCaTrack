@@ -6,7 +6,6 @@ from typing import Any
 
 import numpy as np
 
-
 _MAHALANOBIS_INSTALLED_ATTR = "_bayescatrack_mahalanobis_installed"
 
 
@@ -59,7 +58,10 @@ def install_mahalanobis_pairwise_features(calcium_plane_cls: type[Any]) -> None:
         distances = np.zeros((self.n_rois, other.n_rois), dtype=float)
         for reference_index in range(self.n_rois):
             for measurement_index in range(other.n_rois):
-                diff = centroids_self[:, reference_index] - centroids_other[:, measurement_index]
+                diff = (
+                    centroids_self[:, reference_index]
+                    - centroids_other[:, measurement_index]
+                )
                 covariance = (
                     covariances_self[:, :, reference_index]
                     + covariances_other[:, :, measurement_index]
@@ -131,10 +133,16 @@ def install_mahalanobis_pairwise_features(calcium_plane_cls: type[Any]) -> None:
             regularization=mahalanobis_regularization,
         )
         mahalanobis_cost = mahalanobis_distances**2
-        total_cost = np.asarray(base_cost, dtype=float) + mahalanobis_weight * mahalanobis_cost
-        gated = np.asarray(components.get("gated", np.zeros_like(total_cost, dtype=bool)), dtype=bool)
+        total_cost = (
+            np.asarray(base_cost, dtype=float) + mahalanobis_weight * mahalanobis_cost
+        )
+        gated = np.asarray(
+            components.get("gated", np.zeros_like(total_cost, dtype=bool)), dtype=bool
+        )
         total_cost = np.where(gated, large_cost, total_cost)
-        total_cost = np.nan_to_num(total_cost, nan=large_cost, posinf=large_cost, neginf=large_cost)
+        total_cost = np.nan_to_num(
+            total_cost, nan=large_cost, posinf=large_cost, neginf=large_cost
+        )
 
         components["pairwise_cost_matrix"] = total_cost
         components["mahalanobis_centroid_distance"] = mahalanobis_distances
@@ -144,6 +152,8 @@ def install_mahalanobis_pairwise_features(calcium_plane_cls: type[Any]) -> None:
             return total_cost, components
         return total_cost
 
-    calcium_plane_cls.pairwise_mahalanobis_centroid_distances = pairwise_mahalanobis_centroid_distances
+    calcium_plane_cls.pairwise_mahalanobis_centroid_distances = (
+        pairwise_mahalanobis_centroid_distances
+    )
     calcium_plane_cls.build_pairwise_cost_matrix = build_pairwise_cost_matrix
     setattr(calcium_plane_cls, _MAHALANOBIS_INSTALLED_ATTR, True)

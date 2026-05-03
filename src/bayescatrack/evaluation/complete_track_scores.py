@@ -41,10 +41,14 @@ def track_lengths(track_matrix: Any) -> np.ndarray:
     matrix = normalize_track_matrix(track_matrix)
     if matrix.shape[0] == 0:
         return np.zeros((0,), dtype=int)
-    return np.asarray([sum(value is not None for value in row) for row in matrix], dtype=int)
+    return np.asarray(
+        [sum(value is not None for value in row) for row in matrix], dtype=int
+    )
 
 
-def complete_track_set(track_matrix: Any, *, session_indices: Sequence[int] | None = None) -> set[tuple[int, ...]]:
+def complete_track_set(
+    track_matrix: Any, *, session_indices: Sequence[int] | None = None
+) -> set[tuple[int, ...]]:
     """Return exact full-track tuples for tracks present in every selected session."""
     matrix = normalize_track_matrix(track_matrix)
     selected_sessions = _selected_sessions(matrix, session_indices)
@@ -88,7 +92,9 @@ def reference_fragment_counts(
     predicted = normalize_track_matrix(predicted_track_matrix)
     reference = normalize_track_matrix(reference_track_matrix)
     if predicted.shape[1] != reference.shape[1]:
-        raise ValueError("Predicted and reference matrices must have the same number of sessions")
+        raise ValueError(
+            "Predicted and reference matrices must have the same number of sessions"
+        )
 
     predicted_lookup = _predicted_track_lookup(predicted)
     fragment_counts = np.zeros(reference.shape[0], dtype=int)
@@ -97,7 +103,9 @@ def reference_fragment_counts(
         for session_idx, roi in enumerate(reference_row):
             if roi is None:
                 continue
-            covering_predicted_tracks.update(predicted_lookup.get((int(session_idx), int(roi)), ()))
+            covering_predicted_tracks.update(
+                predicted_lookup.get((int(session_idx), int(roi)), ())
+            )
         fragment_counts[reference_idx] = len(covering_predicted_tracks)
     return fragment_counts
 
@@ -109,8 +117,12 @@ def score_complete_tracks(
     session_indices: Sequence[int] | None = None,
 ) -> dict[str, float | int]:
     """Score exact complete-track recovery with precision, recall, and F1."""
-    predicted = complete_track_set(predicted_track_matrix, session_indices=session_indices)
-    reference = complete_track_set(reference_track_matrix, session_indices=session_indices)
+    predicted = complete_track_set(
+        predicted_track_matrix, session_indices=session_indices
+    )
+    reference = complete_track_set(
+        reference_track_matrix, session_indices=session_indices
+    )
     return _score_identity_sets(
         predicted,
         reference,
@@ -148,7 +160,9 @@ def score_false_continuations(
     predicted = normalize_track_matrix(predicted_track_matrix)
     reference = normalize_track_matrix(reference_track_matrix)
     if predicted.shape[1] != reference.shape[1]:
-        raise ValueError("Predicted and reference matrices must have the same number of sessions")
+        raise ValueError(
+            "Predicted and reference matrices must have the same number of sessions"
+        )
 
     reference_lookup = _reference_roi_lookup(reference)
     valid: set[tuple[int, int, int, int]] = set()
@@ -202,7 +216,9 @@ def score_fragmentation(
     covered_mask = valid_fragment_counts > 0
     covered_reference_tracks = int(np.count_nonzero(covered_mask))
     fragmented_reference_tracks = int(np.count_nonzero(valid_fragment_counts > 1))
-    fragmentation_events = int(np.sum(np.maximum(valid_fragment_counts - 1, 0), dtype=int))
+    fragmentation_events = int(
+        np.sum(np.maximum(valid_fragment_counts - 1, 0), dtype=int)
+    )
     fragments = int(np.sum(valid_fragment_counts, dtype=int))
 
     return {
@@ -211,10 +227,18 @@ def score_fragmentation(
         "fragmentation_fragmented_reference_tracks": fragmented_reference_tracks,
         "fragmentation_fragments": fragments,
         "fragmentation_events": fragmentation_events,
-        "fragmentation_rate": _zero_ratio(fragmented_reference_tracks, reference_tracks),
-        "fragmentation_covered_rate": _zero_ratio(fragmented_reference_tracks, covered_reference_tracks),
-        "fragmentation_mean_fragments_per_reference_track": _mean_or_zero(valid_fragment_counts),
-        "fragmentation_mean_fragments_per_covered_reference_track": _mean_or_zero(valid_fragment_counts[covered_mask]),
+        "fragmentation_rate": _zero_ratio(
+            fragmented_reference_tracks, reference_tracks
+        ),
+        "fragmentation_covered_rate": _zero_ratio(
+            fragmented_reference_tracks, covered_reference_tracks
+        ),
+        "fragmentation_mean_fragments_per_reference_track": _mean_or_zero(
+            valid_fragment_counts
+        ),
+        "fragmentation_mean_fragments_per_covered_reference_track": _mean_or_zero(
+            valid_fragment_counts[covered_mask]
+        ),
         "fragmentation_max_fragments_per_reference_track": (
             int(np.max(valid_fragment_counts)) if reference_tracks else 0
         ),
@@ -243,18 +267,32 @@ def score_track_matrices(
     predicted = normalize_track_matrix(predicted_track_matrix)
     reference = normalize_track_matrix(reference_track_matrix)
     if predicted.shape[1] != reference.shape[1]:
-        raise ValueError("Predicted and reference matrices must have the same number of sessions")
+        raise ValueError(
+            "Predicted and reference matrices must have the same number of sessions"
+        )
     scores: dict[str, float | int] = {}
-    scores.update(score_pairwise_tracks(predicted, reference, session_pairs=session_pairs))
-    scores.update(score_complete_tracks(predicted, reference, session_indices=complete_session_indices))
-    scores.update(score_false_continuations(predicted, reference, session_pairs=session_pairs))
+    scores.update(
+        score_pairwise_tracks(predicted, reference, session_pairs=session_pairs)
+    )
+    scores.update(
+        score_complete_tracks(
+            predicted, reference, session_indices=complete_session_indices
+        )
+    )
+    scores.update(
+        score_false_continuations(predicted, reference, session_pairs=session_pairs)
+    )
     scores.update(score_fragmentation(predicted, reference))
     scores.update(summarize_tracks(predicted))
 
     from .track_error_ledger import summarize_track_errors
 
-    track_error_scores = dict(summarize_track_errors(predicted, reference, session_pairs=session_pairs))
-    false_continuation_link_rate = track_error_scores.pop("false_continuation_rate", None)
+    track_error_scores = dict(
+        summarize_track_errors(predicted, reference, session_pairs=session_pairs)
+    )
+    false_continuation_link_rate = track_error_scores.pop(
+        "false_continuation_rate", None
+    )
     scores.update(track_error_scores)
     if false_continuation_link_rate is not None:
         scores["false_continuation_link_rate"] = false_continuation_link_rate
@@ -269,8 +307,12 @@ def _score_identity_sets(
     predicted_total_name: str,
     reference_total_name: str,
 ) -> dict[str, float | int]:
-    true_positives, false_positives, false_negatives = _confusion_counts(predicted, reference)
-    precision, recall, f1 = _precision_recall_f1(true_positives, false_positives, false_negatives)
+    true_positives, false_positives, false_negatives = _confusion_counts(
+        predicted, reference
+    )
+    precision, recall, f1 = _precision_recall_f1(
+        true_positives, false_positives, false_negatives
+    )
     return {
         f"{prefix}_true_positives": true_positives,
         f"{prefix}_false_positives": false_positives,
@@ -284,10 +326,16 @@ def _score_identity_sets(
 
 
 def _confusion_counts(predicted: set[Any], reference: set[Any]) -> tuple[int, int, int]:
-    return len(predicted & reference), len(predicted - reference), len(reference - predicted)
+    return (
+        len(predicted & reference),
+        len(predicted - reference),
+        len(reference - predicted),
+    )
 
 
-def _precision_recall_f1(true_positives: int, false_positives: int, false_negatives: int) -> tuple[float, float, float]:
+def _precision_recall_f1(
+    true_positives: int, false_positives: int, false_negatives: int
+) -> tuple[float, float, float]:
     precision = _safe_ratio(true_positives, true_positives + false_positives)
     recall = _safe_ratio(true_positives, true_positives + false_negatives)
     return precision, recall, _safe_ratio(2.0 * precision * recall, precision + recall)
@@ -345,15 +393,27 @@ def _optional_int_candidate(value: Any) -> Any:
     return value
 
 
-def _selected_sessions(matrix: np.ndarray, session_indices: Sequence[int] | None) -> list[int]:
-    selected = list(range(matrix.shape[1])) if session_indices is None else [int(idx) for idx in session_indices]
+def _selected_sessions(
+    matrix: np.ndarray, session_indices: Sequence[int] | None
+) -> list[int]:
+    selected = (
+        list(range(matrix.shape[1]))
+        if session_indices is None
+        else [int(idx) for idx in session_indices]
+    )
     for session_idx in selected:
         _validate_session_index(matrix, session_idx)
     return selected
 
 
-def _session_pairs(matrix: np.ndarray, session_pairs: Iterable[tuple[int, int]] | None) -> list[tuple[int, int]]:
-    pairs = [(idx, idx + 1) for idx in range(max(0, matrix.shape[1] - 1))] if session_pairs is None else list(session_pairs)
+def _session_pairs(
+    matrix: np.ndarray, session_pairs: Iterable[tuple[int, int]] | None
+) -> list[tuple[int, int]]:
+    pairs = (
+        [(idx, idx + 1) for idx in range(max(0, matrix.shape[1] - 1))]
+        if session_pairs is None
+        else list(session_pairs)
+    )
     for session_a, session_b in pairs:
         _validate_session_index(matrix, session_a)
         _validate_session_index(matrix, session_b)
@@ -364,7 +424,9 @@ def _session_pairs(matrix: np.ndarray, session_pairs: Iterable[tuple[int, int]] 
 
 def _validate_session_index(matrix: np.ndarray, session_idx: int) -> None:
     if session_idx < 0 or session_idx >= matrix.shape[1]:
-        raise IndexError(f"session index {session_idx} out of bounds for {matrix.shape[1]} sessions")
+        raise IndexError(
+            f"session index {session_idx} out of bounds for {matrix.shape[1]} sessions"
+        )
 
 
 def _safe_ratio(numerator: float, denominator: float) -> float:

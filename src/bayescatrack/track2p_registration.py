@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from typing import Any, Mapping, Sequence
 
 import numpy as np
-
 from bayescatrack import (
     CalciumPlaneData,
     SessionAssociationBundle,
@@ -78,7 +77,9 @@ def register_plane_pair(
         np.asarray(moving_plane.fov),
         SimpleNamespace(transform_type=transform_type),
     )
-    moving_support_masks_hw_n = np.moveaxis(np.asarray(moving_plane.roi_masks) > 0, 0, -1)
+    moving_support_masks_hw_n = np.moveaxis(
+        np.asarray(moving_plane.roi_masks) > 0, 0, -1
+    )
     registered_support_masks = _coerce_registered_roi_masks(
         itk_reg_all_roi(moving_support_masks_hw_n, reg_params),
         n_rois=moving_plane.n_rois,

@@ -1,6 +1,5 @@
 import numpy as np
 import numpy.testing as npt
-
 from bayescatrack.matching import build_track_rows_from_matches
 
 

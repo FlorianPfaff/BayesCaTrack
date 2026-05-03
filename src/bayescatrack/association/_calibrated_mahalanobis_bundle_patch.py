@@ -112,24 +112,25 @@ def _pairwise_mahalanobis_centroid_distances(
     if centroids_self.shape[1] != covariances_self.shape[2]:
         raise ValueError("centroids_self and covariances_self must have the same n_roi")
     if centroids_other.shape[1] != covariances_other.shape[2]:
-        raise ValueError("centroids_other and covariances_other must have the same n_roi")
+        raise ValueError(
+            "centroids_other and covariances_other must have the same n_roi"
+        )
 
     n_self = centroids_self.shape[1]
     n_other = centroids_other.shape[1]
     if n_self == 0 or n_other == 0:
         return np.zeros((n_self, n_other), dtype=float)
 
-    covariances_self = 0.5 * (
-        covariances_self + np.swapaxes(covariances_self, 0, 1)
-    )
-    covariances_other = 0.5 * (
-        covariances_other + np.swapaxes(covariances_other, 0, 1)
-    )
+    covariances_self = 0.5 * (covariances_self + np.swapaxes(covariances_self, 0, 1))
+    covariances_other = 0.5 * (covariances_other + np.swapaxes(covariances_other, 0, 1))
 
     distances = np.zeros((n_self, n_other), dtype=float)
     for reference_index in range(n_self):
         for measurement_index in range(n_other):
-            diff = centroids_self[:, reference_index] - centroids_other[:, measurement_index]
+            diff = (
+                centroids_self[:, reference_index]
+                - centroids_other[:, measurement_index]
+            )
             covariance = (
                 covariances_self[:, :, reference_index]
                 + covariances_other[:, :, measurement_index]

@@ -6,7 +6,6 @@ from collections.abc import Callable
 from typing import Any, TypeAlias, cast
 
 import numpy as np
-
 from bayescatrack.association.calibrated_costs import (
     DEFAULT_ASSOCIATION_FEATURES,
     pairwise_feature_tensor,
@@ -16,7 +15,9 @@ from bayescatrack.core.bridge import CalciumPlaneData
 CostMatrixResult: TypeAlias = np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]
 
 
-def _plane_from_rectangles(rectangles: list[tuple[int, int, int, int]]) -> CalciumPlaneData:
+def _plane_from_rectangles(
+    rectangles: list[tuple[int, int, int, int]],
+) -> CalciumPlaneData:
     masks = np.zeros((len(rectangles), 8, 8), dtype=bool)
     for roi_index, (row_start, col_start, row_stop, col_stop) in enumerate(rectangles):
         masks[roi_index, row_start:row_stop, col_start:col_stop] = True
@@ -40,7 +41,10 @@ def _build_pairwise_cost_matrix(
     measurement: CalciumPlaneData,
     **kwargs: Any,
 ) -> CostMatrixResult:
-    method = cast(Callable[..., CostMatrixResult], getattr(reference, "build_pairwise_cost_matrix"))
+    method = cast(
+        Callable[..., CostMatrixResult],
+        getattr(reference, "build_pairwise_cost_matrix"),
+    )
     return method(measurement, **kwargs)
 
 

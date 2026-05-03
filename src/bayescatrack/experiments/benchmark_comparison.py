@@ -33,11 +33,16 @@ def load_labeled_rows(inputs: Sequence[ComparisonInput]) -> list[dict[str, str]]
     return rows
 
 
-def aggregate_rows(rows: Sequence[dict[str, str]]) -> list[dict[str, float | int | str]]:
+def aggregate_rows(
+    rows: Sequence[dict[str, str]],
+) -> list[dict[str, float | int | str]]:
     """Aggregate subject-level benchmark rows by approach."""
 
     labels = tuple(dict.fromkeys(row["approach"] for row in rows))
-    return [_aggregate_approach(label, [row for row in rows if row["approach"] == label]) for label in labels]
+    return [
+        _aggregate_approach(label, [row for row in rows if row["approach"] == label])
+        for label in labels
+    ]
 
 
 def write_comparison(
@@ -143,7 +148,9 @@ def main(argv: list[str] | None = None) -> int:
     inputs = [_parse_input_spec(spec) for spec in args.input]
     rows = aggregate_rows(load_labeled_rows(inputs))
     if args.output is not None:
-        write_comparison(rows, args.output, args.format, highlight_best=args.highlight_best)
+        write_comparison(
+            rows, args.output, args.format, highlight_best=args.highlight_best
+        )
     elif args.format == "csv":
         writer = csv.DictWriter(sys.stdout, fieldnames=_aggregate_columns())
         writer.writeheader()
@@ -163,7 +170,9 @@ def _parse_input_spec(spec: str) -> ComparisonInput:
     return ComparisonInput(label=label, path=Path(path_text))
 
 
-def _aggregate_approach(label: str, rows: Sequence[dict[str, str]]) -> dict[str, float | int | str]:
+def _aggregate_approach(
+    label: str, rows: Sequence[dict[str, str]]
+) -> dict[str, float | int | str]:
     return {
         "approach": label,
         "subjects": len(rows),

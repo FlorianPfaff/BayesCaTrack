@@ -87,10 +87,13 @@ class SessionMatchResult:
 
         if self.n_matches == 0:
             return np.zeros((0, 2), dtype=int)
-        return np.column_stack((self.reference_roi_indices, self.measurement_roi_indices)).astype(int)
+        return np.column_stack(
+            (self.reference_roi_indices, self.measurement_roi_indices)
+        ).astype(int)
 
 
 # pylint: disable=too-many-locals
+
 
 def solve_bundle_linear_assignment(
     bundle: Any,
@@ -144,8 +147,12 @@ def solve_bundle_linear_assignment(
     reference_positions = np.asarray(reference_positions, dtype=int)
     measurement_positions = np.asarray(measurement_positions, dtype=int)
     assignment_costs = np.asarray(assignment_costs, dtype=float)
-    reference_roi_indices = np.asarray(bundle.reference_roi_indices, dtype=int)[reference_positions]
-    measurement_roi_indices = np.asarray(bundle.measurement_roi_indices, dtype=int)[measurement_positions]
+    reference_roi_indices = np.asarray(bundle.reference_roi_indices, dtype=int)[
+        reference_positions
+    ]
+    measurement_roi_indices = np.asarray(bundle.measurement_roi_indices, dtype=int)[
+        measurement_positions
+    ]
 
     return SessionMatchResult(
         reference_session_name=str(bundle.reference_session_name),
@@ -166,14 +173,18 @@ def solve_consecutive_bundle_linear_assignments(
     """Solve a sequence of consecutive bundles into ROI-index matches."""
 
     return [
-        solve_bundle_linear_assignment(bundle, max_cost=max_cost)
-        for bundle in bundles
+        solve_bundle_linear_assignment(bundle, max_cost=max_cost) for bundle in bundles
     ]
 
 
 def build_track_rows_from_matches(
     session_names: Sequence[str],
-    matches: Sequence[SessionMatchResult | Mapping[int, int] | np.ndarray | tuple[Sequence[int], Sequence[int]]],
+    matches: Sequence[
+        SessionMatchResult
+        | Mapping[int, int]
+        | np.ndarray
+        | tuple[Sequence[int], Sequence[int]]
+    ],
     *,
     start_roi_indices: Sequence[int] | None = None,
     fill_value: int = -1,
@@ -210,7 +221,9 @@ def build_track_rows_from_matches(
     else:
         start_roi_indices = [int(index) for index in start_roi_indices]
 
-    track_rows = np.full((len(start_roi_indices), len(session_names)), int(fill_value), dtype=int)
+    track_rows = np.full(
+        (len(start_roi_indices), len(session_names)), int(fill_value), dtype=int
+    )
     if len(start_roi_indices) == 0:
         return track_rows
 
@@ -303,12 +316,20 @@ def _session_names_from_bundles(bundles: Sequence[Any]) -> tuple[str, ...]:
 
 
 def _normalize_match_mapping(
-    match: SessionMatchResult | Mapping[int, int] | np.ndarray | tuple[Sequence[int], Sequence[int]],
+    match: (
+        SessionMatchResult
+        | Mapping[int, int]
+        | np.ndarray
+        | tuple[Sequence[int], Sequence[int]]
+    ),
 ) -> dict[int, int]:
     if isinstance(match, SessionMatchResult):
         return match.as_roi_index_mapping()
     if isinstance(match, Mapping):
-        return {int(reference_roi): int(measurement_roi) for reference_roi, measurement_roi in match.items()}
+        return {
+            int(reference_roi): int(measurement_roi)
+            for reference_roi, measurement_roi in match.items()
+        }
     if isinstance(match, tuple) and len(match) == 2:
         reference_roi_indices = [int(value) for value in match[0]]
         measurement_roi_indices = [int(value) for value in match[1]]

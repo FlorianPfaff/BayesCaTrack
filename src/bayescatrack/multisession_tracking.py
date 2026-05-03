@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
-
 from bayescatrack import (
     CalciumPlaneData,
     SessionAssociationBundle,
@@ -95,12 +94,20 @@ class LongitudinalTrackingResult:
         if self.track_matrix.ndim != 2:
             raise ValueError("track_matrix must be two-dimensional")
         track_lengths = np.sum(self.track_matrix >= 0, axis=1, dtype=int)
-        n_sessions = int(self.track_matrix.shape[1]) if self.track_matrix.size else len(self.session_names)
+        n_sessions = (
+            int(self.track_matrix.shape[1])
+            if self.track_matrix.size
+            else len(self.session_names)
+        )
         return {
             "n_sessions": n_sessions,
             "n_tracks": int(self.track_matrix.shape[0]),
-            "n_complete_tracks": int(np.sum(track_lengths == n_sessions)) if n_sessions > 0 else 0,
-            "mean_track_length": float(np.mean(track_lengths)) if track_lengths.size > 0 else 0.0,
+            "n_complete_tracks": (
+                int(np.sum(track_lengths == n_sessions)) if n_sessions > 0 else 0
+            ),
+            "mean_track_length": (
+                float(np.mean(track_lengths)) if track_lengths.size > 0 else 0.0
+            ),
             "total_cost": None if self.total_cost is None else float(self.total_cost),
         }
 
@@ -139,8 +146,7 @@ def _import_multisession_solver() -> Callable[..., Any]:
 
     joined_errors = "; ".join(errors) if errors else "no candidates tried"
     raise ImportError(
-        "Could not import a PyRecEst multisession solver. Tried: "
-        f"{joined_errors}"
+        "Could not import a PyRecEst multisession solver. Tried: " f"{joined_errors}"
     )
 
 
@@ -148,10 +154,9 @@ def build_multisession_pairwise_costs(
     sessions: Sequence[Track2pSession],
     *,
     config: MultisessionTrackingConfig | None = None,
-    pairwise_measurement_planes_in_reference_frames: Mapping[
-        tuple[int, int], CalciumPlaneData | None
-    ]
-    | None = None,
+    pairwise_measurement_planes_in_reference_frames: (
+        Mapping[tuple[int, int], CalciumPlaneData | None] | None
+    ) = None,
 ) -> tuple[dict[tuple[int, int], np.ndarray], tuple[PairwiseTrackingBundle, ...]]:
     """Build pairwise cost matrices for all session pairs up to ``max_session_gap``.
 
@@ -260,7 +265,9 @@ def _call_multisession_solver(
     ) from last_error
 
 
-def _coerce_solver_tracks(raw_result: Any) -> tuple[tuple[dict[int, int], ...], float | None]:
+def _coerce_solver_tracks(
+    raw_result: Any,
+) -> tuple[tuple[dict[int, int], ...], float | None]:
     """Normalize different solver return conventions to ``tuple[dict, ...]``."""
 
     if isinstance(raw_result, dict):
@@ -277,7 +284,10 @@ def _coerce_solver_tracks(raw_result: Any) -> tuple[tuple[dict[int, int], ...], 
     for track in tracks:
         if isinstance(track, Mapping):
             normalized_tracks.append(
-                {int(session_index): int(detection_index) for session_index, detection_index in track.items()}
+                {
+                    int(session_index): int(detection_index)
+                    for session_index, detection_index in track.items()
+                }
             )
             continue
         raise TypeError(
@@ -287,7 +297,9 @@ def _coerce_solver_tracks(raw_result: Any) -> tuple[tuple[dict[int, int], ...], 
     return tuple(normalized_tracks), None if total_cost is None else float(total_cost)
 
 
-def _tracks_to_matrix(tracks: Sequence[Mapping[int, int]], n_sessions: int) -> np.ndarray:
+def _tracks_to_matrix(
+    tracks: Sequence[Mapping[int, int]], n_sessions: int
+) -> np.ndarray:
     track_matrix = np.full((len(tracks), n_sessions), -1, dtype=int)
     for track_index, track in enumerate(tracks):
         for session_index, detection_index in track.items():
@@ -311,7 +323,9 @@ def _track_matrix_to_roi_index_matrix(
             lookup = np.asarray(session.plane_data.roi_indices, dtype=int)
         valid = track_matrix[:, session_index] >= 0
         if np.any(valid):
-            roi_index_matrix[valid, session_index] = lookup[track_matrix[valid, session_index]]
+            roi_index_matrix[valid, session_index] = lookup[
+                track_matrix[valid, session_index]
+            ]
     return roi_index_matrix
 
 
@@ -319,10 +333,9 @@ def track_sessions_multisession(
     sessions: Sequence[Track2pSession],
     *,
     config: MultisessionTrackingConfig | None = None,
-    pairwise_measurement_planes_in_reference_frames: Mapping[
-        tuple[int, int], CalciumPlaneData | None
-    ]
-    | None = None,
+    pairwise_measurement_planes_in_reference_frames: (
+        Mapping[tuple[int, int], CalciumPlaneData | None] | None
+    ) = None,
     solver: Callable[..., Any] | None = None,
 ) -> LongitudinalTrackingResult:
     """Solve the global cross-session identity assignment problem.
@@ -346,17 +359,23 @@ def track_sessions_multisession(
         )
 
     if len(sessions) == 1:
-        single_tracks = tuple({0: roi_index} for roi_index in range(sessions[0].plane_data.n_rois))
+        single_tracks = tuple(
+            {0: roi_index} for roi_index in range(sessions[0].plane_data.n_rois)
+        )
         track_matrix = _tracks_to_matrix(single_tracks, 1)
         return LongitudinalTrackingResult(
             tracks=single_tracks,
             track_matrix=track_matrix,
-            track_roi_index_matrix=_track_matrix_to_roi_index_matrix(track_matrix, sessions),
+            track_roi_index_matrix=_track_matrix_to_roi_index_matrix(
+                track_matrix, sessions
+            ),
             session_names=(sessions[0].session_name,),
             session_dates=(
-                None
-                if sessions[0].session_date is None
-                else sessions[0].session_date.isoformat(),
+                (
+                    None
+                    if sessions[0].session_date is None
+                    else sessions[0].session_date.isoformat()
+                ),
             ),
             pairwise_bundles=tuple(),
             total_cost=0.0,
@@ -371,7 +390,9 @@ def track_sessions_multisession(
     if solver is None:
         solver = _import_multisession_solver()
     session_sizes = [session.plane_data.n_rois for session in sessions]
-    raw_result = _call_multisession_solver(solver, pairwise_costs, session_sizes, config)
+    raw_result = _call_multisession_solver(
+        solver, pairwise_costs, session_sizes, config
+    )
     tracks, total_cost = _coerce_solver_tracks(raw_result)
     track_matrix = _tracks_to_matrix(tracks, len(sessions))
     track_roi_index_matrix = _track_matrix_to_roi_index_matrix(track_matrix, sessions)
@@ -413,10 +434,9 @@ def track_subject_multisession(  # pylint: disable=too-many-arguments
     input_format: str = "auto",
     include_behavior: bool = True,
     config: MultisessionTrackingConfig | None = None,
-    pairwise_measurement_planes_in_reference_frames: Mapping[
-        tuple[int, int], CalciumPlaneData | None
-    ]
-    | None = None,
+    pairwise_measurement_planes_in_reference_frames: (
+        Mapping[tuple[int, int], CalciumPlaneData | None] | None
+    ) = None,
     solver: Callable[..., Any] | None = None,
     **suite2p_kwargs: Any,
 ) -> LongitudinalTrackingResult:
@@ -462,7 +482,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "assignment solvers."
         )
     )
-    parser.add_argument("subject_dir", type=Path, help="Track2p-style subject directory")
+    parser.add_argument(
+        "subject_dir", type=Path, help="Track2p-style subject directory"
+    )
     parser.add_argument(
         "output_path",
         type=Path,

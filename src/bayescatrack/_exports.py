@@ -84,6 +84,8 @@ def reexport(
 ) -> tuple[str, ...]:
     """Copy named attributes from ``source`` into a target module namespace."""
 
-    export_names = tuple(getattr(source, "__all__", ())) if names is None else tuple(names)
+    export_names = (
+        tuple(getattr(source, "__all__", ())) if names is None else tuple(names)
+    )
     target_globals.update({name: getattr(source, name) for name in export_names})
     return export_names

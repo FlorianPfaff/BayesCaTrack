@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import numpy.testing as npt
 import pytest
-
 from bayescatrack import load_track2p_subject
 from bayescatrack.datasets.track2p import (
     SyntheticFalsePositiveRoi,

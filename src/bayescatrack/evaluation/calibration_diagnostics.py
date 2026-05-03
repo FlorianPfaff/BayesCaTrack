@@ -65,17 +65,23 @@ def reliability_bin_table(
                 "empirical_positive_rate": empirical_probability,
                 "signed_calibration_error": float(signed_error),
                 "absolute_calibration_error": float(abs(signed_error)),
-                "bin_brier_score": float(np.mean((bin_probabilities - bin_labels) ** 2)),
+                "bin_brier_score": float(
+                    np.mean((bin_probabilities - bin_labels) ** 2)
+                ),
                 "weight": float(count / n_examples),
             }
         )
     return rows
 
 
-def expected_calibration_error(probabilities: Any, labels: Any, *, n_bins: int = 10) -> float:
+def expected_calibration_error(
+    probabilities: Any, labels: Any, *, n_bins: int = 10
+) -> float:
     """Return equal-width expected calibration error for binary probabilities."""
 
-    rows = reliability_bin_table(probabilities, labels, n_bins=n_bins, include_empty_bins=False)
+    rows = reliability_bin_table(
+        probabilities, labels, n_bins=n_bins, include_empty_bins=False
+    )
     return float(
         sum(
             _required_float(row, "weight")
@@ -85,10 +91,14 @@ def expected_calibration_error(probabilities: Any, labels: Any, *, n_bins: int =
     )
 
 
-def maximum_calibration_error(probabilities: Any, labels: Any, *, n_bins: int = 10) -> float:
+def maximum_calibration_error(
+    probabilities: Any, labels: Any, *, n_bins: int = 10
+) -> float:
     """Return maximum equal-width calibration error over non-empty bins."""
 
-    rows = reliability_bin_table(probabilities, labels, n_bins=n_bins, include_empty_bins=False)
+    rows = reliability_bin_table(
+        probabilities, labels, n_bins=n_bins, include_empty_bins=False
+    )
     return float(
         max(
             (_required_float(row, "absolute_calibration_error") for row in rows),
@@ -107,7 +117,9 @@ def calibration_summary(
 
     probabilities, labels = _validate_probability_label_inputs(probabilities, labels)
     n_bins = _validate_n_bins(n_bins)
-    rows = reliability_bin_table(probabilities, labels, n_bins=n_bins, include_empty_bins=False)
+    rows = reliability_bin_table(
+        probabilities, labels, n_bins=n_bins, include_empty_bins=False
+    )
     positive_examples = int(np.sum(labels))
     expected_error = float(
         sum(
@@ -125,7 +137,9 @@ def calibration_summary(
     return {
         "calibration_examples": int(probabilities.shape[0]),
         "calibration_positive_examples": positive_examples,
-        "calibration_negative_examples": int(probabilities.shape[0] - positive_examples),
+        "calibration_negative_examples": int(
+            probabilities.shape[0] - positive_examples
+        ),
         "calibration_bins": int(n_bins),
         "calibration_n_bins": int(n_bins),
         "calibration_occupied_bins": int(len(rows)),
@@ -162,22 +176,35 @@ def format_reliability_bin_table(rows: Sequence[Mapping[str, object]]) -> str:
         "bin_brier_score",
         "weight",
     )
-    columns = tuple(column for column in metadata_columns if any(column in row for row in rows)) + standard_columns
+    columns = (
+        tuple(
+            column for column in metadata_columns if any(column in row for row in rows)
+        )
+        + standard_columns
+    )
     header = "| " + " | ".join(columns) + " |"
     separator = "| " + " | ".join(["---"] * len(columns)) + " |"
     body = [header, separator]
     for row in rows:
-        body.append("| " + " | ".join(_format_table_value(row.get(column)) for column in columns) + " |")
+        body.append(
+            "| "
+            + " | ".join(_format_table_value(row.get(column)) for column in columns)
+            + " |"
+        )
     return "\n".join(body)
 
 
-def _validate_probability_label_inputs(probabilities: Any, labels: Any) -> tuple[np.ndarray, np.ndarray]:
+def _validate_probability_label_inputs(
+    probabilities: Any, labels: Any
+) -> tuple[np.ndarray, np.ndarray]:
     probability_array = np.asarray(probabilities, dtype=float).reshape(-1)
     label_array = np.asarray(labels).reshape(-1)
     if probability_array.shape[0] == 0:
         raise ValueError("At least one probability is required")
     if probability_array.shape[0] != label_array.shape[0]:
-        raise ValueError("probabilities and labels must contain the same number of entries")
+        raise ValueError(
+            "probabilities and labels must contain the same number of entries"
+        )
     if not np.all(np.isfinite(probability_array)):
         raise ValueError("probabilities must be finite")
     if np.any((probability_array < 0.0) | (probability_array > 1.0)):

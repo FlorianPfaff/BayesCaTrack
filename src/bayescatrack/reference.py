@@ -7,11 +7,11 @@ and provides small helpers for evaluating predicted associations.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-import re
 from typing import Any, Sequence
 
 import numpy as np
@@ -72,7 +72,9 @@ class Track2pReference:
     def present_mask(self) -> np.ndarray:
         """Return a boolean matrix marking track presence per session."""
 
-        return np.vectorize(lambda value: value is not None, otypes=[bool])(self.suite2p_indices)
+        return np.vectorize(lambda value: value is not None, otypes=[bool])(
+            self.suite2p_indices
+        )
 
     def all_day_mask(self) -> np.ndarray:
         """Return a boolean mask for tracks present in every session."""
@@ -92,7 +94,9 @@ class Track2pReference:
         set of sessions only when none of its selected entries are missing.
         """
 
-        normalized_sessions = _normalize_session_indices(session_indices, self.n_sessions)
+        normalized_sessions = _normalize_session_indices(
+            session_indices, self.n_sessions
+        )
         indices = self._filtered_indices(curated_only=curated_only)
         selected = indices[:, normalized_sessions]
 
@@ -106,7 +110,10 @@ class Track2pReference:
 
         complete_tracks = np.asarray(complete_rows, dtype=int)
         sort_order = np.lexsort(
-            tuple(complete_tracks[:, column] for column in reversed(range(complete_tracks.shape[1])))
+            tuple(
+                complete_tracks[:, column]
+                for column in reversed(range(complete_tracks.shape[1]))
+            )
         )
         return complete_tracks[sort_order]
 
@@ -165,14 +172,18 @@ class Track2pReference:
         if n_rois_per_session is None:
             n_rois = []
             for session_idx in range(self.n_sessions):
-                present = [int(value) for value in indices[:, session_idx] if value is not None]
+                present = [
+                    int(value) for value in indices[:, session_idx] if value is not None
+                ]
                 n_rois.append(max(present) + 1 if present else 0)
         else:
             if len(n_rois_per_session) != self.n_sessions:
                 raise ValueError("n_rois_per_session must have one entry per session")
             n_rois = [int(count) for count in n_rois_per_session]
             if any(count < 0 for count in n_rois):
-                raise ValueError("n_rois_per_session must contain non-negative integers")
+                raise ValueError(
+                    "n_rois_per_session must contain non-negative integers"
+                )
 
         labels = [np.full((count,), int(fill_value), dtype=int) for count in n_rois]
         for track_idx in range(indices.shape[0]):
@@ -233,7 +244,9 @@ def load_track2p_reference(
     suite2p_indices = _as_nullable_int_matrix(suite2p_indices)
     session_names = _session_names_from_track_ops(track_ops, suite2p_indices.shape[1])
     session_dates = _session_dates_from_names(session_names)
-    curated_mask = _extract_curated_mask(track_ops, plane_index, suite2p_indices.shape[0])
+    curated_mask = _extract_curated_mask(
+        track_ops, plane_index, suite2p_indices.shape[0]
+    )
 
     return Track2pReference(
         session_names=session_names,
@@ -283,7 +296,9 @@ def load_aligned_subject_reference(
     )
 
 
-def pairs_from_label_vectors(labels_a: Sequence[Any], labels_b: Sequence[Any]) -> np.ndarray:
+def pairs_from_label_vectors(
+    labels_a: Sequence[Any], labels_b: Sequence[Any]
+) -> np.ndarray:
     """Convert two per-session label vectors into explicit ROI pairs."""
 
     mapping_a = _label_vector_to_mapping(labels_a)
@@ -344,13 +359,17 @@ def score_complete_tracks(
     if predicted_matrix.ndim != 2 or reference_matrix.ndim != 2:
         raise ValueError("Track matrices must be two-dimensional")
     if predicted_matrix.shape[1] != reference_matrix.shape[1]:
-        raise ValueError("Predicted and reference tracks must have the same number of sessions")
+        raise ValueError(
+            "Predicted and reference tracks must have the same number of sessions"
+        )
 
     predicted_complete = Counter(_complete_track_tuples(predicted_matrix))
     reference_complete = Counter(_complete_track_tuples(reference_matrix))
     reconstructed_complete_tracks = int(sum(predicted_complete.values()))
     ground_truth_complete_tracks = int(sum(reference_complete.values()))
-    perfectly_reconstructed_tracks = int(sum((predicted_complete & reference_complete).values()))
+    perfectly_reconstructed_tracks = int(
+        sum((predicted_complete & reference_complete).values())
+    )
     complete_tracks_score = _safe_ratio(
         2.0 * perfectly_reconstructed_tracks,
         reconstructed_complete_tracks + ground_truth_complete_tracks,
@@ -385,7 +404,9 @@ def score_complete_tracks_against_reference(
     where only tracks originating from selected seed ROIs are evaluated.
     """
 
-    normalized_sessions = _normalize_session_indices(session_indices, reference.n_sessions)
+    normalized_sessions = _normalize_session_indices(
+        session_indices, reference.n_sessions
+    )
     _validate_session_index(seed_session, reference.n_sessions)
 
     predicted_matrix = _as_nullable_int_matrix(predicted_suite2p_indices)
@@ -503,14 +524,23 @@ def _normalize_session_indices(
 def _plane_index_from_name(plane_name: str) -> int:
     match = _PLANE_NAME_PATTERN.match(plane_name)
     if match is None:
-        raise ValueError(f"plane_name must follow the 'plane#' convention, got {plane_name!r}")
+        raise ValueError(
+            f"plane_name must follow the 'plane#' convention, got {plane_name!r}"
+        )
     return int(match.group("index"))
 
 
-def _session_names_from_track_ops(track_ops: dict[str, Any], n_sessions: int) -> tuple[str, ...]:
+def _session_names_from_track_ops(
+    track_ops: dict[str, Any], n_sessions: int
+) -> tuple[str, ...]:
     if "all_ds_path" not in track_ops:
         raise KeyError("track_ops.npy does not contain all_ds_path")
-    path_list = [Path(str(path)) for path in np.asarray(track_ops["all_ds_path"], dtype=object).reshape(-1).tolist()]
+    path_list = [
+        Path(str(path))
+        for path in np.asarray(track_ops["all_ds_path"], dtype=object)
+        .reshape(-1)
+        .tolist()
+    ]
     if len(path_list) != n_sessions:
         raise ValueError(
             "The number of paths in track_ops.all_ds_path does not match the number of sessions"
@@ -536,14 +566,18 @@ def _extract_curated_mask(
             continue
         curated = np.asarray(track_ops[key], dtype=float).reshape(-1)
         if curated.shape != (n_tracks,):
-            raise ValueError(f"Curation vector {key!r} has incompatible shape {curated.shape}")
+            raise ValueError(
+                f"Curation vector {key!r} has incompatible shape {curated.shape}"
+            )
         return curated > 0.5
     return None
 
 
 def _validate_session_index(session_index: int, n_sessions: int) -> None:
     if session_index < 0 or session_index >= n_sessions:
-        raise IndexError(f"session index {session_index} out of bounds for {n_sessions} sessions")
+        raise IndexError(
+            f"session index {session_index} out of bounds for {n_sessions} sessions"
+        )
 
 
 def _label_vector_to_mapping(labels: Sequence[Any]) -> dict[int, int]:
@@ -554,7 +588,9 @@ def _label_vector_to_mapping(labels: Sequence[Any]) -> dict[int, int]:
         if track_id is None:
             continue
         if track_id in mapping:
-            raise ValueError(f"Label vector contains the same track id ({track_id}) more than once")
+            raise ValueError(
+                f"Label vector contains the same track id ({track_id}) more than once"
+            )
         mapping[track_id] = int(roi_idx)
     return mapping
 

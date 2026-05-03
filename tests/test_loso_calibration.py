@@ -5,7 +5,6 @@ import types
 
 import numpy as np
 import pytest
-
 from bayescatrack.experiments.track2p_benchmark import (
     Track2pBenchmarkConfig,
     run_track2p_benchmark,
@@ -58,7 +57,9 @@ def _write_aligned_subject(subject_dir, write_raw_npy_session):
 def _write_ground_truth_subject(subject_dir, write_raw_npy_session):
     session_names = _write_subject_sessions(subject_dir, write_raw_npy_session)
     lines = ["track_id," + ",".join(session_names), "0,0,0,0", "1,1,1,1"]
-    (subject_dir / "ground_truth.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (subject_dir / "ground_truth.csv").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
 
 
 def _install_fake_pyrecest(monkeypatch):
@@ -99,7 +100,9 @@ def _install_fake_pyrecest(monkeypatch):
     monkeypatch.setitem(sys.modules, "pyrecest", fake_pyrecest)
     monkeypatch.setitem(sys.modules, "pyrecest.utils", fake_utils)
     monkeypatch.setitem(sys.modules, "pyrecest.utils.association_models", fake_models)
-    monkeypatch.setitem(sys.modules, "pyrecest.utils.multisession_assignment", fake_assignment)
+    monkeypatch.setitem(
+        sys.modules, "pyrecest.utils.multisession_assignment", fake_assignment
+    )
 
 
 def _install_registration_passthrough(monkeypatch):
@@ -113,7 +116,9 @@ def _install_registration_passthrough(monkeypatch):
     monkeypatch.setattr(global_assignment, "register_plane_pair", passthrough)
 
 
-def _run_loso_calibration(tmp_path, monkeypatch, subject_writer, *, allow_smoke_reference=False):
+def _run_loso_calibration(
+    tmp_path, monkeypatch, subject_writer, *, allow_smoke_reference=False
+):
     for subject_name in ("jm001", "jm002"):
         subject_writer(tmp_path / subject_name)
 
@@ -132,7 +137,9 @@ def _run_loso_calibration(tmp_path, monkeypatch, subject_writer, *, allow_smoke_
     )
 
 
-def test_loso_calibration_trains_on_other_subjects(tmp_path, monkeypatch, write_raw_npy_session):
+def test_loso_calibration_trains_on_other_subjects(
+    tmp_path, monkeypatch, write_raw_npy_session
+):
     results = _run_loso_calibration(
         tmp_path,
         monkeypatch,
@@ -157,7 +164,9 @@ def test_loso_calibration_trains_on_other_subjects(tmp_path, monkeypatch, write_
         assert row["calibration_mce"] == pytest.approx(0.0)
 
 
-def test_loso_calibration_uses_aligned_rows_when_track2p_reference_is_absent(tmp_path, monkeypatch, write_raw_npy_session):
+def test_loso_calibration_uses_aligned_rows_when_track2p_reference_is_absent(
+    tmp_path, monkeypatch, write_raw_npy_session
+):
     results = _run_loso_calibration(
         tmp_path,
         monkeypatch,
@@ -167,10 +176,15 @@ def test_loso_calibration_uses_aligned_rows_when_track2p_reference_is_absent(tmp
 
     assert [result.subject for result in results] == ["jm001", "jm002"]
     assert {result.reference_source for result in results} == {"aligned_subject_rows"}
-    assert [result.to_dict()["pairwise_f1"] for result in results] == [pytest.approx(1.0), pytest.approx(1.0)]
+    assert [result.to_dict()["pairwise_f1"] for result in results] == [
+        pytest.approx(1.0),
+        pytest.approx(1.0),
+    ]
 
 
-def test_loso_calibration_rejects_track2p_reference_by_default(tmp_path, monkeypatch, write_raw_npy_session):
+def test_loso_calibration_rejects_track2p_reference_by_default(
+    tmp_path, monkeypatch, write_raw_npy_session
+):
     with pytest.raises(ValueError, match="not independent manual ground truth"):
         _run_loso_calibration(
             tmp_path,
@@ -179,16 +193,23 @@ def test_loso_calibration_rejects_track2p_reference_by_default(tmp_path, monkeyp
         )
 
 
-def test_loso_calibration_uses_ground_truth_csv_when_present(tmp_path, monkeypatch, write_raw_npy_session):
+def test_loso_calibration_uses_ground_truth_csv_when_present(
+    tmp_path, monkeypatch, write_raw_npy_session
+):
     results = _run_loso_calibration(
         tmp_path,
         monkeypatch,
-        lambda subject_dir: _write_ground_truth_subject(subject_dir, write_raw_npy_session),
+        lambda subject_dir: _write_ground_truth_subject(
+            subject_dir, write_raw_npy_session
+        ),
     )
 
     assert [result.subject for result in results] == ["jm001", "jm002"]
     assert {result.reference_source for result in results} == {"ground_truth_csv"}
-    assert [result.to_dict()["complete_track_f1"] for result in results] == [pytest.approx(1.0), pytest.approx(1.0)]
+    assert [result.to_dict()["complete_track_f1"] for result in results] == [
+        pytest.approx(1.0),
+        pytest.approx(1.0),
+    ]
 
 
 def test_loso_calibration_requires_calibrated_cost(tmp_path, write_raw_npy_session):

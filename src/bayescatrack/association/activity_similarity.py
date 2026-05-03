@@ -101,7 +101,9 @@ def _resolve_trace_arrays(
 
     if trace_source not in _TRACE_FIELDS:
         raise ValueError(f"Unsupported trace_source: {trace_source!r}")
-    return getattr(reference_plane, trace_source, None), getattr(measurement_plane, trace_source, None)
+    return getattr(reference_plane, trace_source, None), getattr(
+        measurement_plane, trace_source, None
+    )
 
 
 def _row_normalized_trace_vectors(
@@ -109,7 +111,9 @@ def _row_normalized_trace_vectors(
     *,
     similarity_epsilon: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    traces = np.nan_to_num(np.asarray(traces, dtype=float), nan=0.0, posinf=0.0, neginf=0.0)
+    traces = np.nan_to_num(
+        np.asarray(traces, dtype=float), nan=0.0, posinf=0.0, neginf=0.0
+    )
     centered = traces - np.mean(traces, axis=1, keepdims=True)
     norms = np.linalg.norm(centered, axis=1)
     valid = norms > similarity_epsilon

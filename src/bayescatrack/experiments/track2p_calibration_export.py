@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-
 from bayescatrack.association.calibrated_costs import (
     DEFAULT_ASSOCIATION_FEATURES,
     CalibratedAssociationModel,
@@ -17,7 +16,10 @@ from bayescatrack.association.calibrated_costs import (
     fit_logistic_association_model,
 )
 from bayescatrack.association.pyrecest_global_assignment import session_edge_pairs
-from bayescatrack.experiments.track2p_benchmark import Track2pBenchmarkConfig, discover_subject_dirs
+from bayescatrack.experiments.track2p_benchmark import (
+    Track2pBenchmarkConfig,
+    discover_subject_dirs,
+)
 from bayescatrack.experiments.track2p_loso_calibration import (
     SubjectCalibrationData,
     _collect_training_examples,
@@ -37,7 +39,9 @@ def export_loso_calibration_csv(
     """Fit LOSO calibrated models and export held-out pairwise probabilities."""
 
     if config.method != "global-assignment" or config.cost != "calibrated":
-        raise ValueError("Calibration export requires method='global-assignment' and cost='calibrated'")
+        raise ValueError(
+            "Calibration export requires method='global-assignment' and cost='calibrated'"
+        )
     if config.split != "leave-one-subject-out":
         raise ValueError("Calibration export requires split='leave-one-subject-out'")
 
@@ -45,11 +49,16 @@ def export_loso_calibration_csv(
     if len(subject_dirs) < 2:
         raise ValueError("Calibration export requires at least two subject directories")
 
-    subjects = tuple(_load_subject_calibration_data(subject_dir, config=config) for subject_dir in subject_dirs)
+    subjects = tuple(
+        _load_subject_calibration_data(subject_dir, config=config)
+        for subject_dir in subject_dirs
+    )
     feature_names = tuple(feature_names)
     rows: list[dict[str, float | int | str]] = []
     for held_out_index, held_out in enumerate(subjects):
-        training_subjects = tuple(subject for index, subject in enumerate(subjects) if index != held_out_index)
+        training_subjects = tuple(
+            subject for index, subject in enumerate(subjects) if index != held_out_index
+        )
         training_features, training_labels = _collect_training_examples(
             training_subjects,
             config=config,
@@ -68,7 +77,9 @@ def export_loso_calibration_csv(
                 config=config,
                 feature_names=feature_names,
                 calibrated_model=calibrated_model,
-                training_subject_names=tuple(subject.subject_name for subject in training_subjects),
+                training_subject_names=tuple(
+                    subject.subject_name for subject in training_subjects
+                ),
             )
         )
 
@@ -81,25 +92,49 @@ def build_arg_parser() -> argparse.ArgumentParser:
         prog="python -m bayescatrack.experiments.track2p_calibration_export",
         description="Export out-of-fold LOSO calibration rows for Track2p candidate ROI pairs.",
     )
-    parser.add_argument("--data", required=True, type=Path, help="Track2p dataset root or one subject directory")
-    parser.add_argument("--output", required=True, type=Path, help="CSV path for calibration rows")
-    parser.add_argument("--reference", type=Path, default=None, help="Optional ground-truth root or ground_truth.csv")
+    parser.add_argument(
+        "--data",
+        required=True,
+        type=Path,
+        help="Track2p dataset root or one subject directory",
+    )
+    parser.add_argument(
+        "--output", required=True, type=Path, help="CSV path for calibration rows"
+    )
+    parser.add_argument(
+        "--reference",
+        type=Path,
+        default=None,
+        help="Optional ground-truth root or ground_truth.csv",
+    )
     parser.add_argument(
         "--reference-kind",
         default="manual-gt",
         choices=("auto", "manual-gt", "track2p-output", "aligned-subject-rows"),
     )
-    parser.add_argument("--allow-track2p-as-reference-for-smoke-test", action="store_true")
+    parser.add_argument(
+        "--allow-track2p-as-reference-for-smoke-test", action="store_true"
+    )
     parser.add_argument("--plane", dest="plane_name", default="plane0")
-    parser.add_argument("--input-format", default="auto", choices=("auto", "suite2p", "npy"))
+    parser.add_argument(
+        "--input-format", default="auto", choices=("auto", "suite2p", "npy")
+    )
     parser.add_argument("--max-gap", type=int, default=2)
-    parser.add_argument("--transform-type", default="affine", choices=("affine", "rigid", "none"))
+    parser.add_argument(
+        "--transform-type", default="affine", choices=("affine", "rigid", "none")
+    )
     parser.add_argument("--curated-only", action="store_true")
-    parser.add_argument("--include-behavior", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--include-behavior", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--include-non-cells", action="store_true")
     parser.add_argument("--cell-probability-threshold", type=float, default=0.5)
     parser.add_argument("--weighted-masks", action="store_true")
-    parser.add_argument("--exclude-overlapping-pixels", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--exclude-overlapping-pixels",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--order", default="xy", choices=("xy", "yx"))
     parser.add_argument("--weighted-centroids", action="store_true")
     parser.add_argument("--velocity-variance", type=float, default=25.0)
@@ -148,12 +183,18 @@ def _held_out_rows(
     rows: list[dict[str, float | int | str]] = []
     options = _reference_training_options(config, feature_names)
     edges = session_edge_pairs(len(subject.sessions), max_gap=config.max_gap)
-    for block in collect_reference_pairwise_example_blocks(subject.sessions, subject.reference, session_edges=edges, options=options):
+    for block in collect_reference_pairwise_example_blocks(
+        subject.sessions, subject.reference, session_edges=edges, options=options
+    ):
         probabilities = _predict_match_probabilities(calibrated_model, block.features)
-        link_costs = np.asarray(calibrated_model.model.pairwise_cost_matrix(block.features), dtype=float)
+        link_costs = np.asarray(
+            calibrated_model.model.pairwise_cost_matrix(block.features), dtype=float
+        )
         labels = np.asarray(block.labels, dtype=int)
         for row_index, reference_roi_index in enumerate(block.reference_roi_indices):
-            for column_index, measurement_roi_index in enumerate(block.measurement_roi_indices):
+            for column_index, measurement_roi_index in enumerate(
+                block.measurement_roi_indices
+            ):
                 row: dict[str, float | int | str] = {
                     "held_out_subject": subject.subject_name,
                     "training_subjects": ",".join(training_subject_names),
@@ -170,12 +211,16 @@ def _held_out_rows(
                     "link_cost": float(link_costs[row_index, column_index]),
                 }
                 for feature_index, feature_name in enumerate(feature_names):
-                    row[f"feature_{feature_name}"] = float(block.features[row_index, column_index, feature_index])
+                    row[f"feature_{feature_name}"] = float(
+                        block.features[row_index, column_index, feature_index]
+                    )
                 rows.append(row)
     return rows
 
 
-def _predict_match_probabilities(model: CalibratedAssociationModel, features: np.ndarray) -> np.ndarray:
+def _predict_match_probabilities(
+    model: CalibratedAssociationModel, features: np.ndarray
+) -> np.ndarray:
     if hasattr(model.model, "predict_match_probability"):
         return np.asarray(model.model.predict_match_probability(features), dtype=float)
     return np.exp(-np.asarray(model.model.pairwise_cost_matrix(features), dtype=float))

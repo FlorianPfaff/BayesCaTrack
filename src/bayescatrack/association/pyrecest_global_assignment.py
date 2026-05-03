@@ -7,10 +7,17 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
-
-from bayescatrack.association.activity_similarity import add_activity_similarity_components
-from bayescatrack.association.calibrated_costs import CalibratedAssociationModel, calibrated_cost_matrix_from_bundle
-from bayescatrack.core.bridge import Track2pSession, build_session_pair_association_bundle
+from bayescatrack.association.activity_similarity import (
+    add_activity_similarity_components,
+)
+from bayescatrack.association.calibrated_costs import (
+    CalibratedAssociationModel,
+    calibrated_cost_matrix_from_bundle,
+)
+from bayescatrack.core.bridge import (
+    Track2pSession,
+    build_session_pair_association_bundle,
+)
 from bayescatrack.track2p_registration import register_plane_pair
 
 AssociationCost = Literal["registered-iou", "roi-aware", "calibrated"]
@@ -27,7 +34,9 @@ class GlobalAssignmentRun:
     session_edges: tuple[SessionEdge, ...]
 
 
-def registered_iou_cost_kwargs(*, similarity_epsilon: float = 1.0e-6) -> dict[str, float]:
+def registered_iou_cost_kwargs(
+    *, similarity_epsilon: float = 1.0e-6
+) -> dict[str, float]:
     """Return cost kwargs for a Track2p-style registered IoU ablation."""
 
     return {
@@ -47,7 +56,9 @@ def roi_aware_cost_kwargs() -> dict[str, float]:
     return {}
 
 
-def session_edge_pairs(num_sessions: int, *, max_gap: int = 2) -> tuple[SessionEdge, ...]:
+def session_edge_pairs(
+    num_sessions: int, *, max_gap: int = 2
+) -> tuple[SessionEdge, ...]:
     """Return forward session edges admitted by the max-gap skip-session policy."""
 
     if num_sessions < 0:
@@ -87,7 +98,9 @@ def build_registered_pairwise_costs(
         base_cost_kwargs.update(dict(pairwise_cost_kwargs))
 
     pairwise_costs: dict[SessionEdge, np.ndarray] = {}
-    for source_session, target_session in session_edge_pairs(len(sessions), max_gap=max_gap):
+    for source_session, target_session in session_edge_pairs(
+        len(sessions), max_gap=max_gap
+    ):
         registered_measurement_plane = register_plane_pair(
             sessions[source_session].plane_data,
             sessions[target_session].plane_data,
@@ -102,7 +115,8 @@ def build_registered_pairwise_costs(
             velocity_variance=velocity_variance,
             regularization=regularization,
             pairwise_cost_kwargs=base_cost_kwargs,
-            return_pairwise_components=return_pairwise_components or cost == "calibrated",
+            return_pairwise_components=return_pairwise_components
+            or cost == "calibrated",
         )
         if return_pairwise_components or cost == "calibrated":
             add_activity_similarity_components(
@@ -112,13 +126,17 @@ def build_registered_pairwise_costs(
             )
         if cost == "calibrated":
             assert calibrated_model is not None
-            pairwise_costs[(source_session, target_session)] = calibrated_cost_matrix_from_bundle(
-                bundle,
-                calibrated_model,
-                session_gap=target_session - source_session,
+            pairwise_costs[(source_session, target_session)] = (
+                calibrated_cost_matrix_from_bundle(
+                    bundle,
+                    calibrated_model,
+                    session_gap=target_session - source_session,
+                )
             )
         else:
-            pairwise_costs[(source_session, target_session)] = np.asarray(bundle.pairwise_cost_matrix, dtype=float)
+            pairwise_costs[(source_session, target_session)] = np.asarray(
+                bundle.pairwise_cost_matrix, dtype=float
+            )
     return pairwise_costs
 
 
@@ -174,7 +192,9 @@ def solve_global_assignment_for_sessions(
     )
 
 
-def tracks_to_suite2p_index_matrix(tracks: Sequence[Mapping[int, int]], sessions: Sequence[Track2pSession]) -> np.ndarray:
+def tracks_to_suite2p_index_matrix(
+    tracks: Sequence[Mapping[int, int]], sessions: Sequence[Track2pSession]
+) -> np.ndarray:
     """Convert solver tracks in loaded-ROI coordinates to original Suite2p indices."""
 
     sessions = list(sessions)
@@ -190,7 +210,9 @@ def tracks_to_suite2p_index_matrix(tracks: Sequence[Mapping[int, int]], sessions
                 raise IndexError(f"session index {session_index} out of bounds")
             roi_indices = roi_indices_by_session[session_index]
             if detection_index < 0 or detection_index >= roi_indices.shape[0]:
-                raise IndexError(f"detection index {detection_index} out of bounds for session {session_index}")
+                raise IndexError(
+                    f"detection index {detection_index} out of bounds for session {session_index}"
+                )
             matrix[track_index, session_index] = int(roi_indices[detection_index])
     return matrix
 
@@ -213,7 +235,9 @@ def _roi_indices_for_session(session: Track2pSession) -> np.ndarray:
 def _load_pyrecest_multisession_solver() -> Any:
     try:
         from pyrecest.utils.multisession_assignment import solve_multisession_assignment
-    except ImportError as exc:  # pragma: no cover - exercised in runtime environments without PyRecEst
+    except (
+        ImportError
+    ) as exc:  # pragma: no cover - exercised in runtime environments without PyRecEst
         raise ImportError(
             "PyRecEst with pyrecest.utils.multisession_assignment is required for global-assignment benchmarks."
         ) from exc

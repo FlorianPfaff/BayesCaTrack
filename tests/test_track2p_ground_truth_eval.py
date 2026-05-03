@@ -1,5 +1,4 @@
 import numpy as np
-
 from bayescatrack.ground_truth_eval import (
     TrackTable,
     evaluate_track_table_prediction,
@@ -27,9 +26,7 @@ def test_evaluate_track_table_prediction_scores_exact_tracks():
 def test_load_track2p_ground_truth_csv_supports_semicolon_encoded_rows(tmp_path):
     ground_truth_path = tmp_path / "ground_truth.csv"
     ground_truth_path.write_text(
-        "track_id,track\n"
-        "0,67;38;15;169;;;\n"
-        "1,11;;13;14\n",
+        "track_id,track\n" "0,67;38;15;169;;;\n" "1,11;;13;14\n",
         encoding="utf-8",
     )
 
@@ -45,12 +42,12 @@ def test_load_track2p_ground_truth_csv_supports_semicolon_encoded_rows(tmp_path)
     )
 
 
-def test_load_track2p_ground_truth_csv_infers_semicolon_width_without_session_names(tmp_path):
+def test_load_track2p_ground_truth_csv_infers_semicolon_width_without_session_names(
+    tmp_path,
+):
     ground_truth_path = tmp_path / "ground_truth.csv"
     ground_truth_path.write_text(
-        "track_id,track\n"
-        "0,67;38;15;169;;;\n"
-        "1,11;;13;14\n",
+        "track_id,track\n" "0,67;38;15;169;;;\n" "1,11;;13;14\n",
         encoding="utf-8",
     )
 
@@ -77,13 +74,16 @@ def test_load_track2p_ground_truth_csv_infers_semicolon_width_without_session_na
 def test_load_track2p_ground_truth_csv_infers_subject_session_dirs(tmp_path):
     subject_dir = tmp_path / "jm038"
     subject_dir.mkdir()
-    for session_name in ("2024-05-01_a", "2024-05-02_a", "2024-05-03_a", "2024-05-04_a"):
+    for session_name in (
+        "2024-05-01_a",
+        "2024-05-02_a",
+        "2024-05-03_a",
+        "2024-05-04_a",
+    ):
         (subject_dir / session_name / "suite2p" / "plane0").mkdir(parents=True)
     ground_truth_path = subject_dir / "ground_truth.csv"
     ground_truth_path.write_text(
-        "track_id,track\n"
-        "0,67;38;15;169;;;\n"
-        "1,11;;13;14\n",
+        "track_id,track\n" "0,67;38;15;169;;;\n" "1,11;;13;14\n",
         encoding="utf-8",
     )
 

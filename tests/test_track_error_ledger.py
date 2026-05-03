@@ -1,8 +1,10 @@
 import numpy as np
 import pytest
-
 from bayescatrack.evaluation.complete_track_scores import score_track_matrices
-from bayescatrack.evaluation.track_error_ledger import summarize_track_errors, track_error_ledger
+from bayescatrack.evaluation.track_error_ledger import (
+    summarize_track_errors,
+    track_error_ledger,
+)
 
 
 def test_track_error_ledger_reports_switches_fragmentation_and_misses():
@@ -46,11 +48,21 @@ def test_track_error_ledger_reports_switches_fragmentation_and_misses():
     assert ledger["reference_tracks"][1]["category"] == "fragmented"
     assert ledger["reference_tracks"][2]["category"] == "missed"
 
-    false_continuations = [row for row in ledger["link_errors"] if row["error_type"] == "false_continuation"]
-    missed_links = [row for row in ledger["link_errors"] if row["error_type"] == "missed_reference_link"]
+    false_continuations = [
+        row
+        for row in ledger["link_errors"]
+        if row["error_type"] == "false_continuation"
+    ]
+    missed_links = [
+        row
+        for row in ledger["link_errors"]
+        if row["error_type"] == "missed_reference_link"
+    ]
     assert len(false_continuations) == 3
     assert len(missed_links) == 4
-    assert any(row["reason"] == "different_reference_tracks" for row in false_continuations)
+    assert any(
+        row["reason"] == "different_reference_tracks" for row in false_continuations
+    )
     assert any(row["reason"] == "split_across_predicted_tracks" for row in missed_links)
 
 

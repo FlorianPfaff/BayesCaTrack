@@ -203,12 +203,15 @@ def _infer_semicolon_session_count(
         nonempty_plain_values = [
             value
             for value in values
-            if ";" not in value and _normalize_header(value) not in _MISSING_VALUE_STRINGS
+            if ";" not in value
+            and _normalize_header(value) not in _MISSING_VALUE_STRINGS
         ]
         if len(semicolon_values) == 1 and not nonempty_plain_values:
             widths.append(len(semicolon_values[0].split(";")))
             continue
-        raise ValueError("CSV row mixes semicolon-encoded tracks with per-session ROI values")
+        raise ValueError(
+            "CSV row mixes semicolon-encoded tracks with per-session ROI values"
+        )
 
     if not widths:
         return None
@@ -240,7 +243,9 @@ def _semicolon_encoded_row(
     ]
     if len(semicolon_values) == 1 and not nonempty_plain_values:
         return _parse_semicolon_roi_values(semicolon_values[0], n_sessions=n_sessions)
-    raise ValueError("CSV row mixes semicolon-encoded tracks with per-session ROI values")
+    raise ValueError(
+        "CSV row mixes semicolon-encoded tracks with per-session ROI values"
+    )
 
 
 def _rows_from_csv(csv_path: str | Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -323,7 +328,9 @@ def _load_wide_format(
     if session_names is None:
         semicolon_session_count = _infer_semicolon_session_count(headers, rows)
         if semicolon_session_count is not None:
-            session_names = [f"session_{index}" for index in range(semicolon_session_count)]
+            session_names = [
+                f"session_{index}" for index in range(semicolon_session_count)
+            ]
         else:
             candidate_headers: list[str] = []
             for header in headers:
@@ -338,7 +345,9 @@ def _load_wide_format(
 
     tracks = np.full((len(rows), len(session_names)), -1, dtype=int)
     for row_index, row in enumerate(rows):
-        semicolon_values = _semicolon_encoded_row(headers, row, n_sessions=len(session_names))
+        semicolon_values = _semicolon_encoded_row(
+            headers, row, n_sessions=len(session_names)
+        )
         if semicolon_values is not None:
             tracks[row_index, :] = semicolon_values
             continue
@@ -359,7 +368,9 @@ def _looks_like_track2p_session_dir(path: Path) -> bool:
     return _SESSION_DIR_PATTERN.match(path.name) is not None
 
 
-def _infer_subject_session_names_from_ground_truth_path(csv_path: str | Path) -> tuple[str, ...]:
+def _infer_subject_session_names_from_ground_truth_path(
+    csv_path: str | Path,
+) -> tuple[str, ...]:
     """Infer sibling Track2p session folders for a subject-level ground_truth.csv."""
 
     parent = Path(csv_path).parent
@@ -399,7 +410,9 @@ def load_track2p_ground_truth_csv(
     """
 
     if session_names is None:
-        inferred_session_names = _infer_subject_session_names_from_ground_truth_path(csv_path)
+        inferred_session_names = _infer_subject_session_names_from_ground_truth_path(
+            csv_path
+        )
         if inferred_session_names:
             session_names = inferred_session_names
     return load_track_table_csv(csv_path, session_names=session_names)
@@ -423,7 +436,9 @@ def tracks_from_consecutive_matches(
         start_roi_indices=start_roi_indices,
         fill_value=-1,
     )
-    return TrackTable(session_names=tuple(str(name) for name in session_names), tracks=track_rows)
+    return TrackTable(
+        session_names=tuple(str(name) for name in session_names), tracks=track_rows
+    )
 
 
 def _align_prediction_to_ground_truth(

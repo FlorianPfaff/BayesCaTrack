@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import numpy.testing as npt
 import pytest
-
 from bayescatrack.tracking import run_registered_subject_tracking
 
 
@@ -34,7 +33,9 @@ def _install_fake_point_set_registration(monkeypatch) -> None:
             self.matched_reference_indices = np.where(assignment >= 0)[0]
             self.matched_moving_indices = assignment[self.matched_reference_indices]
             self.transformed_reference_points = transformed_reference_points
-            self.matched_costs = np.zeros(self.matched_reference_indices.shape[0], dtype=float)
+            self.matched_costs = np.zeros(
+                self.matched_reference_indices.shape[0], dtype=float
+            )
             self.rmse = 0.0
             self.n_iterations = 1
             self.converged = True
@@ -51,7 +52,9 @@ def _install_fake_point_set_registration(monkeypatch) -> None:
         reference_points = np.asarray(reference_points, dtype=float)
         moving_points = np.asarray(moving_points, dtype=float)
         offset = np.mean(moving_points, axis=0) - np.mean(reference_points, axis=0)
-        transform = AffineTransform(np.eye(reference_points.shape[1], dtype=float), offset)
+        transform = AffineTransform(
+            np.eye(reference_points.shape[1], dtype=float), offset
+        )
         assignment = np.arange(reference_points.shape[0], dtype=int)
         return RegistrationResult(
             transform=transform,
@@ -61,11 +64,19 @@ def _install_fake_point_set_registration(monkeypatch) -> None:
 
     setattr(fake_registration, "AffineTransform", AffineTransform)
     setattr(fake_registration, "RegistrationResult", RegistrationResult)
-    setattr(fake_registration, "joint_registration_assignment", joint_registration_assignment)
+    setattr(
+        fake_registration,
+        "joint_registration_assignment",
+        joint_registration_assignment,
+    )
 
     monkeypatch.setitem(sys.modules, "pyrecest", fake_pyrecest)
     monkeypatch.setitem(sys.modules, "pyrecest.utils", fake_utils)
-    monkeypatch.setitem(sys.modules, "pyrecest.utils.point_set_registration", fake_registration)
+    monkeypatch.setitem(
+        sys.modules, "pyrecest.utils.point_set_registration", fake_registration
+    )
+
+
 # jscpd:ignore-end
 
 
@@ -106,7 +117,9 @@ def _make_three_roi_masks(shift_x: int = 0) -> np.ndarray:
     return masks
 
 
-def test_run_registered_subject_tracking_builds_full_track_rows(tmp_path: Path, monkeypatch):
+def test_run_registered_subject_tracking_builds_full_track_rows(
+    tmp_path: Path, monkeypatch
+):
     _install_fake_point_set_registration(monkeypatch)
     subject_dir = tmp_path / "jm271"
     for session_name, shift_x, offset in (
