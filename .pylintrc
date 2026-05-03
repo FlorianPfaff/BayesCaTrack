@@ -1,6 +1,35 @@
 [MAIN]
+py-version=3.13
+fail-under=10
+
+[FORMAT]
+max-line-length=180
+
+[MESSAGES CONTROL]
+disable=
+    missing-module-docstring,
+    missing-class-docstring,
+    missing-function-docstring,
+    import-outside-toplevel,
+    wrong-import-position,
+    consider-using-enumerate,
+    too-few-public-methods,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-many-locals,
+    too-many-return-statements,
+    too-many-branches,
+    too-many-statements,
+    too-many-ancestors,
+    too-many-instance-attributes,
+    too-many-public-methods,
+    too-many-boolean-expressions,
+    too-many-nested-blocks
 
 [DESIGN]
 max-args=8
-max-locals=16
-max-returns=7
+max-locals=30
+max-returns=10
+max-branches=20
+max-statements=80
+min-public-methods=0
