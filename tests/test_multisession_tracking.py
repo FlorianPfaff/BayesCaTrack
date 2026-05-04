@@ -2,13 +2,14 @@ from pathlib import Path
 
 import numpy as np
 import numpy.testing as npt
-
 from bayescatrack import CalciumPlaneData, Track2pSession
 from bayescatrack.multisession_tracking import track_sessions_multisession
 
 
 def test_single_session_multisession_tracking_short_circuits():
-    plane = CalciumPlaneData(roi_masks=np.ones((1, 2, 2), dtype=bool), roi_indices=np.array([7]))
+    plane = CalciumPlaneData(
+        roi_masks=np.ones((1, 2, 2), dtype=bool), roi_indices=np.array([7])
+    )
     session = Track2pSession(
         session_dir=Path("s1"),
         session_name="s1",

@@ -7,7 +7,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from bayescatrack.experiments.benchmark_manifest import load_benchmark_manifest, run_benchmark_manifest
+from bayescatrack.experiments.benchmark_manifest import (
+    load_benchmark_manifest,
+    run_benchmark_manifest,
+)
 from bayescatrack.experiments.track2p_benchmark import discover_subject_dirs
 
 
@@ -47,7 +50,9 @@ def _should_run_loso(policy: str, *, n_subjects: int) -> bool:
 def _summary_table(rows: list[dict[str, int | str]]) -> str:
     body = ["| kind | name | rows | output |", "| --- | --- | ---: | --- |"]
     for row in rows:
-        body.append(f"| {row['kind']} | {row['name']} | {row['rows']} | {row['output']} |")
+        body.append(
+            f"| {row['kind']} | {row['name']} | {row['rows']} | {row['output']} |"
+        )
     return "\n".join(body) + "\n"
 
 
@@ -58,9 +63,13 @@ def main() -> int:
     data_path = Path(os.environ["TRACK2P_DATA_PATH"])
     reference_path = Path(os.environ["TRACK2P_REFERENCE_PATH"])
     if not data_path.exists():
-        raise FileNotFoundError(f"TRACK2P_DATA_PATH does not exist on this runner: {data_path}")
+        raise FileNotFoundError(
+            f"TRACK2P_DATA_PATH does not exist on this runner: {data_path}"
+        )
     if not reference_path.exists():
-        raise FileNotFoundError(f"TRACK2P_REFERENCE_PATH does not exist on this runner: {reference_path}")
+        raise FileNotFoundError(
+            f"TRACK2P_REFERENCE_PATH does not exist on this runner: {reference_path}"
+        )
 
     subject_dirs = discover_subject_dirs(data_path)
     run_calibrated_loso = _should_run_loso(
@@ -72,7 +81,9 @@ def main() -> int:
         "data": str(data_path),
         "reference": str(reference_path),
         "reference_kind": os.environ.get("TRACK2P_REFERENCE_KIND", "manual-gt"),
-        "allow_track2p_as_reference_for_smoke_test": _bool_env("TRACK2P_ALLOW_SMOKE_REFERENCE"),
+        "allow_track2p_as_reference_for_smoke_test": _bool_env(
+            "TRACK2P_ALLOW_SMOKE_REFERENCE"
+        ),
         "plane_name": os.environ.get("TRACK2P_PLANE", "plane0"),
         "input_format": os.environ.get("TRACK2P_INPUT_FORMAT", "auto"),
         "include_non_cells": _bool_env("TRACK2P_INCLUDE_NON_CELLS", default=True),
@@ -80,7 +91,9 @@ def main() -> int:
         "max_gap": _int_env("TRACK2P_MAX_GAP", default=2),
         "transform_type": os.environ.get("TRACK2P_TRANSFORM_TYPE", "affine"),
         "seed_session": _int_env("TRACK2P_SEED_SESSION", default=0),
-        "restrict_to_reference_seed_rois": _bool_env("TRACK2P_RESTRICT_TO_REFERENCE_SEED_ROIS", default=True),
+        "restrict_to_reference_seed_rois": _bool_env(
+            "TRACK2P_RESTRICT_TO_REFERENCE_SEED_ROIS", default=True
+        ),
         "pairwise_cost_kwargs": _json_object_env("TRACK2P_PAIRWISE_COST_KWARGS_JSON"),
     }
 
@@ -150,13 +163,24 @@ def main() -> int:
     }
 
     manifest_path = results_dir / "track2p_benchmark_manifest.json"
-    manifest_path.write_text(json.dumps(manifest_data, indent=2) + "\n", encoding="utf-8")
-    (results_dir / "run_metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    manifest_path.write_text(
+        json.dumps(manifest_data, indent=2) + "\n", encoding="utf-8"
+    )
+    (results_dir / "run_metadata.json").write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+    )
 
-    manifest = load_benchmark_manifest(manifest_path, output_dir=results_dir, progress=False)
+    manifest = load_benchmark_manifest(
+        manifest_path, output_dir=results_dir, progress=False
+    )
     result = run_benchmark_manifest(manifest)
-    rows = [{"kind": "run", **row} for row in (summary.to_dict() for summary in result.runs)]
-    rows.extend({"kind": "comparison", **row} for row in (summary.to_dict() for summary in result.comparisons))
+    rows = [
+        {"kind": "run", **row} for row in (summary.to_dict() for summary in result.runs)
+    ]
+    rows.extend(
+        {"kind": "comparison", **row}
+        for row in (summary.to_dict() for summary in result.comparisons)
+    )
     summary = _summary_table(rows)
     (results_dir / "workflow-summary.md").write_text(summary, encoding="utf-8")
     print(summary)

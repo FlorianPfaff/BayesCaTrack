@@ -102,7 +102,9 @@ def write_raw_npy_session():
             plane_dir / "F.npy",
             np.array([[offset, offset + 1], [offset + 2, offset + 3]], dtype=float),
         )
-        np.save(plane_dir / "fov.npy", np.full(roi_masks.shape[1:], offset, dtype=float))
+        np.save(
+            plane_dir / "fov.npy", np.full(roi_masks.shape[1:], offset, dtype=float)
+        )
         return plane_dir
 
     return _write_raw_npy_session

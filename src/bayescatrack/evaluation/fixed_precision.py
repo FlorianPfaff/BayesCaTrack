@@ -38,9 +38,13 @@ def score_complete_tracks_at_fixed_precision(
     predicted_matrix = normalize_track_matrix(predicted_track_matrix)
     reference_matrix = normalize_track_matrix(reference_track_matrix)
     if predicted_matrix.shape[1] != reference_matrix.shape[1]:
-        raise ValueError("Predicted and reference matrices must have the same number of sessions")
+        raise ValueError(
+            "Predicted and reference matrices must have the same number of sessions"
+        )
 
-    selected_sessions = _resolve_session_indices(predicted_matrix.shape[1], session_indices)
+    selected_sessions = _resolve_session_indices(
+        predicted_matrix.shape[1], session_indices
+    )
     _resolve_session_indices(reference_matrix.shape[1], selected_sessions)
 
     targets = _validate_target_precisions(target_precisions)
@@ -54,10 +58,12 @@ def score_complete_tracks_at_fixed_precision(
     diagnostics: dict[str, float | int] = {}
     for target_precision in targets:
         suffix = _fixed_precision_metric_suffix(target_precision)
-        true_positives, predictions, precision, recall, threshold = _best_operating_point(
-            predicted,
-            reference,
-            target_precision=target_precision,
+        true_positives, predictions, precision, recall, threshold = (
+            _best_operating_point(
+                predicted,
+                reference,
+                target_precision=target_precision,
+            )
         )
         diagnostics.update(
             {
@@ -89,7 +95,13 @@ def _best_operating_point(
         rank = (true_positives, precision, -false_positives, len(retained))
         if precision >= target_precision and rank > best_rank:
             best_rank = rank
-            best_result = (true_positives, len(retained), precision, recall, float(threshold))
+            best_result = (
+                true_positives,
+                len(retained),
+                precision,
+                recall,
+                float(threshold),
+            )
     return best_result
 
 
@@ -110,30 +122,40 @@ def _scored_complete_track_dict(
     return scored_tracks
 
 
-def _score_array_for_track_matrix(matrix: np.ndarray, track_scores: Sequence[float] | None) -> np.ndarray:
+def _score_array_for_track_matrix(
+    matrix: np.ndarray, track_scores: Sequence[float] | None
+) -> np.ndarray:
     if track_scores is None:
         return np.ones((matrix.shape[0],), dtype=float)
     scores = np.asarray(track_scores, dtype=float)
     if scores.ndim != 1 or scores.shape[0] != matrix.shape[0]:
-        raise ValueError("track_scores must contain exactly one score per predicted track")
+        raise ValueError(
+            "track_scores must contain exactly one score per predicted track"
+        )
     if not np.all(np.isfinite(scores)):
         raise ValueError("track_scores must contain only finite values")
     return scores
 
 
-def _resolve_session_indices(num_sessions: int, session_indices: Sequence[int] | None) -> list[int]:
+def _resolve_session_indices(
+    num_sessions: int, session_indices: Sequence[int] | None
+) -> list[int]:
     if session_indices is None:
         return list(range(num_sessions))
     selected: list[int] = []
     for candidate in session_indices:
         session_idx = int(candidate)
         if session_idx < 0 or session_idx >= num_sessions:
-            raise IndexError(f"session index {session_idx} out of bounds for {num_sessions} sessions")
+            raise IndexError(
+                f"session index {session_idx} out of bounds for {num_sessions} sessions"
+            )
         selected.append(session_idx)
     return selected
 
 
-def _validate_target_precisions(target_precisions: Sequence[float]) -> tuple[float, ...]:
+def _validate_target_precisions(
+    target_precisions: Sequence[float],
+) -> tuple[float, ...]:
     targets = tuple(float(target_precision) for target_precision in target_precisions)
     for target_precision in targets:
         if not 0.0 <= target_precision <= 1.0:

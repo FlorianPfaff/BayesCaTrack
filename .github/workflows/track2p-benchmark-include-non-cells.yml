@@ -220,12 +220,14 @@ jobs:
 
       - name: Add results to job summary
         run: |
-          echo "## Track2p benchmark with non-cell ROIs" >> "$GITHUB_STEP_SUMMARY"
-          echo "Included usable manual-GT subjects: ${{ steps.gt.outputs.included }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Excluded subjects without GT: ${{ steps.gt.outputs.excluded_no_gt }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.gt.outputs.excluded_incompatible }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "include_non_cells: true" >> "$GITHUB_STEP_SUMMARY"
-          cat results/comparison.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Track2p benchmark with non-cell ROIs"
+            echo "Included usable manual-GT subjects: ${{ steps.gt.outputs.included }}"
+            echo "Excluded subjects without GT: ${{ steps.gt.outputs.excluded_no_gt }}"
+            echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.gt.outputs.excluded_incompatible }}"
+            echo "include_non_cells: true"
+            cat results/comparison.md
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v5

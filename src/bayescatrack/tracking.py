@@ -45,7 +45,9 @@ class SubjectTrackingResult:
     def __post_init__(self) -> None:
         object.__setattr__(self, "sessions", tuple(self.sessions))
         object.__setattr__(self, "match_results", tuple(self.match_results))
-        object.__setattr__(self, "session_names", tuple(str(name) for name in self.session_names))
+        object.__setattr__(
+            self, "session_names", tuple(str(name) for name in self.session_names)
+        )
 
         track_rows = np.asarray(self.track_rows, dtype=int)
         if track_rows.ndim != 2:
@@ -103,15 +105,21 @@ class SubjectTrackingResult:
             "session_names": self.session_names,
             "n_tracks_started": self.n_tracks,
             "n_complete_tracks": int(np.sum(complete_mask)),
-            "complete_track_fraction": _safe_ratio(float(np.sum(complete_mask)), float(self.n_tracks)),
+            "complete_track_fraction": _safe_ratio(
+                float(np.sum(complete_mask)), float(self.n_tracks)
+            ),
             "mean_track_length": _mean_or_nan(track_lengths),
             "median_track_length": _median_or_nan(track_lengths),
             "max_track_length": int(np.max(track_lengths)) if track_lengths.size else 0,
-            "n_pairwise_matches": int(sum(summary["n_matches"] for summary in pair_summaries)),
+            "n_pairwise_matches": int(
+                sum(summary["n_matches"] for summary in pair_summaries)
+            ),
             "mean_link_cost": _mean_or_nan(finite_link_costs),
             "median_link_cost": _median_or_nan(finite_link_costs),
             "max_link_cost": _max_or_nan(finite_link_costs),
-            "total_link_cost": float(np.sum(finite_link_costs)) if finite_link_costs.size else 0.0,
+            "total_link_cost": (
+                float(np.sum(finite_link_costs)) if finite_link_costs.size else 0.0
+            ),
             "pairs": pair_summaries,
         }
 
@@ -211,7 +219,9 @@ def run_registered_subject_tracking(
         binarize_registered_masks=binarize_registered_masks,
         registered_mask_threshold=registered_mask_threshold,
     )
-    association_bundles = [bundle.association_bundle for bundle in registered_bundles.bundles]
+    association_bundles = [
+        bundle.association_bundle for bundle in registered_bundles.bundles
+    ]
     solved_session_names, track_rows, match_results = build_track_rows_from_bundles(
         association_bundles,
         max_cost=assignment_max_cost,
@@ -281,18 +291,28 @@ def _build_link_cost_matrix(
     return link_costs
 
 
-def _match_result_summary(match_result: SessionMatchResult, association_bundle: Any) -> dict[str, Any]:
+def _match_result_summary(
+    match_result: SessionMatchResult, association_bundle: Any
+) -> dict[str, Any]:
     costs = np.asarray(match_result.costs, dtype=float)
-    n_reference_rois = int(np.asarray(association_bundle.reference_roi_indices).shape[0])
-    n_measurement_rois = int(np.asarray(association_bundle.measurement_roi_indices).shape[0])
+    n_reference_rois = int(
+        np.asarray(association_bundle.reference_roi_indices).shape[0]
+    )
+    n_measurement_rois = int(
+        np.asarray(association_bundle.measurement_roi_indices).shape[0]
+    )
     return {
         "reference_session_name": match_result.reference_session_name,
         "measurement_session_name": match_result.measurement_session_name,
         "n_reference_rois": n_reference_rois,
         "n_measurement_rois": n_measurement_rois,
         "n_matches": match_result.n_matches,
-        "reference_match_fraction": _safe_ratio(match_result.n_matches, n_reference_rois),
-        "measurement_match_fraction": _safe_ratio(match_result.n_matches, n_measurement_rois),
+        "reference_match_fraction": _safe_ratio(
+            match_result.n_matches, n_reference_rois
+        ),
+        "measurement_match_fraction": _safe_ratio(
+            match_result.n_matches, n_measurement_rois
+        ),
         "mean_cost": _mean_or_nan(costs),
         "median_cost": _median_or_nan(costs),
         "max_cost": _max_or_nan(costs),

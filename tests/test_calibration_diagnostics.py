@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from bayescatrack.evaluation.calibration_diagnostics import (
     calibration_summary,
     expected_calibration_error,
@@ -14,16 +13,24 @@ def test_expected_calibration_error_is_weighted_over_nonempty_bins():
     probabilities = [0.2, 0.8]
     labels = [0, 1]
 
-    assert expected_calibration_error(probabilities, labels, n_bins=10) == pytest.approx(0.2)
-    assert maximum_calibration_error(probabilities, labels, n_bins=10) == pytest.approx(0.2)
+    assert expected_calibration_error(
+        probabilities, labels, n_bins=10
+    ) == pytest.approx(0.2)
+    assert maximum_calibration_error(probabilities, labels, n_bins=10) == pytest.approx(
+        0.2
+    )
 
 
 def test_perfect_empirical_bin_calibration_has_zero_ece():
     probabilities = [0.5, 0.5]
     labels = [0, 1]
 
-    assert expected_calibration_error(probabilities, labels, n_bins=2) == pytest.approx(0.0)
-    assert maximum_calibration_error(probabilities, labels, n_bins=2) == pytest.approx(0.0)
+    assert expected_calibration_error(probabilities, labels, n_bins=2) == pytest.approx(
+        0.0
+    )
+    assert maximum_calibration_error(probabilities, labels, n_bins=2) == pytest.approx(
+        0.0
+    )
 
 
 def test_probability_one_is_included_in_last_bin():

@@ -210,7 +210,9 @@ def _registration_kwargs(bundle_kwargs: Mapping[str, Any]) -> _RegistrationKwarg
     }
 
 
-def _association_bundle_kwargs(bundle_kwargs: Mapping[str, Any]) -> _AssociationBundleKwargs:
+def _association_bundle_kwargs(
+    bundle_kwargs: Mapping[str, Any],
+) -> _AssociationBundleKwargs:
     return {
         "order": bundle_kwargs["order"],
         "weighted_centroids": bundle_kwargs["weighted_centroids"],
@@ -234,7 +236,9 @@ def _build_registration_ops(
     measurement_to_reference_offset: np.ndarray,
     registration_max_cost: float,
 ) -> dict[str, Any]:
-    registration_ops = {} if measurement_plane.ops is None else dict(measurement_plane.ops)
+    registration_ops = (
+        {} if measurement_plane.ops is None else dict(measurement_plane.ops)
+    )
     registration_ops.update(
         {
             "pyrecest_registration_model_requested": registration_model,
@@ -272,7 +276,9 @@ def _split_sampling_coordinates(
     return x_coords, y_coords
 
 
-def _bilinear_sample(image: np.ndarray, x_coords: np.ndarray, y_coords: np.ndarray) -> np.ndarray:
+def _bilinear_sample(
+    image: np.ndarray, x_coords: np.ndarray, y_coords: np.ndarray
+) -> np.ndarray:
     image = np.asarray(image, dtype=float)
     if image.ndim != 2:
         raise ValueError("image must have shape (height, width).")
@@ -290,10 +296,7 @@ def _bilinear_sample(image: np.ndarray, x_coords: np.ndarray, y_coords: np.ndarr
             xi = x0 + x_offset
             yi = y0 + y_offset
             valid = (
-                (0 <= xi)
-                & (xi < image.shape[1])
-                & (0 <= yi)
-                & (yi < image.shape[0])
+                (0 <= xi) & (xi < image.shape[1]) & (0 <= yi) & (yi < image.shape[0])
             )
             if not np.any(valid):
                 continue
@@ -331,7 +334,8 @@ def warp_image_into_reference_frame(
     order = _validate_order(order)
     flat_reference_points = _grid_points(output_shape, order=order)
     flat_measurement_points = (
-        np.asarray(reference_to_measurement_matrix, dtype=float) @ flat_reference_points.T
+        np.asarray(reference_to_measurement_matrix, dtype=float)
+        @ flat_reference_points.T
     ).T + np.asarray(reference_to_measurement_offset, dtype=float).reshape(1, -1)
     x_coords, y_coords = _split_sampling_coordinates(
         flat_measurement_points,

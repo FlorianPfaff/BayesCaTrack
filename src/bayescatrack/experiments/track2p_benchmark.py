@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
-
 from bayescatrack.association.calibrated_costs import CalibratedAssociationModel
 from bayescatrack.association.pyrecest_global_assignment import (
     AssociationCost,
@@ -20,10 +19,21 @@ from bayescatrack.association.pyrecest_global_assignment import (
     solve_global_assignment_for_sessions,
     tracks_to_suite2p_index_matrix,
 )
-from bayescatrack.core.bridge import Track2pSession, find_track2p_session_dirs, load_track2p_subject
-from bayescatrack.evaluation.track2p_metrics import normalize_track_matrix, score_track_matrices
+from bayescatrack.core.bridge import (
+    Track2pSession,
+    find_track2p_session_dirs,
+    load_track2p_subject,
+)
+from bayescatrack.evaluation.track2p_metrics import (
+    normalize_track_matrix,
+    score_track_matrices,
+)
 from bayescatrack.ground_truth_eval import load_track2p_ground_truth_csv
-from bayescatrack.reference import Track2pReference, load_aligned_subject_reference, load_track2p_reference
+from bayescatrack.reference import (
+    Track2pReference,
+    load_aligned_subject_reference,
+    load_track2p_reference,
+)
 
 ReferenceKind = Literal["auto", "manual-gt", "track2p-output", "aligned-subject-rows"]
 BenchmarkMethod = Literal["track2p-baseline", "global-assignment"]
@@ -32,7 +42,9 @@ OutputFormat = Literal["table", "json", "csv"]
 GROUND_TRUTH_CSV_NAME = "ground_truth.csv"
 GROUND_TRUTH_REFERENCE_SOURCE = "ground_truth_csv"
 ALIGNED_REFERENCE_SOURCE = "aligned_subject_rows"
-TRACK2P_REFERENCE_SOURCES = frozenset({"track2p_output_suite2p_indices", "track2p_output_match_mat"})
+TRACK2P_REFERENCE_SOURCES = frozenset(
+    {"track2p_output_suite2p_indices", "track2p_output_match_mat"}
+)
 
 
 # pylint: disable=too-many-instance-attributes
@@ -109,16 +121,26 @@ class ProgressReporter:
         filled = int(round(20 * self.current / self.total))
         bar = "#" * filled + "-" * (20 - filled)
         percent = 100.0 * self.current / self.total
-        print(f"{self.label} [{bar}] {self.current}/{self.total} ({percent:5.1f}%) {message}", file=sys.stderr, flush=True)
+        print(
+            f"{self.label} [{bar}] {self.current}/{self.total} ({percent:5.1f}%) {message}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
-def run_track2p_benchmark(config: Track2pBenchmarkConfig) -> list[SubjectBenchmarkResult]:
+def run_track2p_benchmark(
+    config: Track2pBenchmarkConfig,
+) -> list[SubjectBenchmarkResult]:
     """Run a Track2p benchmark over one subject directory or a dataset root."""
 
     if config.split == "leave-one-subject-out":
         if config.method != "global-assignment" or config.cost != "calibrated":
-            raise ValueError("LOSO calibration requires method='global-assignment' and cost='calibrated'")
-        from bayescatrack.experiments.track2p_loso_calibration import run_track2p_loso_calibration
+            raise ValueError(
+                "LOSO calibration requires method='global-assignment' and cost='calibrated'"
+            )
+        from bayescatrack.experiments.track2p_loso_calibration import (
+            run_track2p_loso_calibration,
+        )
 
         return run_track2p_loso_calibration(config).to_benchmark_results()
     if config.cost == "calibrated":
@@ -126,18 +148,30 @@ def run_track2p_benchmark(config: Track2pBenchmarkConfig) -> list[SubjectBenchma
 
     subject_dirs = discover_subject_dirs(config.data)
     if not subject_dirs:
-        raise ValueError(f"No Track2p-style subject directories found under {config.data}")
+        raise ValueError(
+            f"No Track2p-style subject directories found under {config.data}"
+        )
 
     results: list[SubjectBenchmarkResult] = []
-    progress = ProgressReporter(len(subject_dirs), enabled=config.progress, label="benchmark")
+    progress = ProgressReporter(
+        len(subject_dirs), enabled=config.progress, label="benchmark"
+    )
     for subject_dir in subject_dirs:
         progress.step(f"running {subject_dir.name}")
-        reference = _load_reference_for_subject(subject_dir, data_root=config.data, config=config)
-        _validate_reference_for_benchmark(reference, subject_dir=subject_dir, config=config)
+        reference = _load_reference_for_subject(
+            subject_dir, data_root=config.data, config=config
+        )
+        _validate_reference_for_benchmark(
+            reference, subject_dir=subject_dir, config=config
+        )
         if reference.source == GROUND_TRUTH_REFERENCE_SOURCE:
-            _validate_reference_roi_indices(reference, _load_subject_sessions(subject_dir, config))
+            _validate_reference_roi_indices(
+                reference, _load_subject_sessions(subject_dir, config)
+            )
         predicted_matrix, variant = _predict_subject_tracks(subject_dir, config)
-        scores = _score_prediction_against_reference(predicted_matrix, reference, config=config)
+        scores = _score_prediction_against_reference(
+            predicted_matrix, reference, config=config
+        )
         results.append(
             SubjectBenchmarkResult(
                 subject=subject_dir.name,
@@ -157,7 +191,11 @@ def discover_subject_dirs(data_path: str | Path) -> list[Path]:
     root = Path(data_path)
     if _looks_like_subject_dir(root):
         return [root]
-    subjects = [child for child in sorted(root.iterdir()) if child.is_dir() and _looks_like_subject_dir(child)]
+    subjects = [
+        child
+        for child in sorted(root.iterdir())
+        if child.is_dir() and _looks_like_subject_dir(child)
+    ]
     return subjects
 
 
@@ -182,12 +220,18 @@ def format_benchmark_table(rows: Sequence[dict[str, float | int | str]]) -> str:
     return "\n".join(body)
 
 
-def write_results(rows: Sequence[dict[str, float | int | str]], output_path: Path, output_format: OutputFormat) -> None:
+def write_results(
+    rows: Sequence[dict[str, float | int | str]],
+    output_path: Path,
+    output_format: OutputFormat,
+) -> None:
     """Write benchmark rows as JSON, CSV, or Markdown table."""
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_format == "json":
-        output_path.write_text(json.dumps(list(rows), indent=2) + "\n", encoding="utf-8")
+        output_path.write_text(
+            json.dumps(list(rows), indent=2) + "\n", encoding="utf-8"
+        )
         return
     if output_format == "csv":
         fieldnames = _csv_fieldnames(rows)
@@ -204,7 +248,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         prog="bayescatrack benchmark track2p",
         description="Run Track2p baseline and global-assignment ablations on Track2p-style datasets.",
     )
-    parser.add_argument("--data", required=True, type=Path, help="Track2p dataset root or one subject directory")
+    parser.add_argument(
+        "--data",
+        required=True,
+        type=Path,
+        help="Track2p dataset root or one subject directory",
+    )
     parser.add_argument(
         "--method",
         required=True,
@@ -217,7 +266,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=("subject", "leave-one-subject-out"),
         help="Evaluation split policy",
     )
-    parser.add_argument("--plane", dest="plane_name", default="plane0", help="Plane name such as plane0")
+    parser.add_argument(
+        "--plane", dest="plane_name", default="plane0", help="Plane name such as plane0"
+    )
     parser.add_argument(
         "--input-format",
         default="auto",
@@ -241,8 +292,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Permit Track2p/aligned-row references for plumbing smoke tests only",
     )
-    parser.add_argument("--curated-only", action="store_true", help="Evaluate only reference tracks marked curated")
-    parser.add_argument("--seed-session", type=int, default=0, help="Reference seed session used for sparse-GT filtering")
+    parser.add_argument(
+        "--curated-only",
+        action="store_true",
+        help="Evaluate only reference tracks marked curated",
+    )
+    parser.add_argument(
+        "--seed-session",
+        type=int,
+        default=0,
+        help="Reference seed session used for sparse-GT filtering",
+    )
     parser.add_argument(
         "--restrict-to-reference-seed-rois",
         action=argparse.BooleanOptionalAction,
@@ -255,46 +315,106 @@ def build_arg_parser() -> argparse.ArgumentParser:
         choices=("registered-iou", "roi-aware", "calibrated"),
         help="Pairwise cost used by global assignment",
     )
-    parser.add_argument("--max-gap", type=int, default=2, help="Maximum forward session gap for global-assignment edges")
+    parser.add_argument(
+        "--max-gap",
+        type=int,
+        default=2,
+        help="Maximum forward session gap for global-assignment edges",
+    )
     parser.add_argument(
         "--transform-type",
         default="affine",
         choices=("affine", "rigid", "none"),
         help="Track2p registration transform type",
     )
-    parser.add_argument("--start-cost", type=float, default=5.0, help="PyRecEst track start cost")
-    parser.add_argument("--end-cost", type=float, default=5.0, help="PyRecEst track end cost")
-    parser.add_argument("--gap-penalty", type=float, default=1.0, help="Penalty per skipped session")
-    parser.add_argument("--cost-threshold", type=float, default=6.0, help="Maximum adjusted edge cost admitted by the solver")
-    parser.add_argument("--no-cost-threshold", action="store_true", help="Disable the solver edge-cost threshold")
+    parser.add_argument(
+        "--start-cost", type=float, default=5.0, help="PyRecEst track start cost"
+    )
+    parser.add_argument(
+        "--end-cost", type=float, default=5.0, help="PyRecEst track end cost"
+    )
+    parser.add_argument(
+        "--gap-penalty", type=float, default=1.0, help="Penalty per skipped session"
+    )
+    parser.add_argument(
+        "--cost-threshold",
+        type=float,
+        default=6.0,
+        help="Maximum adjusted edge cost admitted by the solver",
+    )
+    parser.add_argument(
+        "--no-cost-threshold",
+        action="store_true",
+        help="Disable the solver edge-cost threshold",
+    )
     parser.add_argument(
         "--include-behavior",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Load behaviour arrays when present",
     )
-    parser.add_argument("--include-non-cells", action="store_true", help="Keep Suite2p ROIs that fail iscell filtering")
-    parser.add_argument("--cell-probability-threshold", type=float, default=0.5, help="Suite2p iscell probability threshold")
-    parser.add_argument("--weighted-masks", action="store_true", help="Use Suite2p lam weights while reconstructing masks")
+    parser.add_argument(
+        "--include-non-cells",
+        action="store_true",
+        help="Keep Suite2p ROIs that fail iscell filtering",
+    )
+    parser.add_argument(
+        "--cell-probability-threshold",
+        type=float,
+        default=0.5,
+        help="Suite2p iscell probability threshold",
+    )
+    parser.add_argument(
+        "--weighted-masks",
+        action="store_true",
+        help="Use Suite2p lam weights while reconstructing masks",
+    )
     parser.add_argument(
         "--exclude-overlapping-pixels",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Drop Suite2p overlap pixels when reconstructing masks",
     )
-    parser.add_argument("--order", default="xy", choices=("xy", "yx"), help="Coordinate order for costs")
-    parser.add_argument("--weighted-centroids", action="store_true", help="Use weighted centroids where masks contain weights")
-    parser.add_argument("--velocity-variance", type=float, default=25.0, help="Velocity variance for association bundle state moments")
-    parser.add_argument("--regularization", type=float, default=1.0e-6, help="Position covariance regularization")
-    parser.add_argument("--pairwise-cost-kwargs-json", default=None, help="JSON object merged into pairwise cost kwargs")
+    parser.add_argument(
+        "--order", default="xy", choices=("xy", "yx"), help="Coordinate order for costs"
+    )
+    parser.add_argument(
+        "--weighted-centroids",
+        action="store_true",
+        help="Use weighted centroids where masks contain weights",
+    )
+    parser.add_argument(
+        "--velocity-variance",
+        type=float,
+        default=25.0,
+        help="Velocity variance for association bundle state moments",
+    )
+    parser.add_argument(
+        "--regularization",
+        type=float,
+        default=1.0e-6,
+        help="Position covariance regularization",
+    )
+    parser.add_argument(
+        "--pairwise-cost-kwargs-json",
+        default=None,
+        help="JSON object merged into pairwise cost kwargs",
+    )
     parser.add_argument(
         "--progress",
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Print benchmark progress to stderr",
     )
-    parser.add_argument("--output", type=Path, default=None, help="Optional output file")
-    parser.add_argument("--format", choices=("table", "json", "csv"), default="table", help="Stdout/output format")
+    parser.add_argument(
+        "--output", type=Path, default=None, help="Optional output file"
+    )
+    parser.add_argument(
+        "--format",
+        choices=("table", "json", "csv"),
+        default="table",
+        help="Stdout/output format",
+    )
     return parser
 
 
@@ -312,7 +432,9 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _predict_subject_tracks(subject_dir: Path, config: Track2pBenchmarkConfig) -> tuple[np.ndarray, str]:
+def _predict_subject_tracks(
+    subject_dir: Path, config: Track2pBenchmarkConfig
+) -> tuple[np.ndarray, str]:
     if config.method == "track2p-baseline":
         track2p_dir = subject_dir / "track2p"
         if track2p_dir.exists():
@@ -372,13 +494,17 @@ def _variant_name(cost: AssociationCost) -> str:
 
 
 # pylint: disable=too-many-return-statements,too-many-branches
-def _load_reference_for_subject(subject_dir: Path, *, data_root: Path, config: Track2pBenchmarkConfig) -> Track2pReference:
+def _load_reference_for_subject(
+    subject_dir: Path, *, data_root: Path, config: Track2pBenchmarkConfig
+) -> Track2pReference:
     data_root = Path(data_root)
     if config.reference is None:
         if config.reference_kind == "manual-gt":
             default_ground_truth_path = subject_dir / GROUND_TRUTH_CSV_NAME
             if default_ground_truth_path.exists():
-                return _load_ground_truth_csv_reference(default_ground_truth_path, subject_dir=subject_dir)
+                return _load_ground_truth_csv_reference(
+                    default_ground_truth_path, subject_dir=subject_dir
+                )
             raise ValueError(
                 f"--reference-kind manual-gt was requested, but {default_ground_truth_path} does not exist"
             )
@@ -386,13 +512,17 @@ def _load_reference_for_subject(subject_dir: Path, *, data_root: Path, config: T
             track2p_dir = subject_dir / "track2p"
             if track2p_dir.exists():
                 return load_track2p_reference(track2p_dir, plane_name=config.plane_name)
-            raise ValueError(f"--reference-kind track2p-output was requested, but {track2p_dir} does not exist")
+            raise ValueError(
+                f"--reference-kind track2p-output was requested, but {track2p_dir} does not exist"
+            )
         if config.reference_kind == "aligned-subject-rows":
             return _load_aligned_reference_for_config(subject_dir, config)
 
         default_ground_truth_path = subject_dir / GROUND_TRUTH_CSV_NAME
         if default_ground_truth_path.exists():
-            return _load_ground_truth_csv_reference(default_ground_truth_path, subject_dir=subject_dir)
+            return _load_ground_truth_csv_reference(
+                default_ground_truth_path, subject_dir=subject_dir
+            )
         track2p_dir = subject_dir / "track2p"
         if track2p_dir.exists():
             return load_track2p_reference(track2p_dir, plane_name=config.plane_name)
@@ -401,17 +531,25 @@ def _load_reference_for_subject(subject_dir: Path, *, data_root: Path, config: T
     reference_root = Path(config.reference)
     if config.reference_kind == "manual-gt":
         if reference_root.is_file():
-            return _load_ground_truth_csv_reference(reference_root, subject_dir=subject_dir)
-        ground_truth_path = _resolve_ground_truth_csv_path(subject_dir, data_root=data_root, reference_root=reference_root)
+            return _load_ground_truth_csv_reference(
+                reference_root, subject_dir=subject_dir
+            )
+        ground_truth_path = _resolve_ground_truth_csv_path(
+            subject_dir, data_root=data_root, reference_root=reference_root
+        )
         if ground_truth_path is None:
             raise ValueError(
                 "--reference-kind manual-gt was requested, but no ground_truth.csv could be resolved "
                 f"for subject {subject_dir.name!r} under {reference_root}"
             )
-        return _load_ground_truth_csv_reference(ground_truth_path, subject_dir=subject_dir)
+        return _load_ground_truth_csv_reference(
+            ground_truth_path, subject_dir=subject_dir
+        )
 
     if config.reference_kind == "track2p-output":
-        reference_path = _resolve_track2p_reference_path(subject_dir, data_root=data_root, reference_root=reference_root)
+        reference_path = _resolve_track2p_reference_path(
+            subject_dir, data_root=data_root, reference_root=reference_root
+        )
         if reference_path is None:
             raise ValueError(
                 "--reference-kind track2p-output was requested, but no Track2p reference could be resolved "
@@ -422,11 +560,17 @@ def _load_reference_for_subject(subject_dir: Path, *, data_root: Path, config: T
     if config.reference_kind == "aligned-subject-rows":
         return _load_aligned_reference_for_config(subject_dir, config)
 
-    ground_truth_path = _resolve_ground_truth_csv_path(subject_dir, data_root=data_root, reference_root=reference_root)
+    ground_truth_path = _resolve_ground_truth_csv_path(
+        subject_dir, data_root=data_root, reference_root=reference_root
+    )
     if ground_truth_path is not None:
-        return _load_ground_truth_csv_reference(ground_truth_path, subject_dir=subject_dir)
+        return _load_ground_truth_csv_reference(
+            ground_truth_path, subject_dir=subject_dir
+        )
 
-    reference_path = _resolve_track2p_reference_path(subject_dir, data_root=data_root, reference_root=reference_root)
+    reference_path = _resolve_track2p_reference_path(
+        subject_dir, data_root=data_root, reference_root=reference_root
+    )
     if reference_path is not None:
         return load_track2p_reference(reference_path, plane_name=config.plane_name)
     return _load_aligned_reference_for_config(subject_dir, config)
@@ -450,7 +594,9 @@ def _validate_reference_for_benchmark(
     )
 
 
-def _resolve_ground_truth_csv_path(subject_dir: Path, *, data_root: Path, reference_root: Path) -> Path | None:
+def _resolve_ground_truth_csv_path(
+    subject_dir: Path, *, data_root: Path, reference_root: Path
+) -> Path | None:
     candidates: list[Path] = []
     if reference_root.is_file():
         candidates.append(reference_root)
@@ -470,12 +616,18 @@ def _resolve_ground_truth_csv_path(subject_dir: Path, *, data_root: Path, refere
             candidates.append(reference_root / relative_subject / GROUND_TRUTH_CSV_NAME)
 
     for candidate in candidates:
-        if candidate.exists() and candidate.is_file() and candidate.name.casefold() == GROUND_TRUTH_CSV_NAME:
+        if (
+            candidate.exists()
+            and candidate.is_file()
+            and candidate.name.casefold() == GROUND_TRUTH_CSV_NAME
+        ):
             return candidate
     return None
 
 
-def _resolve_track2p_reference_path(subject_dir: Path, *, data_root: Path, reference_root: Path) -> Path | None:
+def _resolve_track2p_reference_path(
+    subject_dir: Path, *, data_root: Path, reference_root: Path
+) -> Path | None:
     candidates = [
         reference_root,
         reference_root / subject_dir.name,
@@ -495,15 +647,23 @@ def _resolve_track2p_reference_path(subject_dir: Path, *, data_root: Path, refer
             ]
         )
     for candidate in candidates:
-        if (candidate / "track_ops.npy").exists() or (candidate / "track2p" / "track_ops.npy").exists():
+        if (candidate / "track_ops.npy").exists() or (
+            candidate / "track2p" / "track_ops.npy"
+        ).exists():
             return candidate
     return None
 
 
-def _load_ground_truth_csv_reference(ground_truth_path: Path, *, subject_dir: Path) -> Track2pReference:
-    session_names = tuple(session_dir.name for session_dir in find_track2p_session_dirs(subject_dir))
+def _load_ground_truth_csv_reference(
+    ground_truth_path: Path, *, subject_dir: Path
+) -> Track2pReference:
+    session_names = tuple(
+        session_dir.name for session_dir in find_track2p_session_dirs(subject_dir)
+    )
     if not session_names:
-        raise ValueError(f"No Track2p-style sessions were found for ground-truth reference {ground_truth_path}")
+        raise ValueError(
+            f"No Track2p-style sessions were found for ground-truth reference {ground_truth_path}"
+        )
 
     track_table = load_track2p_ground_truth_csv(ground_truth_path)
     if track_table.session_names != session_names:
@@ -530,12 +690,16 @@ def _score_prediction_against_reference(
     reference_matrix = _reference_matrix(reference, curated_only=config.curated_only)
     predicted = normalize_track_matrix(predicted_matrix)
     if predicted.shape[1] != reference_matrix.shape[1]:
-        raise ValueError("Predicted and reference matrices must have the same number of sessions")
+        raise ValueError(
+            "Predicted and reference matrices must have the same number of sessions"
+        )
 
     predicted_before_filter = int(predicted.shape[0])
     reference_seed_rois: set[int] = set()
     if config.restrict_to_reference_seed_rois:
-        reference_seed_rois = _reference_seed_roi_set(reference_matrix, seed_session=config.seed_session)
+        reference_seed_rois = _reference_seed_roi_set(
+            reference_matrix, seed_session=config.seed_session
+        )
         predicted = _filter_tracks_by_reference_seed_rois(
             predicted,
             reference_matrix,
@@ -549,7 +713,9 @@ def _score_prediction_against_reference(
             "seed_session": int(config.seed_session),
             "reference_seed_rois": int(len(reference_seed_rois)),
             "evaluated_prediction_tracks": int(predicted.shape[0]),
-            "dropped_prediction_tracks": int(predicted_before_filter - predicted.shape[0]),
+            "dropped_prediction_tracks": int(
+                predicted_before_filter - predicted.shape[0]
+            ),
         }
     return scores
 
@@ -560,20 +726,30 @@ def _filter_tracks_by_reference_seed_rois(
     *,
     seed_session: int,
 ) -> np.ndarray:
-    reference_seed_rois = _reference_seed_roi_set(reference_matrix, seed_session=seed_session)
+    reference_seed_rois = _reference_seed_roi_set(
+        reference_matrix, seed_session=seed_session
+    )
     if not reference_seed_rois:
         return predicted_matrix[:0]
     keep = [row[seed_session] in reference_seed_rois for row in predicted_matrix]
     return predicted_matrix[np.asarray(keep, dtype=bool)]
 
 
-def _reference_seed_roi_set(reference_matrix: np.ndarray, *, seed_session: int) -> set[int]:
+def _reference_seed_roi_set(
+    reference_matrix: np.ndarray, *, seed_session: int
+) -> set[int]:
     if seed_session < 0 or seed_session >= reference_matrix.shape[1]:
-        raise IndexError(f"seed_session {seed_session} out of bounds for {reference_matrix.shape[1]} sessions")
-    return {int(value) for value in reference_matrix[:, seed_session] if value is not None}
+        raise IndexError(
+            f"seed_session {seed_session} out of bounds for {reference_matrix.shape[1]} sessions"
+        )
+    return {
+        int(value) for value in reference_matrix[:, seed_session] if value is not None
+    }
 
 
-def _load_aligned_reference_for_config(subject_dir: Path, config: Track2pBenchmarkConfig) -> Track2pReference:
+def _load_aligned_reference_for_config(
+    subject_dir: Path, config: Track2pBenchmarkConfig
+) -> Track2pReference:
     return load_aligned_subject_reference(
         subject_dir,
         plane_name=config.plane_name,
@@ -586,7 +762,9 @@ def _load_aligned_reference_for_config(subject_dir: Path, config: Track2pBenchma
     )
 
 
-def _load_subject_sessions(subject_dir: Path, config: Track2pBenchmarkConfig) -> list[Track2pSession]:
+def _load_subject_sessions(
+    subject_dir: Path, config: Track2pBenchmarkConfig
+) -> list[Track2pSession]:
     return load_track2p_subject(
         subject_dir,
         plane_name=config.plane_name,
@@ -599,7 +777,9 @@ def _load_subject_sessions(subject_dir: Path, config: Track2pBenchmarkConfig) ->
     )
 
 
-def _validate_reference_roi_indices(reference: Track2pReference, sessions: Sequence[Track2pSession]) -> None:
+def _validate_reference_roi_indices(
+    reference: Track2pReference, sessions: Sequence[Track2pSession]
+) -> None:
     sessions = tuple(sessions)
     if len(sessions) != reference.n_sessions:
         raise ValueError(
@@ -622,7 +802,11 @@ def _validate_reference_roi_indices(reference: Track2pReference, sessions: Seque
         missing_indices = sorted(referenced_indices - available_indices)
         if missing_indices:
             preview = ", ".join(str(value) for value in missing_indices[:10])
-            suffix = "" if len(missing_indices) <= 10 else f", ... ({len(missing_indices)} total)"
+            suffix = (
+                ""
+                if len(missing_indices) <= 10
+                else f", ... ({len(missing_indices)} total)"
+            )
             raise ValueError(
                 "Reference ROI indices are absent from loaded session "
                 f"{session.session_name!r}: {preview}{suffix}. "
@@ -644,7 +828,9 @@ def _reference_matrix(reference: Track2pReference, *, curated_only: bool) -> np.
     if not curated_only:
         return matrix
     if reference.curated_mask is None:
-        raise ValueError("--curated-only was requested, but the reference has no curation mask")
+        raise ValueError(
+            "--curated-only was requested, but the reference has no curation mask"
+        )
     return matrix[np.asarray(reference.curated_mask, dtype=bool)]
 
 
@@ -696,7 +882,9 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
     )
 
 
-def _write_stdout(rows: Sequence[dict[str, float | int | str]], output_format: OutputFormat) -> None:
+def _write_stdout(
+    rows: Sequence[dict[str, float | int | str]], output_format: OutputFormat
+) -> None:
     if output_format == "json":
         print(json.dumps(list(rows), indent=2))
         return

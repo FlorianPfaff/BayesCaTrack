@@ -34,11 +34,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-import re
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -109,7 +109,9 @@ class CalciumPlaneData:
         for key, value in self.roi_features.items():
             array_value = np.asarray(value)
             if array_value.ndim == 0:
-                raise ValueError(f"ROI feature '{key}' must be at least one-dimensional")
+                raise ValueError(
+                    f"ROI feature '{key}' must be at least one-dimensional"
+                )
             if array_value.shape[0] != n_rois:
                 raise ValueError(
                     f"ROI feature '{key}' must have first dimension equal to n_roi"
@@ -215,7 +217,9 @@ class CalciumPlaneData:
         large_cost: float = 1.0e6,
         similarity_epsilon: float = 1.0e-6,
         return_components: bool = False,
-    ) -> np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]:  # pylint: disable=too-many-arguments,too-many-locals
+    ) -> (
+        np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]
+    ):  # pylint: disable=too-many-arguments,too-many-locals
         """Build a soft ROI-aware association cost matrix.
 
         This method is the critical bridge between longitudinal calcium-imaging
@@ -303,10 +307,15 @@ class CalciumPlaneData:
         )
 
         if self.cell_probabilities is not None and other.cell_probabilities is not None:
-            probabilities_self = np.clip(self.cell_probabilities, similarity_epsilon, 1.0)
-            probabilities_other = np.clip(other.cell_probabilities, similarity_epsilon, 1.0)
+            probabilities_self = np.clip(
+                self.cell_probabilities, similarity_epsilon, 1.0
+            )
+            probabilities_other = np.clip(
+                other.cell_probabilities, similarity_epsilon, 1.0
+            )
             cell_probability_cost = -0.5 * (
-                np.log(probabilities_self[:, None]) + np.log(probabilities_other[None, :])
+                np.log(probabilities_self[:, None])
+                + np.log(probabilities_other[None, :])
             )
         else:
             cell_probability_cost = np.zeros((self.n_rois, other.n_rois), dtype=float)
@@ -421,7 +430,9 @@ class CalciumPlaneData:
 
         return covariances
 
-    def to_measurement_matrix(self, order: str = "xy", weighted: bool = False) -> np.ndarray:
+    def to_measurement_matrix(
+        self, order: str = "xy", weighted: bool = False
+    ) -> np.ndarray:
         return self.centroids(order=order, weighted=weighted)
 
     def to_constant_velocity_state_moments(
@@ -460,9 +471,19 @@ class CalciumPlaneData:
             )
             covariances[:, :, roi_index] = np.array(
                 [
-                    [covariances_2d[0, 0, roi_index], 0.0, covariances_2d[0, 1, roi_index], 0.0],
+                    [
+                        covariances_2d[0, 0, roi_index],
+                        0.0,
+                        covariances_2d[0, 1, roi_index],
+                        0.0,
+                    ],
                     [0.0, velocity_variance, 0.0, 0.0],
-                    [covariances_2d[1, 0, roi_index], 0.0, covariances_2d[1, 1, roi_index], 0.0],
+                    [
+                        covariances_2d[1, 0, roi_index],
+                        0.0,
+                        covariances_2d[1, 1, roi_index],
+                        0.0,
+                    ],
                     [0.0, 0.0, 0.0, velocity_variance],
                 ],
                 dtype=float,
@@ -546,7 +567,14 @@ class CalciumPlaneData:
             "measurements": self.to_measurement_matrix(order=order, weighted=weighted),
             "state_means": means,
             "state_covariances": covariances,
-            "roi_indices": np.asarray(self.roi_indices if self.roi_indices is not None else np.arange(self.n_rois), dtype=int),
+            "roi_indices": np.asarray(
+                (
+                    self.roi_indices
+                    if self.roi_indices is not None
+                    else np.arange(self.n_rois)
+                ),
+                dtype=int,
+            ),
         }
         if self.traces is not None:
             export["traces"] = self.traces
@@ -608,6 +636,7 @@ class SessionAssociationBundle:
             "pairwise_cost_matrix": self.pairwise_cost_matrix,
         }
 
+
 # pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-statements
 def load_suite2p_plane(
     plane_dir: str | Path,
@@ -668,7 +697,11 @@ def load_suite2p_plane(
                 if np.ndim(iscell) == 2 and iscell.shape[1] > 1
                 else float(iscell[roi_index])
             )
-            is_cell = bool(iscell[roi_index, 0]) if np.ndim(iscell) == 2 else bool(iscell[roi_index])
+            is_cell = (
+                bool(iscell[roi_index, 0])
+                if np.ndim(iscell) == 2
+                else bool(iscell[roi_index])
+            )
             if not include_non_cells:
                 keep_roi = is_cell and probability >= cell_probability_threshold
 
@@ -701,7 +734,9 @@ def load_suite2p_plane(
         roi_masks.append(mask)
         cell_probabilities.append(probability)
         for feature_name in feature_names:
-            collected_features[feature_name].append(float(roi_stat.get(feature_name, np.nan)))
+            collected_features[feature_name].append(
+                float(roi_stat.get(feature_name, np.nan))
+            )
 
     roi_mask_array = _stack_or_empty_masks(roi_masks, image_shape, weighted_masks)
     selected_indices_array = np.asarray(selected_indices, dtype=int)
@@ -782,9 +817,13 @@ def find_track2p_session_dirs(subject_dir: str | Path) -> list[Path]:
     for candidate in candidate_dirs:
         match = _SESSION_NAME_PATTERN.match(candidate.name)
         session_date = (
-            date.fromisoformat(match.group("session_date")) if match is not None else None
+            date.fromisoformat(match.group("session_date"))
+            if match is not None
+            else None
         )
-        if session_date is None and not ((candidate / "suite2p").exists() or (candidate / "data_npy").exists()):
+        if session_date is None and not (
+            (candidate / "suite2p").exists() or (candidate / "data_npy").exists()
+        ):
             continue
         recognized_dirs.append((session_date, candidate.name, candidate))
 
@@ -832,7 +871,9 @@ def load_track2p_subject(
 
         match = _SESSION_NAME_PATTERN.match(session_dir.name)
         session_date = (
-            date.fromisoformat(match.group("session_date")) if match is not None else None
+            date.fromisoformat(match.group("session_date"))
+            if match is not None
+            else None
         )
         sessions.append(
             Track2pSession(
@@ -845,6 +886,7 @@ def load_track2p_subject(
         )
 
     return sessions
+
 
 # pylint: disable=too-many-arguments,too-many-locals
 def build_session_pair_association_bundle(
@@ -948,11 +990,14 @@ def build_session_pair_association_bundle(
         pairwise_components=pairwise_components,
     )
 
+
 # pylint: disable=too-many-arguments
 def build_consecutive_session_association_bundles(
     sessions: Sequence[Track2pSession],
     *,
-    measurement_planes_in_reference_frames: Sequence[CalciumPlaneData | None] | None = None,
+    measurement_planes_in_reference_frames: (
+        Sequence[CalciumPlaneData | None] | None
+    ) = None,
     order: str = "xy",
     weighted_centroids: bool = False,
     velocity_variance: float = 25.0,
@@ -993,6 +1038,7 @@ def build_consecutive_session_association_bundles(
 
     return bundles
 
+
 # pylint: disable=too-many-arguments,too-many-locals
 def export_subject_to_npz(
     subject_dir: str | Path,
@@ -1024,11 +1070,20 @@ def export_subject_to_npz(
     )
 
     payload: dict[str, np.ndarray] = {
-        "session_names": np.asarray([session.session_name for session in sessions], dtype=object),
-        "session_dates": np.asarray([
-            session.session_date.isoformat() if session.session_date is not None else ""
-            for session in sessions
-        ], dtype=object),
+        "session_names": np.asarray(
+            [session.session_name for session in sessions], dtype=object
+        ),
+        "session_dates": np.asarray(
+            [
+                (
+                    session.session_date.isoformat()
+                    if session.session_date is not None
+                    else ""
+                )
+                for session in sessions
+            ],
+            dtype=object,
+        ),
         "plane_name": np.asarray(plane_name, dtype=object),
         "input_format": np.asarray(input_format, dtype=object),
     }
@@ -1060,7 +1115,9 @@ def export_subject_to_npz(
         summary_sessions.append(
             {
                 "session_name": session.session_name,
-                "session_date": session.session_date.isoformat() if session.session_date else None,
+                "session_date": (
+                    session.session_date.isoformat() if session.session_date else None
+                ),
                 "source": plane_data.source,
                 "n_rois": plane_data.n_rois,
                 "image_shape": list(plane_data.image_shape),
@@ -1109,11 +1166,17 @@ def summarize_subject(
         "sessions": [
             {
                 "session_name": session.session_name,
-                "session_date": session.session_date.isoformat() if session.session_date else None,
+                "session_date": (
+                    session.session_date.isoformat() if session.session_date else None
+                ),
                 "source": session.plane_data.source,
                 "n_rois": session.plane_data.n_rois,
                 "image_shape": list(session.plane_data.image_shape),
-                "trace_shape": list(session.plane_data.traces.shape) if session.plane_data.traces is not None else None,
+                "trace_shape": (
+                    list(session.plane_data.traces.shape)
+                    if session.plane_data.traces is not None
+                    else None
+                ),
                 "has_fov": session.plane_data.fov is not None,
                 "has_motion_energy": session.motion_energy is not None,
             }
@@ -1137,7 +1200,9 @@ def _infer_image_shape(stat: np.ndarray, ops: dict[str, Any] | None) -> tuple[in
     if ops is not None and "Ly" in ops and "Lx" in ops:
         return int(ops["Ly"]), int(ops["Lx"])
     if len(stat) == 0:
-        raise ValueError("Cannot infer image shape from an empty stat.npy without ops.npy")
+        raise ValueError(
+            "Cannot infer image shape from an empty stat.npy without ops.npy"
+        )
     max_y = 0
     max_x = 0
     for roi_stat in stat:
@@ -1152,7 +1217,9 @@ def _validate_coordinate_order(order: str) -> str:
     return order
 
 
-def _ensure_finite_cost_matrix(cost_matrix: np.ndarray, *, large_cost: float) -> np.ndarray:
+def _ensure_finite_cost_matrix(
+    cost_matrix: np.ndarray, *, large_cost: float
+) -> np.ndarray:
     cost_matrix = np.asarray(cost_matrix, dtype=float)
     if cost_matrix.ndim != 2:
         raise ValueError("cost_matrix must be two-dimensional")
@@ -1188,13 +1255,23 @@ def _estimate_default_centroid_scale(
     return float(max(equivalent_diameter, 1.0))
 
 
-def _pairwise_iou_matrix(reference_masks: np.ndarray, measurement_masks: np.ndarray) -> np.ndarray:
-    reference_support = np.asarray(reference_masks).reshape(reference_masks.shape[0], -1) > 0
-    measurement_support = np.asarray(measurement_masks).reshape(measurement_masks.shape[0], -1) > 0
+def _pairwise_iou_matrix(
+    reference_masks: np.ndarray, measurement_masks: np.ndarray
+) -> np.ndarray:
+    reference_support = (
+        np.asarray(reference_masks).reshape(reference_masks.shape[0], -1) > 0
+    )
+    measurement_support = (
+        np.asarray(measurement_masks).reshape(measurement_masks.shape[0], -1) > 0
+    )
     if reference_support.shape[0] == 0 or measurement_support.shape[0] == 0:
-        return np.zeros((reference_support.shape[0], measurement_support.shape[0]), dtype=float)
+        return np.zeros(
+            (reference_support.shape[0], measurement_support.shape[0]), dtype=float
+        )
 
-    intersections = reference_support.astype(float) @ measurement_support.astype(float).T
+    intersections = (
+        reference_support.astype(float) @ measurement_support.astype(float).T
+    )
     areas_reference = np.sum(reference_support, axis=1, dtype=float)
     areas_measurement = np.sum(measurement_support, axis=1, dtype=float)
     unions = areas_reference[:, None] + areas_measurement[None, :] - intersections
@@ -1210,10 +1287,16 @@ def _pairwise_mask_cosine_similarity(
     *,
     similarity_epsilon: float,
 ) -> np.ndarray:
-    flat_reference = np.asarray(reference_masks, dtype=float).reshape(reference_masks.shape[0], -1)
-    flat_measurement = np.asarray(measurement_masks, dtype=float).reshape(measurement_masks.shape[0], -1)
+    flat_reference = np.asarray(reference_masks, dtype=float).reshape(
+        reference_masks.shape[0], -1
+    )
+    flat_measurement = np.asarray(measurement_masks, dtype=float).reshape(
+        measurement_masks.shape[0], -1
+    )
     if flat_reference.shape[0] == 0 or flat_measurement.shape[0] == 0:
-        return np.zeros((flat_reference.shape[0], flat_measurement.shape[0]), dtype=float)
+        return np.zeros(
+            (flat_reference.shape[0], flat_measurement.shape[0]), dtype=float
+        )
 
     numerator = flat_reference @ flat_measurement.T
     denom_reference = np.linalg.norm(flat_reference, axis=1)
@@ -1223,6 +1306,7 @@ def _pairwise_mask_cosine_similarity(
         similarity_epsilon,
     )
     return numerator / denominator
+
 
 # pylint: disable=too-many-locals
 def _pairwise_roi_feature_distance(
@@ -1237,7 +1321,9 @@ def _pairwise_roi_feature_distance(
 
     if feature_names is None:
         feature_names = sorted(
-            set(reference_plane.roi_features).intersection(measurement_plane.roi_features)
+            set(reference_plane.roi_features).intersection(
+                measurement_plane.roi_features
+            )
         )
     else:
         feature_names = [
@@ -1250,12 +1336,18 @@ def _pairwise_roi_feature_distance(
     if not feature_names:
         return np.zeros((reference_plane.n_rois, measurement_plane.n_rois), dtype=float)
 
-    feature_distance = np.zeros((reference_plane.n_rois, measurement_plane.n_rois), dtype=float)
+    feature_distance = np.zeros(
+        (reference_plane.n_rois, measurement_plane.n_rois), dtype=float
+    )
     used_feature_dims = 0
 
     for feature_name in feature_names:
-        reference_feature = np.asarray(reference_plane.roi_features[feature_name], dtype=float)
-        measurement_feature = np.asarray(measurement_plane.roi_features[feature_name], dtype=float)
+        reference_feature = np.asarray(
+            reference_plane.roi_features[feature_name], dtype=float
+        )
+        measurement_feature = np.asarray(
+            measurement_plane.roi_features[feature_name], dtype=float
+        )
 
         reference_feature = reference_feature.reshape(reference_plane.n_rois, -1)
         measurement_feature = measurement_feature.reshape(measurement_plane.n_rois, -1)
@@ -1272,7 +1364,10 @@ def _pairwise_roi_feature_distance(
         for dim_index in range(reference_feature.shape[1]):
             reference_values = reference_feature[:, dim_index]
             measurement_values = measurement_feature[:, dim_index]
-            valid = np.isfinite(reference_values)[:, None] & np.isfinite(measurement_values)[None, :]
+            valid = (
+                np.isfinite(reference_values)[:, None]
+                & np.isfinite(measurement_values)[None, :]
+            )
             diff = np.zeros_like(feature_distance)
             diff[valid] = (
                 np.abs(reference_values[:, None] - measurement_values[None, :])[valid]
@@ -1295,8 +1390,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("subject_dir", type=Path, help="Track2p-style subject directory")
-    common.add_argument("--plane", dest="plane_name", default="plane0", help="Plane subdirectory to load")
+    common.add_argument(
+        "subject_dir", type=Path, help="Track2p-style subject directory"
+    )
+    common.add_argument(
+        "--plane",
+        dest="plane_name",
+        default="plane0",
+        help="Plane subdirectory to load",
+    )
     common.add_argument(
         "--input-format",
         default="auto",
@@ -1332,10 +1434,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Drop Suite2p overlap pixels when reconstructing masks",
     )
 
-    summary_parser = subparsers.add_parser("summary", parents=[common], help="Print JSON summary")
+    summary_parser = subparsers.add_parser(
+        "summary", parents=[common], help="Print JSON summary"
+    )
     summary_parser.set_defaults(_handler=_handle_summary)
 
-    export_parser = subparsers.add_parser("export", parents=[common], help="Export an NPZ bundle")
+    export_parser = subparsers.add_parser(
+        "export", parents=[common], help="Export an NPZ bundle"
+    )
     export_parser.add_argument("output_path", type=Path, help="Destination .npz file")
     export_parser.add_argument(
         "--include-masks",

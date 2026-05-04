@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import sys
 from datetime import date
 from pathlib import Path
-import sys
 
 import numpy as np
 import numpy.testing as npt
@@ -36,7 +36,9 @@ class _DummySession:
         self.plane_data = _DummyPlaneData(n_rois)
 
 
-def test_load_track2p_reference_prefers_suite2p_indices_and_extracts_curation(tmp_path: Path):
+def test_load_track2p_reference_prefers_suite2p_indices_and_extracts_curation(
+    tmp_path: Path,
+):
     track2p_dir = tmp_path / "track2p"
     track2p_dir.mkdir()
 
@@ -61,7 +63,9 @@ def test_load_track2p_reference_prefers_suite2p_indices_and_extracts_curation(tm
         ],
         dtype=object,
     )
-    np.save(track2p_dir / "plane0_suite2p_indices.npy", reference_matrix, allow_pickle=True)
+    np.save(
+        track2p_dir / "plane0_suite2p_indices.npy", reference_matrix, allow_pickle=True
+    )
 
     reference = load_track2p_reference(track2p_dir, plane_name="plane0")
 
@@ -74,7 +78,9 @@ def test_load_track2p_reference_prefers_suite2p_indices_and_extracts_curation(tm
     )
     npt.assert_array_equal(reference.curated_mask, np.array([True, False, True]))
     npt.assert_array_equal(reference.all_day_mask(), np.array([True, False, True]))
-    npt.assert_array_equal(reference.pairwise_matches(0, 2), np.array([[0, 2], [5, 7], [9, 11]]))
+    npt.assert_array_equal(
+        reference.pairwise_matches(0, 2), np.array([[0, 2], [5, 7], [9, 11]])
+    )
     npt.assert_array_equal(
         reference.pairwise_matches(0, 2, curated_only=True),
         np.array([[0, 2], [9, 11]]),

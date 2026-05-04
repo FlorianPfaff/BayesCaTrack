@@ -173,7 +173,9 @@ def register_measurement_plane_by_fov_translation(
     """Align ``measurement_plane`` to ``reference_plane`` using FOV phase correlation."""
 
     if reference_plane.fov is None or measurement_plane.fov is None:
-        raise ValueError("Both planes must provide fov images for FOV-based registration")
+        raise ValueError(
+            "Both planes must provide fov images for FOV-based registration"
+        )
     shift_yx, peak_correlation = estimate_integer_fov_shift(
         reference_plane.fov,
         measurement_plane.fov,
@@ -190,12 +192,16 @@ def register_measurement_plane_by_fov_translation(
         output_shape=reference_plane.image_shape,
         fill_value=0.0,
     )
-    registration_ops = {} if measurement_plane.ops is None else dict(measurement_plane.ops)
+    registration_ops = (
+        {} if measurement_plane.ops is None else dict(measurement_plane.ops)
+    )
     registration_ops.update(
         {
             "fov_registration_method": "phase_correlation_translation",
             "fov_registration_measurement_to_reference_shift_yx": shift_yx.astype(int),
-            "fov_registration_reference_to_measurement_shift_yx": (-shift_yx).astype(int),
+            "fov_registration_reference_to_measurement_shift_yx": (-shift_yx).astype(
+                int
+            ),
             "fov_registration_peak_correlation": peak_correlation,
         }
     )
@@ -277,8 +283,7 @@ def build_fov_registered_consecutive_session_association_bundles(
     association_bundles = build_consecutive_session_association_bundles(
         session_list,
         measurement_planes_in_reference_frames=[
-            registration.registered_measurement_plane
-            for registration in registrations
+            registration.registered_measurement_plane for registration in registrations
         ],
         **options.association_kwargs(),
     )

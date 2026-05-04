@@ -5,9 +5,10 @@ import sys
 import types
 
 import numpy as np
-
 from bayescatrack.experiments.track2p_benchmark import Track2pBenchmarkConfig
-from bayescatrack.experiments.track2p_calibration_export import export_loso_calibration_csv
+from bayescatrack.experiments.track2p_calibration_export import (
+    export_loso_calibration_csv,
+)
 from tests.test_track2p_benchmark import _write_ground_truth_csv, _write_subject
 
 
@@ -30,14 +31,22 @@ def _install_fake_logistic_association_model(monkeypatch):
             return 1.0 / (1.0 + np.exp(-score))
 
         def pairwise_cost_matrix(self, features):
-            probabilities = np.clip(self.predict_match_probability(features), 1.0e-12, 1.0 - 1.0e-12)
+            probabilities = np.clip(
+                self.predict_match_probability(features), 1.0e-12, 1.0 - 1.0e-12
+            )
             return -np.log(probabilities)
 
-    fake_association_models.LogisticPairwiseAssociationModel = LogisticPairwiseAssociationModel
-    monkeypatch.setitem(sys.modules, "pyrecest.utils.association_models", fake_association_models)
+    fake_association_models.LogisticPairwiseAssociationModel = (
+        LogisticPairwiseAssociationModel
+    )
+    monkeypatch.setitem(
+        sys.modules, "pyrecest.utils.association_models", fake_association_models
+    )
 
 
-def test_loso_calibration_export_writes_out_of_fold_pairwise_rows(tmp_path, monkeypatch, write_raw_npy_session):
+def test_loso_calibration_export_writes_out_of_fold_pairwise_rows(
+    tmp_path, monkeypatch, write_raw_npy_session
+):
     for subject_name in ("jm001", "jm002"):
         subject_dir = tmp_path / subject_name
         _write_subject(subject_dir, write_raw_npy_session, write_reference=False)
@@ -51,7 +60,11 @@ def test_loso_calibration_export_writes_out_of_fold_pairwise_rows(tmp_path, monk
 
     from bayescatrack.association import calibrated_costs
 
-    monkeypatch.setattr(calibrated_costs, "register_plane_pair", lambda _reference, moving, **_kwargs: moving)
+    monkeypatch.setattr(
+        calibrated_costs,
+        "register_plane_pair",
+        lambda _reference, moving, **_kwargs: moving,
+    )
 
     output_path = tmp_path / "results" / "calibration.csv"
     written = export_loso_calibration_csv(

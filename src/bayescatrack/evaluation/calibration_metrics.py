@@ -9,7 +9,9 @@ import numpy as np
 __all__ = ("brier_score",)
 
 
-def brier_score(probabilities: Any, labels: Any, *, sample_weight: Any | None = None) -> float:
+def brier_score(
+    probabilities: Any, labels: Any, *, sample_weight: Any | None = None
+) -> float:
     """Return the binary Brier score for calibrated match probabilities.
 
     The Brier score is the mean squared error between predicted probabilities
@@ -41,7 +43,9 @@ def brier_score(probabilities: Any, labels: Any, *, sample_weight: Any | None = 
     return float(np.average(squared_errors, weights=weights))
 
 
-def _validate_sample_weight(sample_weight: Any, *, expected_shape: tuple[int, ...]) -> np.ndarray:
+def _validate_sample_weight(
+    sample_weight: Any, *, expected_shape: tuple[int, ...]
+) -> np.ndarray:
     weights = np.asarray(sample_weight, dtype=float).reshape(-1)
     if weights.shape != expected_shape:
         raise ValueError("sample_weight must match the flattened label shape")

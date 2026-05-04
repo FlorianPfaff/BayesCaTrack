@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from bayescatrack.evaluation.calibration_metrics import brier_score
 
 
@@ -18,7 +17,9 @@ def test_brier_score_supports_sample_weights():
     labels = np.array([0, 0, 1])
     weights = np.array([1.0, 3.0, 1.0])
 
-    assert brier_score(probabilities, labels, sample_weight=weights) == pytest.approx(0.65)
+    assert brier_score(probabilities, labels, sample_weight=weights) == pytest.approx(
+        0.65
+    )
 
 
 @pytest.mark.parametrize(

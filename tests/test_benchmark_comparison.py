@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 
 import pytest
-
 from bayescatrack.experiments.benchmark_comparison import (
     ComparisonInput,
     aggregate_rows,
@@ -60,7 +59,9 @@ def test_aggregate_rows_reports_macro_and_micro_f1(tmp_path):
         ],
     )
 
-    rows = aggregate_rows(load_labeled_rows([ComparisonInput("test approach", result_path)]))
+    rows = aggregate_rows(
+        load_labeled_rows([ComparisonInput("test approach", result_path)])
+    )
 
     assert rows[0]["approach"] == "test approach"
     assert rows[0]["subjects"] == 2

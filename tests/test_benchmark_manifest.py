@@ -4,7 +4,6 @@ import csv
 import json
 
 import pytest
-
 from bayescatrack.datasets.track2p import (
     SyntheticTrack2pSubjectConfig,
     write_synthetic_track2p_subject,

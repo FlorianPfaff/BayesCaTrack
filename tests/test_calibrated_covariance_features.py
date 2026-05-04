@@ -1,7 +1,6 @@
 import numpy as np
 import numpy.testing as npt
 import pytest
-
 from bayescatrack.association.calibrated_costs import (
     DEFAULT_ASSOCIATION_FEATURES,
     pairwise_components_from_bundle,
@@ -11,7 +10,9 @@ from bayescatrack.association.calibrated_costs import (
 from bayescatrack.core.bridge import SessionAssociationBundle
 
 
-def _state_covariances_from_position_covariances(position_covariances: np.ndarray) -> np.ndarray:
+def _state_covariances_from_position_covariances(
+    position_covariances: np.ndarray,
+) -> np.ndarray:
     state_covariances = np.zeros((4, 4, position_covariances.shape[2]), dtype=float)
     state_covariances[0, 0, :] = position_covariances[0, 0, :]
     state_covariances[0, 2, :] = position_covariances[0, 1, :]
@@ -20,7 +21,9 @@ def _state_covariances_from_position_covariances(position_covariances: np.ndarra
     return state_covariances
 
 
-def _association_bundle(position_covariances: np.ndarray, measurement_covariances: np.ndarray) -> SessionAssociationBundle:
+def _association_bundle(
+    position_covariances: np.ndarray, measurement_covariances: np.ndarray
+) -> SessionAssociationBundle:
     n_reference = position_covariances.shape[2]
     n_measurement = measurement_covariances.shape[2]
     shape = (n_reference, n_measurement)
@@ -28,10 +31,14 @@ def _association_bundle(position_covariances: np.ndarray, measurement_covariance
         reference_session_name="ref",
         measurement_session_name="meas",
         reference_state_means=np.zeros((4, n_reference), dtype=float),
-        reference_state_covariances=_state_covariances_from_position_covariances(position_covariances),
+        reference_state_covariances=_state_covariances_from_position_covariances(
+            position_covariances
+        ),
         measurements=np.zeros((2, n_measurement), dtype=float),
         measurement_covariances=measurement_covariances,
-        measurement_matrix=np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]], dtype=float),
+        measurement_matrix=np.array(
+            [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]], dtype=float
+        ),
         pairwise_cost_matrix=np.zeros(shape, dtype=float),
         reference_roi_indices=np.arange(n_reference, dtype=int),
         measurement_roi_indices=np.arange(n_measurement, dtype=int),
@@ -64,17 +71,27 @@ def test_pairwise_components_from_bundle_adds_covariance_shape_features():
     assert components["covariance_shape_similarity"].shape == (1, 3)
     npt.assert_allclose(components["covariance_shape_cost"][0, 0], 0.0, atol=1.0e-12)
     npt.assert_allclose(components["covariance_logdet_cost"][0, 0], 0.0, atol=1.0e-12)
-    assert components["covariance_shape_similarity"][0, 0] > components["covariance_shape_similarity"][0, 1]
-    assert components["covariance_logdet_cost"][0, 2] > components["covariance_logdet_cost"][0, 0]
+    assert (
+        components["covariance_shape_similarity"][0, 0]
+        > components["covariance_shape_similarity"][0, 1]
+    )
+    assert (
+        components["covariance_logdet_cost"][0, 2]
+        > components["covariance_logdet_cost"][0, 0]
+    )
 
 
 def test_default_calibrated_features_include_covariance_shape_components():
     reference_covariances = np.stack([np.diag([4.0, 1.0])], axis=-1)
-    measurement_covariances = np.stack([np.diag([4.0, 1.0]), np.diag([1.0, 4.0])], axis=-1)
+    measurement_covariances = np.stack(
+        [np.diag([4.0, 1.0]), np.diag([1.0, 4.0])], axis=-1
+    )
     components = pairwise_components_from_bundle(
         _association_bundle(reference_covariances, measurement_covariances)
     )
-    features = pairwise_feature_tensor(components, feature_names=DEFAULT_ASSOCIATION_FEATURES)
+    features = pairwise_feature_tensor(
+        components, feature_names=DEFAULT_ASSOCIATION_FEATURES
+    )
 
     assert "covariance_shape_cost" in DEFAULT_ASSOCIATION_FEATURES
     assert "covariance_logdet_cost" in DEFAULT_ASSOCIATION_FEATURES
@@ -84,12 +101,16 @@ def test_default_calibrated_features_include_covariance_shape_components():
 
 def test_default_calibrated_features_include_session_gap_component():
     reference_covariances = np.stack([np.diag([4.0, 1.0])], axis=-1)
-    measurement_covariances = np.stack([np.diag([4.0, 1.0]), np.diag([1.0, 4.0])], axis=-1)
+    measurement_covariances = np.stack(
+        [np.diag([4.0, 1.0]), np.diag([1.0, 4.0])], axis=-1
+    )
     components = pairwise_components_from_bundle(
         _association_bundle(reference_covariances, measurement_covariances),
         session_gap=2,
     )
-    features = pairwise_feature_tensor(components, feature_names=DEFAULT_ASSOCIATION_FEATURES)
+    features = pairwise_feature_tensor(
+        components, feature_names=DEFAULT_ASSOCIATION_FEATURES
+    )
     session_gap_index = DEFAULT_ASSOCIATION_FEATURES.index("session_gap")
 
     assert "session_gap" in DEFAULT_ASSOCIATION_FEATURES
@@ -99,4 +120,6 @@ def test_default_calibrated_features_include_session_gap_component():
 
 def test_session_gap_component_requires_positive_gap():
     with pytest.raises(ValueError, match="session_gap must be positive"):
-        with_session_gap_component({"centroid_distance": np.zeros((1, 1))}, session_gap=0)
+        with_session_gap_component(
+            {"centroid_distance": np.zeros((1, 1))}, session_gap=0
+        )

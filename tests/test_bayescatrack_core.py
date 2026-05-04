@@ -2,7 +2,6 @@ import json
 
 import numpy as np
 import numpy.testing as npt
-
 from bayescatrack import CalciumPlaneData
 from tests._support import run_module
 
@@ -12,7 +11,9 @@ def test_calcium_plane_data_builds_measurements_and_state_moments():
     roi_masks[0, 1, 2] = True
     plane = CalciumPlaneData(roi_masks=roi_masks)
 
-    npt.assert_allclose(plane.to_measurement_matrix(order="xy"), np.array([[2.0], [1.0]]))
+    npt.assert_allclose(
+        plane.to_measurement_matrix(order="xy"), np.array([[2.0], [1.0]])
+    )
     means, covariances = plane.to_constant_velocity_state_moments(order="xy")
 
     assert means.shape == (4, 1)
@@ -35,7 +36,9 @@ def test_cli_summary_and_export(tmp_path):
     assert summary["sessions"][0]["n_rois"] == 1
 
     output_path = tmp_path / "jm123_plane0.npz"
-    export_proc = run_module("-m", "bayescatrack", "export", str(subject_dir), str(output_path))
+    export_proc = run_module(
+        "-m", "bayescatrack", "export", str(subject_dir), str(output_path)
+    )
     export_summary = json.loads(export_proc.stdout)
     assert export_summary["n_sessions"] == 1
     assert output_path.exists()
