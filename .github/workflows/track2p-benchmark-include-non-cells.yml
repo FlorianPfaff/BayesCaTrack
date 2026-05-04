@@ -92,6 +92,7 @@ jobs:
         env:
           DATA_PATH: ${{ inputs.data_path }}
           EXCLUDE_SUBJECTS: ${{ inputs.exclude_subjects }}
+          RUN_CALIBRATED_LOSO: ${{ inputs.run_calibrated_loso }}
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import os, shutil
@@ -100,6 +101,7 @@ jobs:
           root = Path(os.environ["DATA_PATH"])
           out = Path("benchmark-ground-truth-subjects")
           excluded_by_user = {name.strip() for name in os.environ.get("EXCLUDE_SUBJECTS", "").split(",") if name.strip()}
+          require_two_subjects = os.environ.get("RUN_CALIBRATED_LOSO", "true").lower() == "true"
           if out.exists():
               shutil.rmtree(out)
           out.mkdir()
@@ -137,12 +139,14 @@ jobs:
               os.symlink(gt.resolve(), target / "ground_truth.csv")
               included.append(subject.name)
 
-          if len(included) < 2:
+          minimum_subjects = 2 if require_two_subjects else 1
+          if len(included) < minimum_subjects:
               raise SystemExit(
-                  "Need at least two usable manual-GT subjects after exclusions; "
+                  f"Need at least {minimum_subjects} usable manual-GT subject(s) after exclusions; "
                   f"included={included}, excluded_incompatible={sorted(excluded_incompatible)}"
               )
           print(f"included={','.join(included)}")
+          print(f"included_count={len(included)}")
           print(f"excluded_no_gt={','.join(excluded_no_gt)}")
           print(f"excluded_incompatible={','.join(sorted(excluded_incompatible))}")
           PY
@@ -188,7 +192,7 @@ jobs:
             --output results/global_roi_aware_gap${{ inputs.max_gap }}.csv
 
       - name: Run calibrated LOSO global assignment
-        if: inputs.run_calibrated_loso
+        if: inputs.run_calibrated_loso && steps.gt.outputs.included_count != '1'
         run: |
           bayescatrack benchmark track2p \
             --data benchmark-ground-truth-subjects \
@@ -206,13 +210,14 @@ jobs:
         env:
           MAX_GAP: ${{ inputs.max_gap }}
           RUN_LOSO: ${{ inputs.run_calibrated_loso }}
+          INCLUDED_COUNT: ${{ steps.gt.outputs.included_count }}
         run: |
           args=(
             --input "Track2p=results/track2p_baseline.csv"
             --input "Global-IoU=results/global_registered_iou_gap${MAX_GAP}.csv"
             --input "ROI-aware=results/global_roi_aware_gap${MAX_GAP}.csv"
           )
-          if [[ "$RUN_LOSO" == "true" ]]; then
+          if [[ "$RUN_LOSO" == "true" && "$INCLUDED_COUNT" != "1" ]]; then
             args+=(--input "Calibrated-LOSO=results/global_calibrated_loso_gap${MAX_GAP}.csv")
           fi
           bayescatrack benchmark compare "${args[@]}" --output results/comparison.md
@@ -223,6 +228,7 @@ jobs:
           {
             echo "## Track2p benchmark with non-cell ROIs"
             echo "Included usable manual-GT subjects: ${{ steps.gt.outputs.included }}"
+            echo "Included usable subject count: ${{ steps.gt.outputs.included_count }}"
             echo "Excluded subjects without GT: ${{ steps.gt.outputs.excluded_no_gt }}"
             echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.gt.outputs.excluded_incompatible }}"
             echo "include_non_cells: true"
