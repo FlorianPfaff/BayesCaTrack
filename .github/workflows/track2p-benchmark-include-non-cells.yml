@@ -19,6 +19,11 @@ on:
         type: boolean
         default: true
         required: true
+      exclude_subjects:
+        description: "Comma-separated manual-GT subjects to exclude because their GT ROI index space is incompatible with the public Suite2p subset"
+        type: string
+        default: jm038
+        required: false
       python_version:
         description: "Python version"
         type: string
@@ -82,10 +87,11 @@ jobs:
           python -m zipfile -e data-cache/data.zip "${{ inputs.data_path }}"
           du -sh "${{ inputs.data_path }}" || true
 
-      - name: Filter to manual-GT subjects
+      - name: Filter to usable manual-GT subjects
         id: gt
         env:
           DATA_PATH: ${{ inputs.data_path }}
+          EXCLUDE_SUBJECTS: ${{ inputs.exclude_subjects }}
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import os, shutil
@@ -93,6 +99,7 @@ jobs:
 
           root = Path(os.environ["DATA_PATH"])
           out = Path("benchmark-ground-truth-subjects")
+          excluded_by_user = {name.strip() for name in os.environ.get("EXCLUDE_SUBJECTS", "").split(",") if name.strip()}
           if out.exists():
               shutil.rmtree(out)
           out.mkdir()
@@ -111,25 +118,33 @@ jobs:
               parent = min((p.parent for p in subjects), key=lambda p: (len(p.parts), str(p)))
               subjects = [p for p in sorted(parent.iterdir()) if is_subject(p)]
           included = []
-          excluded = []
+          excluded_no_gt = []
+          excluded_incompatible = []
           for subject in subjects:
               gt = subject / "ground_truth.csv"
-              if gt.exists():
-                  target = out / subject.name
-                  target.mkdir()
-                  for item in subject.iterdir():
-                      if item.name == "ground_truth.csv":
-                          continue
-                      os.symlink(item.resolve(), target / item.name, target_is_directory=item.is_dir())
-                  os.symlink(gt.resolve(), target / "ground_truth.csv")
-                  included.append(subject.name)
-              else:
-                  excluded.append(subject.name)
+              if not gt.exists():
+                  excluded_no_gt.append(subject.name)
+                  continue
+              if subject.name in excluded_by_user:
+                  excluded_incompatible.append(subject.name)
+                  continue
+              target = out / subject.name
+              target.mkdir()
+              for item in subject.iterdir():
+                  if item.name == "ground_truth.csv":
+                      continue
+                  os.symlink(item.resolve(), target / item.name, target_is_directory=item.is_dir())
+              os.symlink(gt.resolve(), target / "ground_truth.csv")
+              included.append(subject.name)
 
           if len(included) < 2:
-              raise SystemExit(f"Need at least two manual-GT subjects, found {included}")
+              raise SystemExit(
+                  "Need at least two usable manual-GT subjects after exclusions; "
+                  f"included={included}, excluded_incompatible={sorted(excluded_incompatible)}"
+              )
           print(f"included={','.join(included)}")
-          print(f"excluded={','.join(excluded)}")
+          print(f"excluded_no_gt={','.join(excluded_no_gt)}")
+          print(f"excluded_incompatible={','.join(sorted(excluded_incompatible))}")
           PY
 
       - name: Run Track2p baseline
@@ -206,8 +221,9 @@ jobs:
       - name: Add results to job summary
         run: |
           echo "## Track2p benchmark with non-cell ROIs" >> "$GITHUB_STEP_SUMMARY"
-          echo "Included manual-GT subjects: ${{ steps.gt.outputs.included }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "Excluded subjects: ${{ steps.gt.outputs.excluded }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Included usable manual-GT subjects: ${{ steps.gt.outputs.included }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Excluded subjects without GT: ${{ steps.gt.outputs.excluded_no_gt }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.gt.outputs.excluded_incompatible }}" >> "$GITHUB_STEP_SUMMARY"
           echo "include_non_cells: true" >> "$GITHUB_STEP_SUMMARY"
           cat results/comparison.md >> "$GITHUB_STEP_SUMMARY"
 
