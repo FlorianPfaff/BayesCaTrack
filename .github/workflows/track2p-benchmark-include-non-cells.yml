@@ -1,0 +1,235 @@
+name: Track2p benchmark with non-cell ROIs
+
+on:
+  # checkov:skip=CKV_GHA_7: Manual benchmark workflow intentionally exposes bounded dispatch inputs and produces only benchmark artifacts.
+  workflow_dispatch:
+    inputs:
+      data_path:
+        description: "Zenodo extraction directory"
+        type: string
+        default: track2p-data
+        required: true
+      max_gap:
+        description: "Maximum session gap"
+        type: string
+        default: "2"
+        required: true
+      run_calibrated_loso:
+        description: "Run calibrated leave-one-subject-out variant"
+        type: boolean
+        default: true
+        required: true
+      exclude_subjects:
+        description: "Comma-separated manual-GT subjects to exclude because their GT ROI index space is incompatible with the public Suite2p subset"
+        type: string
+        default: jm038
+        required: false
+      python_version:
+        description: "Python version"
+        type: string
+        default: "3.11"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  ZENODO_URL: https://zenodo.org/records/17091226/files/data.zip?download=1
+  ZENODO_MD5: 8d12ff6b93a26e28609c5a20b11f3d88
+  ZENODO_CACHE_KEY: track2p-zenodo-17091226-data-md5-8d12ff6b93a26e28609c5a20b11f3d88
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: pip
+
+      - name: Install BayesCaTrack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<3"
+          python -m pip install -e .
+
+      - name: Restore Track2p Zenodo archive
+        id: restore-data
+        uses: actions/cache/restore@v5
+        with:
+          path: data-cache/data.zip
+          key: ${{ env.ZENODO_CACHE_KEY }}
+
+      - name: Download Track2p Zenodo archive on cache miss
+        if: steps.restore-data.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p data-cache
+          curl --fail --location --show-error --retry 5 --retry-delay 30 --retry-all-errors \
+            --output data-cache/data.zip "$ZENODO_URL"
+
+      - name: Verify archive checksum
+        run: echo "${ZENODO_MD5}  data-cache/data.zip" | md5sum --check -
+
+      - name: Save Track2p Zenodo archive cache
+        if: steps.restore-data.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: data-cache/data.zip
+          key: ${{ env.ZENODO_CACHE_KEY }}
+
+      - name: Extract archive
+        run: |
+          rm -rf "${{ inputs.data_path }}" benchmark-ground-truth-subjects results
+          mkdir -p "${{ inputs.data_path }}"
+          python -m zipfile -e data-cache/data.zip "${{ inputs.data_path }}"
+          du -sh "${{ inputs.data_path }}" || true
+
+      - name: Filter to usable manual-GT subjects
+        id: gt
+        env:
+          DATA_PATH: ${{ inputs.data_path }}
+          EXCLUDE_SUBJECTS: ${{ inputs.exclude_subjects }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os, shutil
+          from pathlib import Path
+
+          root = Path(os.environ["DATA_PATH"])
+          out = Path("benchmark-ground-truth-subjects")
+          excluded_by_user = {name.strip() for name in os.environ.get("EXCLUDE_SUBJECTS", "").split(",") if name.strip()}
+          if out.exists():
+              shutil.rmtree(out)
+          out.mkdir()
+
+          def is_subject(path: Path) -> bool:
+              if not path.is_dir():
+                  return False
+              return (path / "track2p").exists() or any(
+                  (child / "suite2p" / "plane0").exists()
+                  for child in path.iterdir()
+                  if child.is_dir()
+              )
+
+          subjects = [p for p in root.rglob("*") if is_subject(p)]
+          if subjects:
+              parent = min((p.parent for p in subjects), key=lambda p: (len(p.parts), str(p)))
+              subjects = [p for p in sorted(parent.iterdir()) if is_subject(p)]
+          included = []
+          excluded_no_gt = []
+          excluded_incompatible = []
+          for subject in subjects:
+              gt = subject / "ground_truth.csv"
+              if not gt.exists():
+                  excluded_no_gt.append(subject.name)
+                  continue
+              if subject.name in excluded_by_user:
+                  excluded_incompatible.append(subject.name)
+                  continue
+              target = out / subject.name
+              target.mkdir()
+              for item in subject.iterdir():
+                  if item.name == "ground_truth.csv":
+                      continue
+                  os.symlink(item.resolve(), target / item.name, target_is_directory=item.is_dir())
+              os.symlink(gt.resolve(), target / "ground_truth.csv")
+              included.append(subject.name)
+
+          if len(included) < 2:
+              raise SystemExit(
+                  "Need at least two usable manual-GT subjects after exclusions; "
+                  f"included={included}, excluded_incompatible={sorted(excluded_incompatible)}"
+              )
+          print(f"included={','.join(included)}")
+          print(f"excluded_no_gt={','.join(excluded_no_gt)}")
+          print(f"excluded_incompatible={','.join(sorted(excluded_incompatible))}")
+          PY
+
+      - name: Run Track2p baseline
+        run: |
+          mkdir -p results
+          bayescatrack benchmark track2p \
+            --data benchmark-ground-truth-subjects \
+            --reference benchmark-ground-truth-subjects \
+            --reference-kind manual-gt \
+            --include-non-cells \
+            --method track2p-baseline \
+            --format csv \
+            --output results/track2p_baseline.csv
+
+      - name: Run registered-IoU global assignment
+        run: |
+          bayescatrack benchmark track2p \
+            --data benchmark-ground-truth-subjects \
+            --reference benchmark-ground-truth-subjects \
+            --reference-kind manual-gt \
+            --include-non-cells \
+            --method global-assignment \
+            --cost registered-iou \
+            --max-gap "${{ inputs.max_gap }}" \
+            --format csv \
+            --output results/global_registered_iou_gap${{ inputs.max_gap }}.csv
+
+      - name: Run ROI-aware global assignment
+        run: |
+          bayescatrack benchmark track2p \
+            --data benchmark-ground-truth-subjects \
+            --reference benchmark-ground-truth-subjects \
+            --reference-kind manual-gt \
+            --include-non-cells \
+            --method global-assignment \
+            --cost roi-aware \
+            --max-gap "${{ inputs.max_gap }}" \
+            --weighted-masks \
+            --weighted-centroids \
+            --format csv \
+            --output results/global_roi_aware_gap${{ inputs.max_gap }}.csv
+
+      - name: Run calibrated LOSO global assignment
+        if: inputs.run_calibrated_loso
+        run: |
+          bayescatrack benchmark track2p \
+            --data benchmark-ground-truth-subjects \
+            --reference benchmark-ground-truth-subjects \
+            --reference-kind manual-gt \
+            --include-non-cells \
+            --method global-assignment \
+            --cost calibrated \
+            --split leave-one-subject-out \
+            --max-gap "${{ inputs.max_gap }}" \
+            --format csv \
+            --output results/global_calibrated_loso_gap${{ inputs.max_gap }}.csv
+
+      - name: Aggregate benchmark comparison
+        env:
+          MAX_GAP: ${{ inputs.max_gap }}
+          RUN_LOSO: ${{ inputs.run_calibrated_loso }}
+        run: |
+          args=(
+            --input "Track2p=results/track2p_baseline.csv"
+            --input "Global-IoU=results/global_registered_iou_gap${MAX_GAP}.csv"
+            --input "ROI-aware=results/global_roi_aware_gap${MAX_GAP}.csv"
+          )
+          if [[ "$RUN_LOSO" == "true" ]]; then
+            args+=(--input "Calibrated-LOSO=results/global_calibrated_loso_gap${MAX_GAP}.csv")
+          fi
+          bayescatrack benchmark compare "${args[@]}" --output results/comparison.md
+          bayescatrack benchmark compare "${args[@]}" --format csv --output results/comparison.csv
+
+      - name: Add results to job summary
+        run: |
+          echo "## Track2p benchmark with non-cell ROIs" >> "$GITHUB_STEP_SUMMARY"
+          echo "Included usable manual-GT subjects: ${{ steps.gt.outputs.included }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Excluded subjects without GT: ${{ steps.gt.outputs.excluded_no_gt }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.gt.outputs.excluded_incompatible }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "include_non_cells: true" >> "$GITHUB_STEP_SUMMARY"
+          cat results/comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v5
+        with:
+          name: track2p-benchmark-include-non-cells-gap${{ inputs.max_gap }}
+          path: results/
+          if-no-files-found: error
