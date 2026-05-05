@@ -4,72 +4,49 @@ on:
   # checkov:skip=CKV_GHA_7: Manual benchmark workflow intentionally exposes bounded dispatch inputs and produces only benchmark artifacts.
   workflow_dispatch:
     inputs:
-      data_mode:
-        description: "Use the Zenodo data archive or an already-present runner/repository path"
-        type: choice
-        options:
-          - zenodo
-          - existing
-        default: zenodo
-        required: true
       data_path:
-        description: "Dataset root when data_mode=existing; extraction directory when data_mode=zenodo"
+        description: "Zenodo extraction directory"
         type: string
         default: track2p-data
         required: true
-      reference_path:
-        description: "Independent reference root or ground_truth.csv. Empty means: use data_path and require ground_truth.csv there."
+      max_gap:
+        description: "Maximum session gap"
         type: string
-        default: ""
-        required: false
-      require_ground_truth_csv:
-        description: "Filter to subjects with manual ground_truth.csv; fail if none are found"
+        default: "2"
+        required: true
+      include_non_cells:
+        description: "Load all Suite2p stat.npy rows, including ROIs not marked as cells"
         type: boolean
         default: true
         required: true
       run_calibrated_loso:
-        description: "Run the calibrated leave-one-subject-out variant"
+        description: "Run calibrated leave-one-subject-out variant"
         type: boolean
-        default: true
+        default: false
         required: true
-      max_gap:
-        description: "Maximum session gap for global-assignment variants"
+      exclude_subjects:
+        description: "Comma-separated manual-GT subjects to exclude because their GT ROI index space is incompatible with the public Suite2p subset"
         type: string
-        default: "2"
-        required: true
+        default: jm038,jm039
+        required: false
       python_version:
-        description: "Python version used for the benchmark run"
+        description: "Python version"
         type: string
         default: "3.11"
         required: true
-      zenodo_data_url:
-        description: "Track2p Zenodo data.zip URL"
-        type: string
-        default: "https://zenodo.org/records/17091226/files/data.zip?download=1"
-        required: true
-      zenodo_data_md5:
-        description: "Expected MD5 for the Zenodo archive; leave empty to skip checksum validation"
-        type: string
-        default: "8d12ff6b93a26e28609c5a20b11f3d88"
-        required: false
 
 permissions:
   contents: read
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  ZENODO_URL: https://zenodo.org/records/17091226/files/data.zip?download=1
+  ZENODO_MD5: 8d12ff6b93a26e28609c5a20b11f3d88
   ZENODO_CACHE_KEY: track2p-zenodo-17091226-data-md5-8d12ff6b93a26e28609c5a20b11f3d88
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
 
 jobs:
   benchmark:
-    name: Run Track2p benchmark comparison
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -85,383 +62,243 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "numpy<3"
           python -m pip install -e .
-          bayescatrack --help
 
       - name: Show runner disk before data setup
-        run: df -h "$GITHUB_WORKSPACE"
+        run: df -h
 
       - name: Restore cached Zenodo archive
-        if: inputs.data_mode == 'zenodo'
-        id: restore-zenodo
+        id: restore-data
         uses: actions/cache/restore@v5
         with:
           path: data-cache/data.zip
           key: ${{ env.ZENODO_CACHE_KEY }}
 
       - name: Download Zenodo archive on cache miss
-        if: inputs.data_mode == 'zenodo' && steps.restore-zenodo.outputs.cache-hit != 'true'
+        if: steps.restore-data.outputs.cache-hit != 'true'
         run: |
           mkdir -p data-cache
-          curl \
-            --fail \
-            --location \
-            --show-error \
-            --retry 5 \
-            --retry-delay 30 \
-            --retry-all-errors \
-            --output data-cache/data.zip \
-            "${{ inputs.zenodo_data_url }}"
-          du -h data-cache/data.zip
+          curl --fail --location --show-error --retry 5 --retry-delay 30 --retry-all-errors \
+            --output data-cache/data.zip "$ZENODO_URL"
 
       - name: Verify Zenodo archive checksum
-        if: inputs.data_mode == 'zenodo' && inputs.zenodo_data_md5 != ''
-        run: |
-          echo "${{ inputs.zenodo_data_md5 }}  data-cache/data.zip" | md5sum --check -
+        run: echo "${ZENODO_MD5}  data-cache/data.zip" | md5sum --check -
 
       - name: Save Zenodo archive to cache
-        if: inputs.data_mode == 'zenodo' && steps.restore-zenodo.outputs.cache-hit != 'true' && hashFiles('data-cache/data.zip') != ''
+        if: steps.restore-data.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: data-cache/data.zip
           key: ${{ env.ZENODO_CACHE_KEY }}
 
       - name: Extract Zenodo archive
-        if: inputs.data_mode == 'zenodo'
-        env:
-          DATA_PATH: ${{ inputs.data_path }}
         run: |
-          python - <<'PY'
-          import os
-          import shutil
-          import zipfile
-          from pathlib import Path
-
-          archive_path = Path("data-cache/data.zip")
-          data_path = Path(os.environ["DATA_PATH"])
-          if data_path.exists():
-              shutil.rmtree(data_path)
-          data_path.mkdir(parents=True)
-          with zipfile.ZipFile(archive_path) as archive:
-              archive.extractall(data_path)
-          print(f"Extracted {archive_path} to {data_path}")
-          PY
+          rm -rf "${{ inputs.data_path }}" benchmark-ground-truth-subjects results
+          mkdir -p "${{ inputs.data_path }}"
+          python -m zipfile -e data-cache/data.zip "${{ inputs.data_path }}"
           du -sh "${{ inputs.data_path }}" || true
-          df -h "$GITHUB_WORKSPACE"
 
       - name: Resolve benchmark paths and validate references
         id: paths
         env:
-          DATA_MODE: ${{ inputs.data_mode }}
           DATA_PATH: ${{ inputs.data_path }}
-          REFERENCE_PATH: ${{ inputs.reference_path }}
-          REQUIRE_GROUND_TRUTH_CSV: ${{ inputs.require_ground_truth_csv }}
+          EXCLUDE_SUBJECTS: ${{ inputs.exclude_subjects }}
           RUN_CALIBRATED_LOSO: ${{ inputs.run_calibrated_loso }}
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import os
           import shutil
-          import sys
           from pathlib import Path
 
-          GROUND_TRUTH_CSV_NAME = "ground_truth.csv"
-          FILTERED_ROOT = Path("benchmark-ground-truth-subjects")
+          root = Path(os.environ["DATA_PATH"]).resolve()
+          out = Path("benchmark-ground-truth-subjects").resolve()
+          excluded_by_user = {
+              name.strip()
+              for name in os.environ.get("EXCLUDE_SUBJECTS", "").split(",")
+              if name.strip()
+          }
+          run_calibrated_loso = os.environ.get("RUN_CALIBRATED_LOSO", "false").lower() == "true"
+          min_subjects = 2 if run_calibrated_loso else 1
 
-          def _has_suite2p_session_child(path: Path) -> bool:
-              return any((child / "suite2p" / "plane0").exists() for child in path.iterdir() if child.is_dir())
-
-          def _looks_like_subject_dir(path: Path) -> bool:
-              if not path.exists() or not path.is_dir():
+          def is_subject(path: Path) -> bool:
+              if not path.is_dir():
                   return False
-              return (path / "track2p").exists() or _has_suite2p_session_child(path)
+              if (path / "track2p").exists():
+                  return True
+              return any(
+                  (child / "suite2p" / "plane0").exists()
+                  for child in path.iterdir()
+                  if child.is_dir()
+              )
 
-          def find_subject_dirs(root: Path) -> list[Path]:
-              if not root.exists():
-                  return []
-              candidates: list[Path] = []
-              roots = [root]
-              # Handle archives that extract into one nested top-level directory such as data/.
-              roots.extend(child for child in root.iterdir() if child.is_dir())
-              seen: set[Path] = set()
-              for base in roots:
-                  for path in [base, *base.rglob("*")]:
-                      if not path.is_dir() or path in seen:
-                          continue
-                      seen.add(path)
-                      if _looks_like_subject_dir(path):
-                          candidates.append(path)
+          subjects = [path for path in root.rglob("*") if is_subject(path)]
+          if subjects:
+              parent = min((path.parent for path in subjects), key=lambda path: (len(path.parts), str(path)))
+              subjects = [path for path in sorted(parent.iterdir()) if is_subject(path)]
 
-              # Prefer the shallowest root that has Track2p subject children.
-              subject_roots = []
-              for candidate in candidates:
-                  children = [child for child in candidate.iterdir() if child.is_dir() and _looks_like_subject_dir(child)]
-                  if children:
-                      subject_roots.append(candidate)
-              if subject_roots:
-                  best_root = sorted(subject_roots, key=lambda path: (len(path.parts), str(path)))[0]
-                  return [child for child in best_root.iterdir() if child.is_dir() and _looks_like_subject_dir(child)]
-              return sorted(candidates, key=lambda path: str(path))
+          if out.exists():
+              shutil.rmtree(out)
+          out.mkdir()
 
-          def find_data_root(requested: Path) -> Path:
-              if not requested.exists():
-                  raise SystemExit(f"Data path does not exist: {requested}")
-              if find_subject_dirs(requested):
-                  return requested
-              for child in requested.iterdir():
-                  if child.is_dir() and find_subject_dirs(child):
-                      return child
-              raise SystemExit(f"Could not discover Track2p-style subject directories under {requested}")
-
-          def ground_truth_files(reference_root: Path) -> list[Path]:
-              if reference_root.is_file():
-                  return [reference_root] if reference_root.name == GROUND_TRUTH_CSV_NAME else []
-              return sorted(reference_root.rglob(GROUND_TRUTH_CSV_NAME))
-
-          def resolve_subject_ground_truth(subject_dir: Path, *, data_root: Path, reference_root: Path, all_ground_truth_files: list[Path]) -> Path | None:
-              candidates: list[Path] = []
-              if reference_root.is_file():
-                  candidates.append(reference_root)
-              else:
-                  candidates.extend(
-                      [
-                          reference_root / GROUND_TRUTH_CSV_NAME,
-                          reference_root / subject_dir.name / GROUND_TRUTH_CSV_NAME,
-                      ]
-                  )
-                  try:
-                      relative_subject = subject_dir.relative_to(data_root)
-                  except ValueError:
-                      relative_subject = None
-                  if relative_subject is not None:
-                      candidates.append(reference_root / relative_subject / GROUND_TRUTH_CSV_NAME)
-
-                  # Also support a separate reference root laid out as */<subject>/ground_truth.csv.
-                  candidates.extend(path for path in all_ground_truth_files if path.parent.name == subject_dir.name)
-
-              seen: set[Path] = set()
-              for candidate in candidates:
-                  candidate = candidate.resolve() if candidate.exists() else candidate
-                  if candidate in seen:
+          included = []
+          excluded_no_gt = []
+          excluded_incompatible = []
+          for subject in subjects:
+              gt = subject / "ground_truth.csv"
+              if not gt.exists():
+                  excluded_no_gt.append(subject.name)
+                  continue
+              if subject.name in excluded_by_user:
+                  excluded_incompatible.append(subject.name)
+                  continue
+              target = out / subject.name
+              target.mkdir()
+              for item in subject.iterdir():
+                  if item.name == "ground_truth.csv":
                       continue
-                  seen.add(candidate)
-                  if candidate.exists() and candidate.is_file() and candidate.name == GROUND_TRUTH_CSV_NAME:
-                      return candidate
-              return None
+                  os.symlink(item.resolve(), target / item.name, target_is_directory=item.is_dir())
+              os.symlink(gt.resolve(), target / "ground_truth.csv")
+              included.append(subject.name)
 
-          def symlink_subject_with_ground_truth(subject_dir: Path, ground_truth_path: Path, *, filtered_root: Path) -> Path:
-              target_subject = filtered_root / subject_dir.name
-              target_subject.mkdir(parents=True, exist_ok=False)
-              for item in subject_dir.iterdir():
-                  if item.name == GROUND_TRUTH_CSV_NAME:
-                      continue
-                  os.symlink(item.resolve(), target_subject / item.name, target_is_directory=item.is_dir())
-              os.symlink(ground_truth_path.resolve(), target_subject / GROUND_TRUTH_CSV_NAME)
-              return target_subject
-
-          data_root = find_data_root(Path(os.environ["DATA_PATH"]))
-          reference_text = os.environ.get("REFERENCE_PATH", "").strip()
-          reference_root = Path(reference_text) if reference_text else data_root
-          if not reference_root.exists():
-              raise SystemExit(f"Reference path does not exist: {reference_root}")
-
-          subject_dirs = find_subject_dirs(data_root)
-          if reference_root.is_file() and len(subject_dirs) != 1:
+          if len(included) < min_subjects:
               raise SystemExit(
-                  "A single ground_truth.csv reference file can only be used when the data root resolves to one subject. "
-                  "Use a reference root with one ground_truth.csv per subject for multi-subject benchmarks."
+                  f"Need at least {min_subjects} usable manual-GT subject(s) after exclusions; "
+                  f"included={included}, excluded_incompatible={sorted(excluded_incompatible)}"
               )
 
-          all_ground_truth_files = ground_truth_files(reference_root)
-          require_ground_truth = os.environ["REQUIRE_GROUND_TRUTH_CSV"].lower() == "true"
-          run_loso = os.environ["RUN_CALIBRATED_LOSO"].lower() == "true"
-
-          raw_subject_names = [path.name for path in subject_dirs]
-          included: list[tuple[Path, Path]] = []
-          excluded: list[Path] = []
-          for subject_dir in subject_dirs:
-              ground_truth_path = resolve_subject_ground_truth(
-                  subject_dir,
-                  data_root=data_root,
-                  reference_root=reference_root,
-                  all_ground_truth_files=all_ground_truth_files,
-              )
-              if ground_truth_path is None:
-                  excluded.append(subject_dir)
-              else:
-                  included.append((subject_dir, ground_truth_path))
-
-          if require_ground_truth:
-              if not included:
-                  raise SystemExit(
-                      "No subject-specific ground_truth.csv files were found. "
-                      "For paper-facing runs, pass reference_path to a manual ground-truth root. "
-                      "For plumbing checks only, disable require_ground_truth_csv."
-                  )
-              if run_loso and len(included) < 2:
-                  raise SystemExit("Calibrated LOSO requires at least two subjects with ground_truth.csv")
-
-              if FILTERED_ROOT.exists():
-                  shutil.rmtree(FILTERED_ROOT)
-              FILTERED_ROOT.mkdir(parents=True)
-              for subject_dir, ground_truth_path in included:
-                  symlink_subject_with_ground_truth(subject_dir, ground_truth_path, filtered_root=FILTERED_ROOT)
-
-              benchmark_data_root = FILTERED_ROOT
-              benchmark_reference_root = FILTERED_ROOT
-              benchmark_subject_names = [subject_dir.name for subject_dir, _ in included]
-              reference_mode = "manual-gt"
-          else:
-              if run_loso and len(subject_dirs) < 2:
-                  raise SystemExit("Calibrated LOSO requires at least two discovered subjects")
-              benchmark_data_root = data_root
-              benchmark_reference_root = reference_root
-              benchmark_subject_names = raw_subject_names
-              reference_mode = "smoke"
-
-          included_names = [subject_dir.name for subject_dir, _ in included]
-          excluded_names = [subject_dir.name for subject_dir in excluded]
-          print(f"Raw subjects: {', '.join(raw_subject_names) or '<none>'}", file=sys.stderr)
-          print(f"Subjects with ground_truth.csv: {', '.join(included_names) or '<none>'}", file=sys.stderr)
-          print(f"Subjects without ground_truth.csv: {', '.join(excluded_names) or '<none>'}", file=sys.stderr)
-          print(f"Benchmark subjects: {', '.join(benchmark_subject_names) or '<none>'}", file=sys.stderr)
-          print(f"Benchmark data root: {benchmark_data_root}", file=sys.stderr)
-          print(f"Benchmark reference root: {benchmark_reference_root}", file=sys.stderr)
-
-          print(f"data_root={benchmark_data_root.as_posix()}")
-          print(f"reference_root={benchmark_reference_root.as_posix()}")
-          print(f"subject_count={len(benchmark_subject_names)}")
-          print(f"raw_subject_count={len(subject_dirs)}")
-          print(f"ground_truth_count={len(all_ground_truth_files)}")
-          print(f"included_subjects={','.join(included_names)}")
-          print(f"excluded_subjects={','.join(excluded_names)}")
-          print(f"reference_mode={reference_mode}")
+          print(f"data_root={out}")
+          print(f"reference_root={out}")
+          print("reference_kind=manual-gt")
+          print(f"included={','.join(included)}")
+          print(f"excluded_no_gt={','.join(excluded_no_gt)}")
+          print(f"excluded_incompatible={','.join(sorted(excluded_incompatible))}")
           PY
 
       - name: Print benchmark input summary
         run: |
-          echo "Data root:              ${{ steps.paths.outputs.data_root }}"
-          echo "Reference root:         ${{ steps.paths.outputs.reference_root }}"
-          echo "Benchmark subjects:     ${{ steps.paths.outputs.subject_count }}"
-          echo "Raw discovered subjects: ${{ steps.paths.outputs.raw_subject_count }}"
-          echo "ground_truth.csv files: ${{ steps.paths.outputs.ground_truth_count }}"
-          echo "Included subjects:      ${{ steps.paths.outputs.included_subjects }}"
-          echo "Excluded subjects:      ${{ steps.paths.outputs.excluded_subjects }}"
-          echo "Reference mode:         ${{ steps.paths.outputs.reference_mode }}"
+          echo "data_root=${{ steps.paths.outputs.data_root }}"
+          echo "reference_root=${{ steps.paths.outputs.reference_root }}"
+          echo "reference_kind=${{ steps.paths.outputs.reference_kind }}"
+          echo "included=${{ steps.paths.outputs.included }}"
+          echo "excluded_no_gt=${{ steps.paths.outputs.excluded_no_gt }}"
+          echo "excluded_incompatible=${{ steps.paths.outputs.excluded_incompatible }}"
+          echo "include_non_cells=${{ inputs.include_non_cells }}"
 
       - name: Run Track2p baseline
+        env:
+          INCLUDE_NON_CELLS: ${{ inputs.include_non_cells }}
         run: |
           mkdir -p results
-          reference_args=(--reference "${{ steps.paths.outputs.reference_root }}")
-          if [[ "${{ steps.paths.outputs.reference_mode }}" == "manual-gt" ]]; then
-            reference_args+=(--reference-kind manual-gt)
-          else
-            reference_args+=(--allow-track2p-as-reference-for-smoke-test)
-          fi
-          bayescatrack benchmark track2p \
-            --data "${{ steps.paths.outputs.data_root }}" \
-            "${reference_args[@]}" \
-            --method track2p-baseline \
-            --format csv \
+          args=(
+            benchmark track2p
+            --data "${{ steps.paths.outputs.data_root }}"
+            --reference "${{ steps.paths.outputs.reference_root }}"
+            --reference-kind "${{ steps.paths.outputs.reference_kind }}"
+            --method track2p-baseline
+            --format csv
             --output results/track2p_baseline.csv
+          )
+          if [[ "$INCLUDE_NON_CELLS" == "true" ]]; then
+            args+=(--include-non-cells)
+          fi
+          bayescatrack "${args[@]}"
 
       - name: Run registered-IoU global assignment
+        env:
+          INCLUDE_NON_CELLS: ${{ inputs.include_non_cells }}
         run: |
-          reference_args=(--reference "${{ steps.paths.outputs.reference_root }}")
-          if [[ "${{ steps.paths.outputs.reference_mode }}" == "manual-gt" ]]; then
-            reference_args+=(--reference-kind manual-gt)
-          else
-            reference_args+=(--allow-track2p-as-reference-for-smoke-test)
-          fi
-          bayescatrack benchmark track2p \
-            --data "${{ steps.paths.outputs.data_root }}" \
-            "${reference_args[@]}" \
-            --method global-assignment \
-            --cost registered-iou \
-            --max-gap "${{ inputs.max_gap }}" \
-            --format csv \
+          args=(
+            benchmark track2p
+            --data "${{ steps.paths.outputs.data_root }}"
+            --reference "${{ steps.paths.outputs.reference_root }}"
+            --reference-kind "${{ steps.paths.outputs.reference_kind }}"
+            --method global-assignment
+            --cost registered-iou
+            --max-gap "${{ inputs.max_gap }}"
+            --format csv
             --output results/global_registered_iou_gap${{ inputs.max_gap }}.csv
+          )
+          if [[ "$INCLUDE_NON_CELLS" == "true" ]]; then
+            args+=(--include-non-cells)
+          fi
+          bayescatrack "${args[@]}"
 
       - name: Run ROI-aware global assignment
+        env:
+          INCLUDE_NON_CELLS: ${{ inputs.include_non_cells }}
         run: |
-          reference_args=(--reference "${{ steps.paths.outputs.reference_root }}")
-          if [[ "${{ steps.paths.outputs.reference_mode }}" == "manual-gt" ]]; then
-            reference_args+=(--reference-kind manual-gt)
-          else
-            reference_args+=(--allow-track2p-as-reference-for-smoke-test)
-          fi
-          bayescatrack benchmark track2p \
-            --data "${{ steps.paths.outputs.data_root }}" \
-            "${reference_args[@]}" \
-            --method global-assignment \
-            --cost roi-aware \
-            --max-gap "${{ inputs.max_gap }}" \
-            --weighted-masks \
-            --weighted-centroids \
-            --format csv \
+          args=(
+            benchmark track2p
+            --data "${{ steps.paths.outputs.data_root }}"
+            --reference "${{ steps.paths.outputs.reference_root }}"
+            --reference-kind "${{ steps.paths.outputs.reference_kind }}"
+            --method global-assignment
+            --cost roi-aware
+            --max-gap "${{ inputs.max_gap }}"
+            --weighted-masks
+            --weighted-centroids
+            --format csv
             --output results/global_roi_aware_gap${{ inputs.max_gap }}.csv
+          )
+          if [[ "$INCLUDE_NON_CELLS" == "true" ]]; then
+            args+=(--include-non-cells)
+          fi
+          bayescatrack "${args[@]}"
 
       - name: Run calibrated LOSO global assignment
         if: inputs.run_calibrated_loso
+        env:
+          INCLUDE_NON_CELLS: ${{ inputs.include_non_cells }}
         run: |
-          reference_args=(--reference "${{ steps.paths.outputs.reference_root }}")
-          if [[ "${{ steps.paths.outputs.reference_mode }}" == "manual-gt" ]]; then
-            reference_args+=(--reference-kind manual-gt)
-          else
-            reference_args+=(--allow-track2p-as-reference-for-smoke-test)
-          fi
-          bayescatrack benchmark track2p \
-            --data "${{ steps.paths.outputs.data_root }}" \
-            "${reference_args[@]}" \
-            --method global-assignment \
-            --cost calibrated \
-            --split leave-one-subject-out \
-            --max-gap "${{ inputs.max_gap }}" \
-            --format csv \
+          args=(
+            benchmark track2p
+            --data "${{ steps.paths.outputs.data_root }}"
+            --reference "${{ steps.paths.outputs.reference_root }}"
+            --reference-kind "${{ steps.paths.outputs.reference_kind }}"
+            --method global-assignment
+            --cost calibrated
+            --split leave-one-subject-out
+            --max-gap "${{ inputs.max_gap }}"
+            --format csv
             --output results/global_calibrated_loso_gap${{ inputs.max_gap }}.csv
+          )
+          if [[ "$INCLUDE_NON_CELLS" == "true" ]]; then
+            args+=(--include-non-cells)
+          fi
+          bayescatrack "${args[@]}"
 
       - name: Aggregate benchmark comparison
         env:
-          RUN_CALIBRATED_LOSO: ${{ inputs.run_calibrated_loso }}
           MAX_GAP: ${{ inputs.max_gap }}
+          RUN_LOSO: ${{ inputs.run_calibrated_loso }}
         run: |
-          compare_inputs=(
+          args=(
             --input "Track2p=results/track2p_baseline.csv"
             --input "Global-IoU=results/global_registered_iou_gap${MAX_GAP}.csv"
             --input "ROI-aware=results/global_roi_aware_gap${MAX_GAP}.csv"
           )
-          if [[ "$RUN_CALIBRATED_LOSO" == "true" ]]; then
-            compare_inputs+=(--input "Calibrated-LOSO=results/global_calibrated_loso_gap${MAX_GAP}.csv")
+          if [[ "$RUN_LOSO" == "true" ]]; then
+            args+=(--input "Calibrated-LOSO=results/global_calibrated_loso_gap${MAX_GAP}.csv")
           fi
-          bayescatrack benchmark compare \
-            "${compare_inputs[@]}" \
-            --output results/comparison.md
-          bayescatrack benchmark compare \
-            "${compare_inputs[@]}" \
-            --format csv \
-            --output results/comparison.csv
+          bayescatrack benchmark compare "${args[@]}" --output results/comparison.md
+          bayescatrack benchmark compare "${args[@]}" --format csv --output results/comparison.csv
 
       - name: Add comparison to job summary
+        if: always() && hashFiles('results/comparison.md') != ''
         run: |
           {
             echo "## Track2p benchmark comparison"
-            echo
+            echo "Included usable manual-GT subjects: ${{ steps.paths.outputs.included }}"
+            echo "Excluded subjects without GT: ${{ steps.paths.outputs.excluded_no_gt }}"
+            echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.paths.outputs.excluded_incompatible }}"
+            echo "include_non_cells: ${{ inputs.include_non_cells }}"
+            echo "run_calibrated_loso: ${{ inputs.run_calibrated_loso }}"
             cat results/comparison.md
-            echo
-            echo "### Inputs"
-            echo
-            echo "- Data root: \`${{ steps.paths.outputs.data_root }}\`"
-            echo "- Reference root: \`${{ steps.paths.outputs.reference_root }}\`"
-            echo "- Benchmark subjects: \`${{ steps.paths.outputs.subject_count }}\`"
-            echo "- Raw discovered subjects: \`${{ steps.paths.outputs.raw_subject_count }}\`"
-            echo "- ground_truth.csv files: \`${{ steps.paths.outputs.ground_truth_count }}\`"
-            echo "- Included subjects: \`${{ steps.paths.outputs.included_subjects }}\`"
-            echo "- Excluded subjects: \`${{ steps.paths.outputs.excluded_subjects }}\`"
-            echo "- Reference mode: \`${{ steps.paths.outputs.reference_mode }}\`"
-            echo "- max_gap: \`${{ inputs.max_gap }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark results
+        if: always() && hashFiles('results/**') != ''
         uses: actions/upload-artifact@v5
         with:
-          name: track2p-benchmark-results-gap${{ inputs.max_gap }}
+          name: track2p-benchmark-comparison-gap${{ inputs.max_gap }}
           path: results/
           if-no-files-found: error
