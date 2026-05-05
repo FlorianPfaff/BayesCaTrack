@@ -34,6 +34,7 @@ permissions:
   contents: read
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   ZENODO_URL: https://zenodo.org/records/17091226/files/data.zip?download=1
   ZENODO_MD5: 8d12ff6b93a26e28609c5a20b11f3d88
   ZENODO_CACHE_KEY: track2p-zenodo-17091226-data-md5-8d12ff6b93a26e28609c5a20b11f3d88
@@ -169,6 +170,7 @@ jobs:
           config = Track2pBenchmarkConfig(
               data=root,
               method="track2p-baseline",
+              input_format="suite2p",
               reference=root,
               reference_kind="manual-gt",
               include_behavior=False,
@@ -249,6 +251,7 @@ jobs:
         run: |
           bayescatrack benchmark track2p \
             --data benchmark-ground-truth-subjects \
+            --input-format suite2p \
             --reference benchmark-ground-truth-subjects \
             --reference-kind manual-gt \
             --include-non-cells \
@@ -260,6 +263,7 @@ jobs:
         run: |
           bayescatrack benchmark track2p \
             --data benchmark-ground-truth-subjects \
+            --input-format suite2p \
             --reference benchmark-ground-truth-subjects \
             --reference-kind manual-gt \
             --include-non-cells \
@@ -273,6 +277,7 @@ jobs:
         run: |
           bayescatrack benchmark track2p \
             --data benchmark-ground-truth-subjects \
+            --input-format suite2p \
             --reference benchmark-ground-truth-subjects \
             --reference-kind manual-gt \
             --include-non-cells \
@@ -289,6 +294,7 @@ jobs:
         run: |
           bayescatrack benchmark track2p \
             --data benchmark-ground-truth-subjects \
+            --input-format suite2p \
             --reference benchmark-ground-truth-subjects \
             --reference-kind manual-gt \
             --include-non-cells \
@@ -322,6 +328,7 @@ jobs:
             echo "Included usable manual-GT subjects: ${{ steps.gt.outputs.included }}"
             echo "Excluded subjects without GT: ${{ steps.gt.outputs.excluded_no_gt }}"
             echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.gt.outputs.excluded_incompatible }}"
+            echo "input_format: suite2p"
             echo "include_non_cells: true"
             echo "run_calibrated_loso: ${{ inputs.run_calibrated_loso }}"
             cat results/comparison.md
