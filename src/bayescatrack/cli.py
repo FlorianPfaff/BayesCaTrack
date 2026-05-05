@@ -45,6 +45,10 @@ def _handle_benchmark(args: list[str]) -> int:
             "track2p", help="Track2p baseline and global-assignment ablations"
         )
         subparsers.add_parser(
+            "validate-track2p-inputs",
+            help="Validate manual-GT ROI coverage before Track2p benchmarks",
+        )
+        subparsers.add_parser(
             "compare", help="Aggregate benchmark CSVs into a comparison table"
         )
         subparsers.add_parser("suite", help="Run a JSON benchmark manifest")
@@ -57,6 +61,12 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_track2p_benchmark_main(args[1:]))
+    if args[0] == "validate-track2p-inputs":
+        from bayescatrack.experiments.track2p_input_validator import (
+            main as _track2p_input_validator_main,
+        )
+
+        return int(_track2p_input_validator_main(args[1:]))
     if args[0] == "compare":
         from bayescatrack.experiments.benchmark_comparison import (
             main as _benchmark_comparison_main,
