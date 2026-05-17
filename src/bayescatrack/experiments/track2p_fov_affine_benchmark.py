@@ -72,9 +72,6 @@ def _soft_iou_pairwise_cost_matrix(
     **kwargs: Any,
 ) -> np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]:
     soft_iou_radius = int(kwargs.pop("soft_iou_radius", 0) or 0)
-    if soft_iou_radius <= 0:
-        return original_method(self, other, **kwargs)
-
     iou_weight = float(kwargs.get("iou_weight", 6.0))
     if iou_weight <= 0.0:
         return original_method(self, other, **kwargs)
@@ -82,12 +79,26 @@ def _soft_iou_pairwise_cost_matrix(
     return_components = bool(kwargs.get("return_components", False))
     similarity_epsilon = float(kwargs.get("similarity_epsilon", 1.0e-6))
     large_cost = float(kwargs.get("large_cost", 1.0e6))
+    if soft_iou_radius <= 0 and _is_iou_only_cost(kwargs):
+        exact_iou = _pairwise_iou_matrix_sparse(self.roi_masks, other.roi_masks)
+        iou_cost = -np.log(np.clip(exact_iou, similarity_epsilon, 1.0))
+        total_cost = iou_weight * iou_cost
+        total_cost = _ensure_finite_cost_matrix(total_cost, large_cost=large_cost)
+        if return_components:
+            components = _iou_only_components(total_cost, exact_iou, iou_cost)
+            return total_cost, components
+        return total_cost
 
     base_kwargs = dict(kwargs)
     base_kwargs["iou_weight"] = 0.0
-    base_kwargs["return_components"] = True
-    base_cost, components = original_method(self, other, **base_kwargs)
-    exact_iou = np.asarray(components["iou"], dtype=float)
+    base_kwargs["return_components"] = return_components
+    base_result = original_method(self, other, **base_kwargs)
+    if return_components:
+        base_cost, components = base_result
+    else:
+        base_cost = base_result
+        components = {}
+    exact_iou = _pairwise_iou_matrix_sparse(self.roi_masks, other.roi_masks)
     soft_iou = _pairwise_dilated_iou_matrix(
         self.roi_masks,
         other.roi_masks,
@@ -100,17 +111,50 @@ def _soft_iou_pairwise_cost_matrix(
         total_cost = np.where(np.asarray(components["gated"], dtype=bool), large_cost, total_cost)
     total_cost = _ensure_finite_cost_matrix(total_cost, large_cost=large_cost)
 
-    components = {
-        **components,
-        "pairwise_cost_matrix": total_cost,
-        "soft_iou": soft_iou,
-        "effective_iou": effective_iou,
-        "iou_cost": iou_cost,
-        "soft_iou_radius": np.full_like(total_cost, soft_iou_radius, dtype=float),
-    }
     if return_components:
+        components = {
+            **components,
+            "pairwise_cost_matrix": total_cost,
+            "iou": exact_iou,
+            "soft_iou": soft_iou,
+            "effective_iou": effective_iou,
+            "iou_cost": iou_cost,
+            "soft_iou_radius": np.full_like(total_cost, soft_iou_radius, dtype=float),
+        }
         return total_cost, components
     return total_cost
+
+
+def _is_iou_only_cost(kwargs: dict[str, Any]) -> bool:
+    return (
+        float(kwargs.get("centroid_weight", 1.0)) == 0.0
+        and kwargs.get("max_centroid_distance") is None
+        and float(kwargs.get("mask_cosine_weight", 2.0)) == 0.0
+        and float(kwargs.get("area_weight", 0.5)) == 0.0
+        and float(kwargs.get("roi_feature_weight", 0.25)) == 0.0
+        and float(kwargs.get("cell_probability_weight", 0.0)) == 0.0
+    )
+
+
+def _iou_only_components(
+    total_cost: np.ndarray,
+    iou_matrix: np.ndarray,
+    iou_cost: np.ndarray,
+) -> dict[str, np.ndarray]:
+    zero_cost = np.zeros_like(total_cost, dtype=float)
+    return {
+        "pairwise_cost_matrix": total_cost,
+        "centroid_distance": zero_cost,
+        "centroid_cost": zero_cost,
+        "iou": iou_matrix,
+        "iou_cost": iou_cost,
+        "mask_cosine_similarity": zero_cost,
+        "mask_cosine_cost": zero_cost,
+        "area_ratio_cost": zero_cost,
+        "roi_feature_cost": zero_cost,
+        "cell_probability_cost": zero_cost,
+        "gated": np.zeros_like(total_cost, dtype=bool),
+    }
 
 
 def _pairwise_dilated_iou_matrix(
