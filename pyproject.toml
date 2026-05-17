@@ -13,6 +13,11 @@ dependencies = [
     "pyrecest @ git+https://github.com/FlorianPfaff/PyRecEst.git@c6cc3500242a436e647fd3dc1b3f4ee22bb99e2e",
 ]
 
+[project.optional-dependencies]
+track2p = [
+    "track2p==0.6.2",
+]
+
 [project.scripts]
 bayescatrack = "bayescatrack:main"
 

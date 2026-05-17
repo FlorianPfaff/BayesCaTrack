@@ -127,6 +127,12 @@ def _run_calibrated_loso_registration_qa_report(
 ) -> list[dict[str, Any]]:
     """Return held-out edge diagnostics for LOSO calibrated costs."""
 
+    if config.transform_type == "gt-affine-oracle":
+        raise ValueError(
+            "transform_type='gt-affine-oracle' is a manual-GT registration QA "
+            "oracle and is not available for calibrated LOSO training."
+        )
+
     from bayescatrack.experiments.track2p_loso_calibration import (
         _collect_training_examples,
         _load_subject_calibration_data,
@@ -207,9 +213,9 @@ def summarize_registration_qa_links(
 ) -> list[dict[str, Any]]:
     """Aggregate link-level QA rows by subject and session edge."""
 
-    grouped: dict[
-        tuple[str, str, str, str, int], list[Mapping[str, Any]]
-    ] = defaultdict(list)
+    grouped: dict[tuple[str, str, str, str, int], list[Mapping[str, Any]]] = (
+        defaultdict(list)
+    )
     for row in rows:
         key = (
             str(row.get("cost", "")),
@@ -497,7 +503,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
+        choices=("affine", "rigid", "fov-translation", "gt-affine-oracle", "none"),
     )
     parser.add_argument(
         "--cost",
@@ -589,10 +595,13 @@ def _audit_subject(
             reference_session,
             linked_source_rois,
         )
-        registered_plane = register_plane_pair(
-            reference_session.plane_data,
-            target_session.plane_data,
-            transform_type=config.transform_type,
+        registered_plane = _register_plane_pair_for_registration_qa(
+            reference_session,
+            target_session,
+            reference_matrix,
+            source_index,
+            target_index,
+            config,
         )
         registration_metadata = _registration_metadata(
             config.transform_type,
@@ -624,12 +633,16 @@ def _audit_subject(
                 registered_bundle,
                 session_gap=target_index - source_index,
             )
-            probability_matrix = calibrated_model.pairwise_probability_matrix_from_bundle(
-                registered_bundle,
-                session_gap=target_index - source_index,
+            probability_matrix = (
+                calibrated_model.pairwise_probability_matrix_from_bundle(
+                    registered_bundle,
+                    session_gap=target_index - source_index,
+                )
             )
         else:
-            cost_matrix = np.asarray(registered_bundle.pairwise_cost_matrix, dtype=float)
+            cost_matrix = np.asarray(
+                registered_bundle.pairwise_cost_matrix, dtype=float
+            )
         rows.extend(
             _audit_reference_links(
                 subject,
@@ -797,9 +810,7 @@ def _audit_reference_links(
                 "false_cost_median": _array_stat(finite_false_costs, 50),
                 "false_cost_p90": _array_stat(finite_false_costs, 90),
                 "cost_margin": (
-                    false_cost_min - gt_cost
-                    if np.isfinite(false_cost_min)
-                    else np.nan
+                    false_cost_min - gt_cost if np.isfinite(false_cost_min) else np.nan
                 ),
                 "target_empty_registered_mask": target_empty,
                 "target_gated": target_gated,
@@ -836,6 +847,227 @@ def _linked_source_rois(
         seen.add(source_roi_int)
         linked_rois.append(source_roi_int)
     return tuple(linked_rois)
+
+
+def _register_plane_pair_for_registration_qa(
+    reference_session: Track2pSession,
+    target_session: Track2pSession,
+    reference_matrix: np.ndarray,
+    source_index: int,
+    target_index: int,
+    config: RegistrationQAConfig,
+) -> CalciumPlaneData:
+    if config.transform_type == "gt-affine-oracle":
+        return _gt_affine_oracle_registered_plane(
+            reference_session,
+            target_session,
+            reference_matrix,
+            source_index,
+            target_index,
+            weighted_centroids=config.weighted_centroids,
+        )
+    return register_plane_pair(
+        reference_session.plane_data,
+        target_session.plane_data,
+        transform_type=config.transform_type,
+    )
+
+
+def _gt_affine_oracle_registered_plane(
+    reference_session: Track2pSession,
+    target_session: Track2pSession,
+    reference_matrix: np.ndarray,
+    source_index: int,
+    target_index: int,
+    *,
+    weighted_centroids: bool,
+) -> CalciumPlaneData:
+    reference_points, target_points = _gt_affine_oracle_points(
+        reference_session,
+        target_session,
+        reference_matrix,
+        source_index,
+        target_index,
+        weighted_centroids=weighted_centroids,
+    )
+    transform_yx = _fit_affine_yx_transform(
+        moving_points_yx=target_points,
+        reference_points_yx=reference_points,
+    )
+    target_plane = target_session.plane_data
+    registered_masks = _warp_mask_stack_nearest(
+        target_plane.roi_masks,
+        moving_to_reference_yx=transform_yx,
+        output_shape=reference_session.plane_data.image_shape,
+    )
+    registered_fov = (
+        None
+        if target_plane.fov is None
+        else _warp_image_nearest(
+            target_plane.fov,
+            moving_to_reference_yx=transform_yx,
+            output_shape=reference_session.plane_data.image_shape,
+        )
+    )
+    ops = {} if target_plane.ops is None else dict(target_plane.ops)
+    ops.update(
+        {
+            "registration_backend": "gt-affine-oracle",
+            "registration_transform_type": "gt-affine-oracle",
+            "registration_backend_reason": (
+                "manual-GT affine oracle fit from linked ROI centroids"
+            ),
+            "gt_affine_oracle_link_count": int(reference_points.shape[0]),
+            "gt_affine_oracle_matrix_yx": transform_yx,
+        }
+    )
+    return target_plane.with_replaced_masks(
+        registered_masks,
+        fov=registered_fov,
+        source=f"{target_plane.source}_gt_affine_oracle",
+        ops=ops,
+    )
+
+
+def _gt_affine_oracle_points(
+    reference_session: Track2pSession,
+    target_session: Track2pSession,
+    reference_matrix: np.ndarray,
+    source_index: int,
+    target_index: int,
+    *,
+    weighted_centroids: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    source_lookup = _roi_lookup(reference_session)
+    target_lookup = _roi_lookup(target_session)
+    source_centroids = reference_session.plane_data.centroids(
+        order="yx",
+        weighted=weighted_centroids,
+    ).T
+    target_centroids = target_session.plane_data.centroids(
+        order="yx",
+        weighted=weighted_centroids,
+    ).T
+    source_points: list[np.ndarray] = []
+    target_points: list[np.ndarray] = []
+    for track in reference_matrix:
+        source_roi = track[source_index]
+        target_roi = track[target_index]
+        if source_roi is None or target_roi is None:
+            continue
+        source_roi_int = int(source_roi)
+        target_roi_int = int(target_roi)
+        if source_roi_int not in source_lookup or target_roi_int not in target_lookup:
+            continue
+        source_points.append(source_centroids[source_lookup[source_roi_int]])
+        target_points.append(target_centroids[target_lookup[target_roi_int]])
+    if len(source_points) < 3:
+        raise ValueError(
+            "transform_type='gt-affine-oracle' requires at least three present "
+            "manual-GT links on each audited session edge"
+        )
+    return np.asarray(source_points, dtype=float), np.asarray(
+        target_points, dtype=float
+    )
+
+
+def _fit_affine_yx_transform(
+    *,
+    moving_points_yx: np.ndarray,
+    reference_points_yx: np.ndarray,
+) -> np.ndarray:
+    if moving_points_yx.shape != reference_points_yx.shape:
+        raise ValueError("Affine oracle point arrays must have the same shape")
+    if moving_points_yx.ndim != 2 or moving_points_yx.shape[1] != 2:
+        raise ValueError("Affine oracle points must have shape (n_points, 2)")
+    design = np.column_stack(
+        (
+            moving_points_yx[:, 0],
+            moving_points_yx[:, 1],
+            np.ones(moving_points_yx.shape[0]),
+        )
+    )
+    if np.linalg.matrix_rank(design) < 3:
+        raise ValueError(
+            "transform_type='gt-affine-oracle' requires at least three "
+            "non-collinear manual-GT link centroids per audited session edge"
+        )
+    coefficients, *_ = np.linalg.lstsq(design, reference_points_yx, rcond=None)
+    return np.asarray(
+        [
+            [coefficients[0, 0], coefficients[1, 0], coefficients[2, 0]],
+            [coefficients[0, 1], coefficients[1, 1], coefficients[2, 1]],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=float,
+    )
+
+
+def _warp_mask_stack_nearest(
+    masks: np.ndarray,
+    *,
+    moving_to_reference_yx: np.ndarray,
+    output_shape: tuple[int, int],
+) -> np.ndarray:
+    mask_array = np.asarray(masks)
+    if mask_array.ndim != 3:
+        raise ValueError("ROI masks must have shape (n_roi, height, width)")
+    if mask_array.shape[0] == 0:
+        return np.zeros((0, output_shape[0], output_shape[1]), dtype=mask_array.dtype)
+    return np.stack(
+        [
+            _warp_image_nearest(
+                mask,
+                moving_to_reference_yx=moving_to_reference_yx,
+                output_shape=output_shape,
+            )
+            for mask in mask_array
+        ],
+        axis=0,
+    )
+
+
+def _warp_image_nearest(
+    image: np.ndarray,
+    *,
+    moving_to_reference_yx: np.ndarray,
+    output_shape: tuple[int, int],
+) -> np.ndarray:
+    image_array = np.asarray(image)
+    if image_array.ndim != 2:
+        raise ValueError("Images must have shape (height, width)")
+    reference_y: np.ndarray
+    reference_x: np.ndarray
+    reference_y, reference_x = np.indices(output_shape, dtype=float)
+    reference_homogeneous = np.vstack(
+        (
+            reference_y.ravel(),
+            reference_x.ravel(),
+            np.ones(reference_y.size, dtype=float),
+        )
+    )
+    reference_to_moving_yx = np.linalg.inv(moving_to_reference_yx)
+    moving_homogeneous = reference_to_moving_yx @ reference_homogeneous
+    denominator = moving_homogeneous[2]
+    valid_denominator = np.abs(denominator) > np.spacing(1.0)
+    moving_y: np.ndarray = np.full(reference_y.size, -1, dtype=int)
+    moving_x: np.ndarray = np.full(reference_x.size, -1, dtype=int)
+    moving_y[valid_denominator] = np.rint(
+        moving_homogeneous[0, valid_denominator] / denominator[valid_denominator]
+    ).astype(int)
+    moving_x[valid_denominator] = np.rint(
+        moving_homogeneous[1, valid_denominator] / denominator[valid_denominator]
+    ).astype(int)
+    valid = (
+        valid_denominator
+        & (moving_y >= 0)
+        & (moving_y < image_array.shape[0])
+        & (moving_x >= 0)
+        & (moving_x < image_array.shape[1])
+    )
+    output = np.zeros((output_shape[0] * output_shape[1],), dtype=image_array.dtype)
+    output[valid] = image_array[moving_y[valid], moving_x[valid]]
+    return output.reshape(output_shape)
 
 
 def _subset_reference_session(
@@ -1048,8 +1280,7 @@ def _registration_metadata(
     ops = {} if registered_plane.ops is None else dict(registered_plane.ops)
     source = str(registered_plane.source)
     backend = str(
-        ops.get("registration_backend")
-        or _registration_backend(transform_type, source)
+        ops.get("registration_backend") or _registration_backend(transform_type, source)
     )
     return {
         "registration_backend": backend,
@@ -1070,6 +1301,8 @@ def _registration_metadata(
 def _registration_backend(transform_type: str, source: str) -> str:
     if transform_type == "none":
         return "none"
+    if transform_type == "gt-affine-oracle":
+        return "gt-affine-oracle"
     if "fov_registered" in source:
         return "fov-translation"
     if "registered" in source:
@@ -1080,11 +1313,15 @@ def _registration_backend(transform_type: str, source: str) -> str:
 def _registration_backend_reason(transform_type: str, backend: str, source: str) -> str:
     if transform_type == "none":
         return "transform_type=none"
+    if transform_type == "gt-affine-oracle":
+        return "manual-GT affine oracle fit from linked ROI centroids"
     if backend == "fov-translation":
         return "registered plane source contains 'fov_registered'"
     if backend == "track2p-elastix":
         return "registered plane source contains 'registered' without 'fov_registered'"
-    return f"could not infer registration backend from registered plane source {source!r}"
+    return (
+        f"could not infer registration backend from registered plane source {source!r}"
+    )
 
 
 def _fov_translation_shift_component(

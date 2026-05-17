@@ -55,13 +55,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "numpy<3"
-          python -m pip install -e .
+          python -m pip install -e ".[track2p]"
 
       - name: Restore or download raw pre-Track2p Suite2p data
         uses: ./.github/actions/setup-longitudinaltracking-data
         with:
           data_path: ${{ inputs.raw_data_path }}
-          cache_key: longitudinaltrackingraw-webdav-${{ inputs.raw_data_path }}-spatial-v2
+          cache_key: longitudinaltrackingraw-webdav-${{ inputs.raw_data_path }}-spatial-v3
           webdav_url: ${{ secrets.LONGITUDINALTRACKINGRAW_WEBDAV_URL }}
           webdav_user: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_KEY }}
           webdav_password: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_PASSWORD }}
@@ -69,6 +69,7 @@ jobs:
           rclone_filter_rules: |
             + **/suite2p/plane0/stat.npy
             + **/suite2p/plane0/iscell.npy
+            + **/suite2p/plane0/ops.npy
             + **/track2p/track_ops.npy
             + **/track2p/plane0_suite2p_indices.npy
             - **

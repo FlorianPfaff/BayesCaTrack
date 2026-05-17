@@ -59,7 +59,7 @@ jobs:
       - name: Install smoke-test runtime dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . "numpy<3"
+          python -m pip install -e ".[track2p]" "numpy<3"
 
       - name: Select package module
         id: package-module

@@ -19,6 +19,16 @@ on:
         type: string
         default: "2"
         required: true
+      transform_type:
+        description: "Registration transform for BayesCaTrack variants"
+        type: choice
+        options:
+          - affine
+          - rigid
+          - fov-translation
+          - none
+        default: affine
+        required: true
       run_calibrated_loso:
         description: "Run calibrated leave-one-subject-out variant"
         type: boolean
@@ -64,7 +74,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "numpy<3"
-          python -m pip install -e .
+          python -m pip install -e ".[track2p]"
 
       - name: Show runner disk before data setup
         run: df -h
@@ -73,7 +83,7 @@ jobs:
         uses: ./.github/actions/setup-longitudinaltracking-data
         with:
           data_path: ${{ inputs.raw_data_path }}
-          cache_key: longitudinaltrackingraw-webdav-${{ inputs.raw_data_path }}-spatial-v2
+          cache_key: longitudinaltrackingraw-webdav-${{ inputs.raw_data_path }}-spatial-v3
           webdav_url: ${{ secrets.LONGITUDINALTRACKINGRAW_WEBDAV_URL }}
           webdav_user: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_KEY }}
           webdav_password: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_PASSWORD }}
@@ -81,6 +91,7 @@ jobs:
           rclone_filter_rules: |
             + **/suite2p/plane0/stat.npy
             + **/suite2p/plane0/iscell.npy
+            + **/suite2p/plane0/ops.npy
             + **/track2p/track_ops.npy
             + **/track2p/plane0_suite2p_indices.npy
             - **
@@ -147,7 +158,7 @@ jobs:
             --no-include-behavior \
             --method global-assignment \
             --cost registered-iou \
-            --transform-type fov-translation \
+            --transform-type "${{ inputs.transform_type }}" \
             --max-gap "${{ inputs.max_gap }}" \
             --format csv \
             --output results/global_registered_iou_gap${{ inputs.max_gap }}.csv
@@ -163,7 +174,7 @@ jobs:
             --no-include-behavior \
             --method global-assignment \
             --cost roi-aware \
-            --transform-type fov-translation \
+            --transform-type "${{ inputs.transform_type }}" \
             --max-gap "${{ inputs.max_gap }}" \
             --weighted-masks \
             --weighted-centroids \
@@ -183,7 +194,7 @@ jobs:
             --method global-assignment \
             --cost calibrated \
             --split leave-one-subject-out \
-            --transform-type fov-translation \
+            --transform-type "${{ inputs.transform_type }}" \
             --max-gap "${{ inputs.max_gap }}" \
             --format csv \
             --output results/global_calibrated_loso_gap${{ inputs.max_gap }}.csv
@@ -216,6 +227,7 @@ jobs:
             echo "Excluded without track2p suite2p-index bridge: ${{ steps.prep.outputs.excluded_no_track2p_suite2p_indices }}"
             echo "Excluded with incompatible ROI indices: ${{ steps.prep.outputs.excluded_incompatible }}"
             echo "include_non_cells: true"
+            echo "transform_type: ${{ inputs.transform_type }}"
             echo "run_calibrated_loso: ${{ inputs.run_calibrated_loso }}"
             cat results/comparison.md
           } >> "$GITHUB_STEP_SUMMARY"

@@ -39,6 +39,12 @@ def test_bayescatrack_track2p_benchmark_help():
     assert "global-assignment" in proc.stdout
 
 
+def test_bayescatrack_registration_qa_help():
+    proc = run_module("-m", "bayescatrack", "benchmark", "registration-qa", "--help")
+    assert "Report registration quality" in proc.stdout
+    assert "gt-affine-oracle" in proc.stdout
+
+
 def test_bayescatrack_benchmark_suite_help():
     proc = run_module("-m", "bayescatrack", "benchmark", "suite", "--help")
     assert "JSON benchmark manifest" in proc.stdout

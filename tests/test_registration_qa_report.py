@@ -27,6 +27,16 @@ def _write_ground_truth_csv(
     return ground_truth_path
 
 
+def _write_raw_npy_masks(
+    subject_dir: Path, session_name: str, masks: np.ndarray
+) -> None:
+    plane_dir = subject_dir / session_name / "data_npy" / "plane0"
+    plane_dir.mkdir(parents=True, exist_ok=True)
+    np.save(plane_dir / "rois.npy", masks)
+    np.save(plane_dir / "F.npy", np.zeros((masks.shape[0], 2), dtype=float))
+    np.save(plane_dir / "fov.npy", np.asarray(masks, dtype=float).sum(axis=0))
+
+
 def test_registration_qa_report_summarizes_manual_gt_links(
     tmp_path,
     write_raw_npy_session,
@@ -116,6 +126,54 @@ def test_registration_qa_report_summarizes_manual_gt_links(
     assert "registration_backend" in format_registration_backend_audit_table(
         backend_audit
     )
+
+
+def test_registration_qa_report_supports_gt_affine_oracle(tmp_path):
+    subject_dir = tmp_path / "jm001"
+    reference_masks = np.zeros((3, 8, 8), dtype=bool)
+    reference_masks[0, 1, 1] = True
+    reference_masks[1, 1, 4] = True
+    reference_masks[2, 4, 1] = True
+    target_masks = np.zeros_like(reference_masks)
+    target_masks[0, 2, 3] = True
+    target_masks[1, 2, 6] = True
+    target_masks[2, 5, 3] = True
+    _write_raw_npy_masks(subject_dir, "2024-05-01_a", reference_masks)
+    _write_raw_npy_masks(subject_dir, "2024-05-02_a", target_masks)
+    _write_ground_truth_csv(
+        subject_dir,
+        ("2024-05-01_a", "2024-05-02_a"),
+        ((0, 0), (1, 1), (2, 2)),
+    )
+
+    rows = run_registration_qa_report(
+        RegistrationQAConfig(
+            data=subject_dir,
+            reference_kind="manual-gt",
+            input_format="npy",
+            transform_type="gt-affine-oracle",
+            max_gap=1,
+            cost="registered-iou",
+        )
+    )
+
+    assert len(rows) == 3
+    assert {row["registration_backend"] for row in rows} == {"gt-affine-oracle"}
+    assert {row["registered_plane_source"] for row in rows} == {
+        "raw_npy_gt_affine_oracle"
+    }
+    assert {row["registration_backend_reason"] for row in rows} == {
+        "manual-GT affine oracle fit from linked ROI centroids"
+    }
+    assert all(row["registered_iou"] == pytest.approx(1.0) for row in rows)
+    assert all(
+        row["registered_centroid_distance"] == pytest.approx(0.0) for row in rows
+    )
+    assert all(row["gt_candidate_admissible"] is True for row in rows)
+
+    backend_audit = summarize_registration_backend_usage(rows)
+    assert backend_audit[0]["registration_backend"] == "gt-affine-oracle"
+    assert backend_audit[0]["transform_type"] == "gt-affine-oracle"
 
 
 def test_registration_qa_report_tolerates_raw_mask_shape_mismatch(

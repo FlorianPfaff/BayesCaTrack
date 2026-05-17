@@ -19,6 +19,16 @@ on:
         type: string
         default: "2"
         required: true
+      transform_type:
+        description: "Registration transform for BayesCaTrack variants"
+        type: choice
+        options:
+          - affine
+          - rigid
+          - fov-translation
+          - none
+        default: affine
+        required: true
       include_non_cells:
         description: "Load all Suite2p stat.npy rows, including ROIs not marked as cells"
         type: boolean
@@ -61,7 +71,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "numpy<3"
-          python -m pip install -e .
+          python -m pip install -e ".[track2p]"
 
       - name: Show runner disk before data setup
         run: df -h
@@ -191,6 +201,7 @@ jobs:
             --reference-kind "${{ steps.paths.outputs.reference_kind }}"
             --method global-assignment
             --cost registered-iou
+            --transform-type "${{ inputs.transform_type }}"
             --max-gap "${{ inputs.max_gap }}"
             --format csv
             --output results/global_registered_iou_gap${{ inputs.max_gap }}.csv
@@ -211,6 +222,7 @@ jobs:
             --reference-kind "${{ steps.paths.outputs.reference_kind }}"
             --method global-assignment
             --cost roi-aware
+            --transform-type "${{ inputs.transform_type }}"
             --max-gap "${{ inputs.max_gap }}"
             --weighted-masks
             --weighted-centroids
@@ -235,6 +247,7 @@ jobs:
             --method global-assignment
             --cost calibrated
             --split leave-one-subject-out
+            --transform-type "${{ inputs.transform_type }}"
             --max-gap "${{ inputs.max_gap }}"
             --format csv
             --output results/global_calibrated_loso_gap${{ inputs.max_gap }}.csv
@@ -269,6 +282,7 @@ jobs:
             echo "Excluded subjects without GT: ${{ steps.paths.outputs.excluded_no_gt }}"
             echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.paths.outputs.excluded_incompatible }}"
             echo "include_non_cells: ${{ inputs.include_non_cells }}"
+            echo "transform_type: ${{ inputs.transform_type }}"
             echo "run_calibrated_loso: ${{ inputs.run_calibrated_loso }}"
             cat results/comparison.md
           } >> "$GITHUB_STEP_SUMMARY"

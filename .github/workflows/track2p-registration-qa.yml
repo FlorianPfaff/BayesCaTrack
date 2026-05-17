@@ -24,6 +24,17 @@ on:
         type: string
         default: "6.0"
         required: true
+      transform_type:
+        description: "Registration transform for edge diagnostics"
+        type: choice
+        options:
+          - affine
+          - rigid
+          - fov-translation
+          - gt-affine-oracle
+          - none
+        default: affine
+        required: true
       run_calibrated_loso:
         description: "Also run calibrated LOSO edge diagnostics"
         type: boolean
@@ -70,13 +81,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "numpy<3"
-          python -m pip install -e .
+          python -m pip install -e ".[track2p]"
 
       - name: Restore or download raw pre-Track2p Suite2p data
         uses: ./.github/actions/setup-longitudinaltracking-data
         with:
           data_path: ${{ inputs.raw_data_path }}
-          cache_key: longitudinaltrackingraw-webdav-${{ inputs.raw_data_path }}-spatial-v2
+          cache_key: longitudinaltrackingraw-webdav-${{ inputs.raw_data_path }}-spatial-v3
           webdav_url: ${{ secrets.LONGITUDINALTRACKINGRAW_WEBDAV_URL }}
           webdav_user: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_KEY }}
           webdav_password: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_PASSWORD }}
@@ -84,6 +95,7 @@ jobs:
           rclone_filter_rules: |
             + **/suite2p/plane0/stat.npy
             + **/suite2p/plane0/iscell.npy
+            + **/suite2p/plane0/ops.npy
             + **/track2p/track_ops.npy
             + **/track2p/plane0_suite2p_indices.npy
             - **
@@ -135,7 +147,7 @@ jobs:
             --include-non-cells \
             --no-include-behavior \
             --cost registered-iou \
-            --transform-type fov-translation \
+            --transform-type "${{ inputs.transform_type }}" \
             --max-gap "$MAX_GAP" \
             --cost-threshold "$COST_THRESHOLD" \
             --links-output "results/registration_qa_registered_iou_links_gap${MAX_GAP}.csv" \
@@ -157,7 +169,7 @@ jobs:
             --include-non-cells \
             --no-include-behavior \
             --cost roi-aware \
-            --transform-type fov-translation \
+            --transform-type "${{ inputs.transform_type }}" \
             --max-gap "$MAX_GAP" \
             --cost-threshold "$COST_THRESHOLD" \
             --links-output "results/registration_qa_roi_aware_links_gap${MAX_GAP}.csv" \
@@ -180,7 +192,7 @@ jobs:
             --include-non-cells \
             --no-include-behavior \
             --cost calibrated \
-            --transform-type fov-translation \
+            --transform-type "${{ inputs.transform_type }}" \
             --max-gap "$MAX_GAP" \
             --cost-threshold "$COST_THRESHOLD" \
             --links-output "results/registration_qa_calibrated_links_gap${MAX_GAP}.csv" \
@@ -200,6 +212,8 @@ jobs:
             fi
           }
           {
+            echo "transform_type: ${{ inputs.transform_type }}"
+            echo
             echo "## Registered-IoU registration QA"
             append_file "results/registration_qa_registered_iou_summary_gap${{ inputs.max_gap }}.md"
             echo

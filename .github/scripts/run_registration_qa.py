@@ -41,7 +41,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
+        choices=("affine", "rigid", "fov-translation", "gt-affine-oracle", "none"),
     )
     parser.add_argument("--cost-threshold", type=float, default=6.0)
     parser.add_argument("--no-cost-threshold", action="store_true")

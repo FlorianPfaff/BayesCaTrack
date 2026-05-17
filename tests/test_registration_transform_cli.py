@@ -80,3 +80,13 @@ def test_oracle_affine_qa_cli_accepts_fov_translation_transform():
     )
 
     assert config.registration.transform_type == "fov-translation"
+
+
+def test_registration_qa_cli_accepts_gt_affine_oracle_transform():
+    args = registration_qa_report.build_arg_parser().parse_args(
+        ["--data", "dataset", "--transform-type", "gt-affine-oracle"]
+    )
+
+    config = registration_qa_report._config_from_args(args)
+
+    assert config.transform_type == "gt-affine-oracle"

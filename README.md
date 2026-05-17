@@ -93,10 +93,17 @@ paper-facing comparison. For plumbing checks only, pass
 handled by scoring only predicted tracks whose seed-session ROI appears in the
 reference seed set; this avoids counting unlabelled cells as false positives.
 
-For hosted benchmark runs without the optional Track2p/elastix registration
-backend, use `--transform-type fov-translation`. This selects BayesCaTrack's
-integer FOV phase-correlation registration path explicitly instead of requesting
-Track2p-backed affine or rigid registration.
+Install the optional Track2p/elastix registration backend when running affine
+or rigid registration:
+
+```bash
+python -m pip install ".[track2p]"
+```
+
+Use `--transform-type affine` or `--transform-type rigid` to request Track2p's
+registration stack. For hosted benchmark runs without this optional backend,
+use `--transform-type fov-translation`; that selects BayesCaTrack's integer FOV
+phase-correlation fallback explicitly.
 
 Create a small synthetic Suite2p-style subject for benchmark development:
 

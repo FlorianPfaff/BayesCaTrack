@@ -44,7 +44,6 @@ def _write_raw_suite2p_subject(root: Path, subject_name: str) -> Path:
     iscell = np.array([[1, 0.9], [1, 0.8], [0, 0.1]], dtype=float)
     for session_name in ("2024-05-01_a", "2024-05-02_a"):
         plane_dir = _write_suite2p_session(subject_dir, session_name, iscell=iscell)
-        (plane_dir / "ops.npy").unlink()
         (plane_dir / "F.npy").unlink()
     return subject_dir
 
@@ -106,6 +105,37 @@ def test_prepare_raw_suite2p_benchmark_data_combines_raw_sessions_with_metadata(
         include_non_cells=True,
     )
     assert plane.fov is not None
+    assert plane.ops is not None and plane.ops.get("meanImg") is not None
+
+
+def test_prepare_raw_suite2p_benchmark_data_rejects_missing_ops_mean_image(
+    tmp_path,
+):
+    raw_root = tmp_path / "raw"
+    metadata_root = tmp_path / "metadata"
+    raw_subject = _write_raw_suite2p_subject(raw_root, "jm038")
+    (raw_subject / "2024-05-01_a" / "suite2p" / "plane0" / "ops.npy").unlink()
+    _write_metadata_subject(metadata_root, "jm038")
+
+    try:
+        prepare_raw_suite2p_benchmark_data(
+            raw_root=raw_root,
+            metadata_root=metadata_root,
+            output_root=tmp_path / "prepared",
+            diagnostics_dir=tmp_path / "results",
+        )
+    except ValueError as exc:
+        assert "Need at least 1 raw Suite2p manual-GT subject" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError(
+            "Expected missing ops.npy to reject the raw benchmark tree"
+        )
+
+    summary = (tmp_path / "results" / "raw_suite2p_benchmark_subjects.json").read_text(
+        encoding="utf-8"
+    )
+    assert "missing suite2p/plane0/ops.npy" in summary
+    assert "ROI-mask occupancy fallback" in summary
 
 
 def test_prepare_raw_suite2p_benchmark_data_accepts_raw_track2p_bridge(tmp_path):
@@ -136,6 +166,50 @@ def test_prepare_raw_suite2p_benchmark_data_accepts_raw_track2p_bridge(tmp_path)
         and not diagnostic.compatible
         for diagnostic in preparation.diagnostics
     )
+
+
+def test_prepare_raw_suite2p_benchmark_data_uses_track2p_session_subset(tmp_path):
+    raw_root = tmp_path / "raw"
+    metadata_root = tmp_path / "metadata"
+    raw_subject = raw_root / "raw_export" / "jm046"
+    iscell = np.array([[1, 0.9], [1, 0.8], [0, 0.1]], dtype=float)
+    for session_name in (
+        "2024-09-02_a",
+        "2024-09-03_a",
+        "2024-09-04_a",
+    ):
+        _write_suite2p_session(raw_subject, session_name, iscell=iscell)
+    _write_track2p_suite2p_indices(
+        raw_subject,
+        ("2024-09-03_a", "2024-09-04_a"),
+        np.array([[0, 0], [2, 2]], dtype=object),
+    )
+
+    metadata_subject = metadata_root / "metadata_export" / "jm046"
+    metadata_subject.mkdir(parents=True)
+    _write_ground_truth_csv(
+        metadata_subject,
+        ("2024-09-03_a", "2024-09-04_a"),
+        ((0, 0), (2, 2)),
+    )
+
+    preparation = prepare_raw_suite2p_benchmark_data(
+        raw_root=raw_root,
+        metadata_root=metadata_root,
+        output_root=tmp_path / "prepared",
+        diagnostics_dir=tmp_path / "results",
+    )
+
+    prepared_subject = preparation.output_root / "jm046"
+    assert preparation.included == ("jm046",)
+    assert not (prepared_subject / "2024-09-02_a").exists()
+    assert (prepared_subject / "2024-09-03_a").is_dir()
+    assert (prepared_subject / "2024-09-04_a").is_dir()
+    assert {
+        diagnostic.session
+        for diagnostic in preparation.diagnostics
+        if diagnostic.source == "manual_gt"
+    } == {"2024-09-03_a", "2024-09-04_a"}
 
 
 def test_prepare_raw_suite2p_benchmark_data_rejects_missing_raw_indices(tmp_path):

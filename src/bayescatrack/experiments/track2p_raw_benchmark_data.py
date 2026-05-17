@@ -114,6 +114,7 @@ def prepare_raw_suite2p_benchmark_data(
     min_subjects: int = 1,
     diagnostics_dir: Path | None = None,
     require_track2p_suite2p_indices: bool = True,
+    require_suite2p_ops_meanimg: bool = True,
     filter_missing_manual_rois: bool = False,
 ) -> RawBenchmarkPreparation:
     """Build a benchmark tree using raw Suite2p sessions and Track2p/GT metadata."""
@@ -166,10 +167,21 @@ def prepare_raw_suite2p_benchmark_data(
             excluded_no_suite2p_indices.append(subject_name)
             continue
 
+        track2p_session_names = (
+            None
+            if track2p_subject is None
+            else _track2p_bridge_session_names(
+                track2p_subject.path,
+                plane_name=plane_name,
+            )
+        )
         prepared_subject = output_root / subject_name
         prepared_subject.mkdir()
         _link_raw_suite2p_sessions(
-            raw_subject.path, prepared_subject, plane_name=plane_name
+            raw_subject.path,
+            prepared_subject,
+            plane_name=plane_name,
+            session_names=track2p_session_names,
         )
         _link_path(
             metadata_subject.path / GROUND_TRUTH_CSV_NAME,
@@ -183,6 +195,7 @@ def prepare_raw_suite2p_benchmark_data(
                 prepared_subject,
                 plane_name=plane_name,
                 require_track2p_suite2p_indices=require_track2p_suite2p_indices,
+                require_suite2p_ops_meanimg=require_suite2p_ops_meanimg,
                 filter_missing_manual_rois=filter_missing_manual_rois,
             )
         )
@@ -336,10 +349,26 @@ def _has_raw_suite2p_sessions(subject_dir: Path, *, plane_name: str) -> bool:
 
 
 def _link_raw_suite2p_sessions(
-    raw_subject: Path, prepared_subject: Path, *, plane_name: str
+    raw_subject: Path,
+    prepared_subject: Path,
+    *,
+    plane_name: str,
+    session_names: Sequence[str] | None = None,
 ) -> None:
     linked = False
-    for session_dir in find_track2p_session_dirs(raw_subject):
+    raw_session_dirs = find_track2p_session_dirs(raw_subject)
+    if session_names is None:
+        session_dirs = raw_session_dirs
+    else:
+        raw_session_by_name = {
+            session_dir.name: session_dir for session_dir in raw_session_dirs
+        }
+        session_dirs = [
+            raw_session_by_name[session_name]
+            for session_name in session_names
+            if session_name in raw_session_by_name
+        ]
+    for session_dir in session_dirs:
         if not (session_dir / "suite2p" / plane_name / "stat.npy").is_file():
             continue
         _link_path(session_dir, prepared_subject / session_dir.name)
@@ -350,11 +379,23 @@ def _link_raw_suite2p_sessions(
         )
 
 
+def _track2p_bridge_session_names(
+    subject_dir: Path,
+    *,
+    plane_name: str,
+) -> tuple[str, ...] | None:
+    track2p_dir = subject_dir / "track2p"
+    if not track2p_dir.exists():
+        return None
+    return load_track2p_reference(track2p_dir, plane_name=plane_name).session_names
+
+
 def _validate_prepared_subject(
     subject_dir: Path,
     *,
     plane_name: str,
     require_track2p_suite2p_indices: bool,
+    require_suite2p_ops_meanimg: bool,
     filter_missing_manual_rois: bool,
 ) -> tuple[list[str], list[RawBenchmarkDiagnostic], int]:
     config = Track2pBenchmarkConfig(
@@ -374,6 +415,14 @@ def _validate_prepared_subject(
     incompatibilities: list[str] = []
     diagnostics: list[RawBenchmarkDiagnostic] = []
     removed_manual_gt_tracks = 0
+    if require_suite2p_ops_meanimg:
+        incompatibilities.extend(
+            _suite2p_mean_image_incompatibilities(
+                subject_dir,
+                sessions,
+                plane_name=plane_name,
+            )
+        )
 
     if filter_missing_manual_rois:
         ground_truth, removed_manual_gt_tracks = _filter_reference_to_loaded_rois(
@@ -399,9 +448,7 @@ def _validate_prepared_subject(
                 f"Track2p reference source is {track2p_reference.source}, not track2p_output_suite2p_indices"
             )
     elif require_track2p_suite2p_indices:
-        incompatibilities.append(
-            f"Missing track2p/{plane_name}_suite2p_indices.npy"
-        )
+        incompatibilities.append(f"Missing track2p/{plane_name}_suite2p_indices.npy")
 
     for source, reference in references:
         source_incompatibilities, source_diagnostics = _reference_coverage_diagnostics(
@@ -422,6 +469,46 @@ def _validate_prepared_subject(
     return incompatibilities, diagnostics, removed_manual_gt_tracks
 
 
+def _suite2p_mean_image_incompatibilities(
+    subject_dir: Path,
+    sessions: Sequence,
+    *,
+    plane_name: str,
+) -> list[str]:
+    incompatibilities: list[str] = []
+    for session in sessions:
+        plane_dir = subject_dir / session.session_name / "suite2p" / plane_name
+        ops_path = plane_dir / "ops.npy"
+        if not ops_path.is_file():
+            incompatibilities.append(
+                f"{session.session_name} missing suite2p/{plane_name}/ops.npy; "
+                "FOV registration would use ROI-mask occupancy fallback"
+            )
+            continue
+        ops = session.plane_data.ops
+        mean_image = None if ops is None else ops.get("meanImg")
+        if mean_image is None:
+            incompatibilities.append(
+                f"{session.session_name} ops.npy lacks meanImg; "
+                "FOV registration would use ROI-mask occupancy fallback"
+            )
+            continue
+        mean_image_array = np.asarray(mean_image)
+        if mean_image_array.ndim != 2:
+            incompatibilities.append(
+                f"{session.session_name} ops.npy meanImg has shape "
+                f"{mean_image_array.shape!r}, not a 2-D FOV image"
+            )
+            continue
+        if mean_image_array.shape != session.plane_data.image_shape:
+            incompatibilities.append(
+                f"{session.session_name} ops.npy meanImg shape "
+                f"{mean_image_array.shape!r} does not match ROI mask shape "
+                f"{session.plane_data.image_shape!r}"
+            )
+    return incompatibilities
+
+
 def _filter_reference_to_loaded_rois(
     reference: Track2pReference,
     sessions: Sequence,
@@ -438,9 +525,10 @@ def _filter_reference_to_loaded_rois(
     keep = np.ones((reference.n_tracks,), dtype=bool)
     for row_index, row in enumerate(reference.suite2p_indices):
         for session_index, value in enumerate(row):
-            if value is not None and int(value) not in available_by_session[
-                session_index
-            ]:
+            if (
+                value is not None
+                and int(value) not in available_by_session[session_index]
+            ):
                 keep[row_index] = False
                 break
 
@@ -580,6 +668,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--require-suite2p-ops-meanimg",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Require suite2p/<plane>/ops.npy with a meanImg FOV for every raw "
+            "session. This prevents FOV registration from silently using ROI-mask "
+            "occupancy as the image."
+        ),
+    )
+    parser.add_argument(
         "--filter-missing-manual-rois",
         action="store_true",
         help=(
@@ -601,6 +699,7 @@ def main(argv: list[str] | None = None) -> int:
         min_subjects=args.min_subjects,
         diagnostics_dir=args.diagnostics_dir,
         require_track2p_suite2p_indices=args.require_track2p_suite2p_indices,
+        require_suite2p_ops_meanimg=args.require_suite2p_ops_meanimg,
         filter_missing_manual_rois=args.filter_missing_manual_rois,
     )
     outputs = preparation.to_outputs()
