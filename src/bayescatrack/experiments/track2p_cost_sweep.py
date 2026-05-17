@@ -9,6 +9,7 @@ import sys
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from bayescatrack.association.pyrecest_global_assignment import (
@@ -16,6 +17,7 @@ from bayescatrack.association.pyrecest_global_assignment import (
     build_registered_pairwise_costs,
     tracks_to_suite2p_index_matrix,
 )
+from bayescatrack.core.bridge import CalciumPlaneData
 from bayescatrack.experiments.track2p_benchmark import (
     GROUND_TRUTH_REFERENCE_SOURCE,
     ProgressReporter,
@@ -28,6 +30,9 @@ from bayescatrack.experiments.track2p_benchmark import (
     _validate_reference_roi_indices,
     _variant_name,
     discover_subject_dirs,
+)
+from bayescatrack.experiments.track2p_fov_affine_benchmark import (
+    _soft_iou_pairwise_cost_matrix,
 )
 
 # pylint: disable=protected-access,too-many-locals
@@ -108,17 +113,7 @@ def iter_track2p_cost_sweep(
         if reference.source == GROUND_TRUTH_REFERENCE_SOURCE:
             _validate_reference_roi_indices(reference, sessions)
 
-        base_costs = build_registered_pairwise_costs(
-            sessions,
-            max_gap=benchmark.max_gap,
-            cost=benchmark.cost,
-            transform_type=benchmark.transform_type,
-            order=benchmark.order,
-            weighted_centroids=benchmark.weighted_centroids,
-            velocity_variance=benchmark.velocity_variance,
-            regularization=benchmark.regularization,
-            pairwise_cost_kwargs=benchmark.pairwise_cost_kwargs,
-        )
+        base_costs = _build_sweep_pairwise_costs(sessions, benchmark)
         session_sizes = tuple(int(session.plane_data.n_rois) for session in sessions)
 
         for run in runs:
@@ -159,6 +154,43 @@ def iter_track2p_cost_sweep(
                 n_sessions=reference.n_sessions,
                 reference_source=reference.source,
             )
+
+
+def _build_sweep_pairwise_costs(
+    sessions: Sequence[Any],
+    benchmark: Track2pBenchmarkConfig,
+) -> dict[tuple[int, int], np.ndarray]:
+    original_pairwise_cost = CalciumPlaneData.build_pairwise_cost_matrix
+
+    def _patched_pairwise_cost(
+        self: CalciumPlaneData,
+        other: CalciumPlaneData,
+        **kwargs: Any,
+    ) -> np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]:
+        return _soft_iou_pairwise_cost_matrix(
+            original_pairwise_cost,
+            self,
+            other,
+            **kwargs,
+        )
+
+    if benchmark.cost == "registered-iou":
+        CalciumPlaneData.build_pairwise_cost_matrix = _patched_pairwise_cost  # type: ignore[method-assign]
+    try:
+        return build_registered_pairwise_costs(
+            sessions,
+            max_gap=benchmark.max_gap,
+            cost=benchmark.cost,
+            transform_type=benchmark.transform_type,
+            order=benchmark.order,
+            weighted_centroids=benchmark.weighted_centroids,
+            velocity_variance=benchmark.velocity_variance,
+            regularization=benchmark.regularization,
+            pairwise_cost_kwargs=benchmark.pairwise_cost_kwargs,
+        )
+    finally:
+        if benchmark.cost == "registered-iou":
+            CalciumPlaneData.build_pairwise_cost_matrix = original_pairwise_cost  # type: ignore[method-assign]
 
 
 def _sweep_runs(
@@ -297,7 +329,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
+        choices=("affine", "rigid", "fov-affine", "fov-translation", "none"),
     )
     parser.add_argument("--start-cost", type=float, default=5.0)
     parser.add_argument("--end-cost", type=float, default=5.0)
