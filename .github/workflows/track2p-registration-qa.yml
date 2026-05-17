@@ -40,6 +40,16 @@ on:
         type: boolean
         default: false
         required: true
+      run_registered_iou:
+        description: "Run registered-IoU edge diagnostics"
+        type: boolean
+        default: true
+        required: true
+      run_roi_aware:
+        description: "Run ROI-aware edge diagnostics"
+        type: boolean
+        default: true
+        required: true
       exclude_subjects:
         description: "Comma-separated manual-GT subjects to exclude"
         type: string
@@ -135,6 +145,7 @@ jobs:
         run: cat results/raw_suite2p_roi_diagnostics.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run registered-IoU registration QA
+        if: ${{ inputs.run_registered_iou }}
         env:
           MAX_GAP: ${{ inputs.max_gap }}
           COST_THRESHOLD: ${{ inputs.cost_threshold }}
@@ -157,6 +168,7 @@ jobs:
             --backend-audit-table-output "results/registration_backend_audit_registered_iou_gap${MAX_GAP}.md"
 
       - name: Run ROI-aware registration QA
+        if: ${{ inputs.run_roi_aware }}
         env:
           MAX_GAP: ${{ inputs.max_gap }}
           COST_THRESHOLD: ${{ inputs.cost_threshold }}
