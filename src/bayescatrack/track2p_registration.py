@@ -16,11 +16,12 @@ from bayescatrack import (
 )
 
 
-RegistrationTransform = Literal["affine", "rigid", "fov-translation", "none"]
+RegistrationTransform = Literal["affine", "rigid", "fov-translation", "fov-affine", "none"]
 REGISTRATION_TRANSFORM_TYPES: tuple[RegistrationTransform, ...] = (
     "affine",
     "rigid",
     "fov-translation",
+    "fov-affine",
     "none",
 )
 
@@ -55,7 +56,8 @@ def _load_track2p_registration_backend() -> tuple[Any, Any]:
             "transform_type='rigid', or use transform_type='affine' to fall back "
             "to BayesCaTrack's NumPy FOV-affine registration when Track2p is "
             "unavailable. Request transform_type='fov-translation' explicitly "
-            "for the integer phase-correlation fallback."
+            "for the integer phase-correlation fallback, or transform_type='fov-affine' "
+            "for the NumPy FOV-affine fallback."
         ) from exc
     return reg_img_elastix, itk_reg_all_roi
 
@@ -127,6 +129,8 @@ def register_plane_pair(
         raise ValueError("Both planes must provide FOV images for registration.")
     if transform_type == "fov-translation":
         return _fov_translation_registered_plane(reference_plane, moving_plane)
+    if transform_type == "fov-affine":
+        return _fov_affine_registered_plane(reference_plane, moving_plane)
 
     try:
         reg_img_elastix, itk_reg_all_roi = _load_track2p_registration_backend()
