@@ -15,7 +15,9 @@ from bayescatrack.track2p_registration import register_plane_pair
 def _spot_image(shape: tuple[int, int], centers: tuple[tuple[int, int], ...]) -> np.ndarray:
     image = np.zeros(shape, dtype=float)
     for y, x in centers:
-        image[y - 1:y + 2, x - 1:x + 2] = 1.0
+        y0, y1 = y - 1, y + 2
+        x0, x1 = x - 1, x + 2
+        image[y0:y1, x0:x1] = 1.0
     return image
 
 

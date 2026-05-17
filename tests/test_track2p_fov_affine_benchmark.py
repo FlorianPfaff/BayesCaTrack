@@ -1,3 +1,7 @@
+"""Tests for the FOV-affine Track2p benchmark wrapper."""
+
+# pylint: disable=protected-access
+
 import numpy as np
 import numpy.testing as npt
 
