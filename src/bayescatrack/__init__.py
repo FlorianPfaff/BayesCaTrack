@@ -16,6 +16,22 @@ def _install_registration_transform_argparse_patch() -> None:
     if getattr(current_add_argument, patch_flag, False):
         return
 
+    transform_choices = (
+        "affine",
+        "rigid",
+        "fov-translation",
+        "fov-affine",
+        "bspline",
+        "b-spline",
+        "thin-plate-spline",
+        "tps",
+        "landmark-tps",
+        "local-affine-grid",
+        "optical-flow",
+        "gt-affine-oracle",
+        "none",
+    )
+
     def _bayescatrack_add_argument(self, *name_or_flags, **kwargs):
         if "--transform-type" in name_or_flags:
             choices = kwargs.get("choices")
@@ -23,23 +39,19 @@ def _install_registration_transform_argparse_patch() -> None:
                 choices_tuple = tuple(choices) if choices is not None else ()
             except TypeError:
                 choices_tuple = ()
-            if "fov-translation" not in choices_tuple and set(choices_tuple) == {
-                "affine",
-                "rigid",
-                "none",
-            }:
-                ordered_choices = tuple(
-                    value for value in choices_tuple if value != "none"
+            if choices_tuple:
+                allowed = tuple(
+                    value for value in transform_choices if value in choices_tuple or value != "gt-affine-oracle"
                 )
-                kwargs = {
-                    **kwargs,
-                    "choices": (*ordered_choices, "fov-translation", "none"),
-                }
-                help_text = kwargs.get("help")
-                if isinstance(help_text, str) and "fov-translation" not in help_text:
-                    kwargs["help"] = (
-                        f"{help_text}; use fov-translation for BayesCaTrack FOV translation"
-                    )
+                if "gt-affine-oracle" in choices_tuple:
+                    allowed = tuple(value for value in transform_choices if value in {*choices_tuple, *transform_choices})
+                kwargs = {**kwargs, "choices": allowed}
+            help_text = kwargs.get("help")
+            if isinstance(help_text, str) and "bspline" not in help_text:
+                kwargs["help"] = (
+                    f"{help_text}; supports fov-affine and nonrigid growth-aware transforms "
+                    "bspline, tps, local-affine-grid, and optical-flow"
+                )
         return current_add_argument(self, *name_or_flags, **kwargs)
 
     setattr(_bayescatrack_add_argument, patch_flag, True)
