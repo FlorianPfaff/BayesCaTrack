@@ -81,7 +81,9 @@ def test_register_plane_pair_affine_rigid_do_not_fall_back_to_fov_translation(
     def _missing_backend():
         raise ImportError("missing test backend")
 
-    monkeypatch.setattr(registration, "_load_track2p_registration_backend", _missing_backend)
+    monkeypatch.setattr(
+        registration, "_load_track2p_registration_backend", _missing_backend
+    )
 
     with pytest.raises(ImportError, match="missing test backend"):
         register_plane_pair(

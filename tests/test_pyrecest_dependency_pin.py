@@ -4,7 +4,6 @@ from pathlib import Path
 
 from bayescatrack.dependency_pins import PYRECEST_COMMIT, PYRECEST_DIRECT_URL
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -16,9 +15,9 @@ def test_pyproject_pins_pyrecest_to_exact_commit() -> None:
 
 
 def test_ci_does_not_override_pyrecest_pin() -> None:
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "bayescatrack-ci.yml").read_text(
-        encoding="utf-8"
-    )
+    workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "bayescatrack-ci.yml"
+    ).read_text(encoding="utf-8")
 
     assert "--force-reinstall --no-deps" not in workflow
     assert "PyRecEst.git@main" not in workflow

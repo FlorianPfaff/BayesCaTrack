@@ -266,7 +266,9 @@ def build_track_rows_from_matches(
 
         current_roi = int(start_roi)
         for match_index in range(start_session_index - 1, -1, -1):
-            previous_roi = int(reverse_matches[match_index].get(current_roi, fill_value))
+            previous_roi = int(
+                reverse_matches[match_index].get(current_roi, fill_value)
+            )
             track_rows[row_index, match_index] = previous_roi
             if previous_roi == fill_value:
                 break
@@ -299,7 +301,9 @@ def build_track_rows_from_bundles(
     )
     session_names = _session_names_from_bundles(bundles)
     if start_roi_indices is None:
-        start_roi_indices = _bundle_roi_indices_for_session(bundles, start_session_index)
+        start_roi_indices = _bundle_roi_indices_for_session(
+            bundles, start_session_index
+        )
     track_rows = build_track_rows_from_matches(
         session_names,
         match_results,

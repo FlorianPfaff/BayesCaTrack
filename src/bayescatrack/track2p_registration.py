@@ -15,7 +15,6 @@ from bayescatrack import (
     load_track2p_subject,
 )
 
-
 RegistrationTransform = Literal["affine", "rigid", "fov-translation", "none"]
 REGISTRATION_TRANSFORM_TYPES: tuple[RegistrationTransform, ...] = (
     "affine",

@@ -131,9 +131,7 @@ def _loso_config(tmp_path, *, allow_smoke_reference=False):
     )
 
 
-def _prepare_loso_fixture(
-    tmp_path, monkeypatch, subject_writer
-):
+def _prepare_loso_fixture(tmp_path, monkeypatch, subject_writer):
     for subject_name in ("jm001", "jm002"):
         subject_writer(tmp_path / subject_name)
 

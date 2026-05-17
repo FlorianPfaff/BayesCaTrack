@@ -150,7 +150,9 @@ def run_track2p_loso_calibration(
             held_out_subject=held_out.subject_name,
         )
         weights = _training_sample_weight(
-            training_labels, sample_weight=sample_weight, strategy=sample_weight_strategy
+            training_labels,
+            sample_weight=sample_weight,
+            strategy=sample_weight_strategy,
         )
         progress.step(f"fitting model for {held_out.subject_name}")
         calibrated_model = fit_logistic_association_model(

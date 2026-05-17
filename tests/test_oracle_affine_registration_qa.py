@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import numpy as np
-
 from bayescatrack.experiments.oracle_affine_registration_qa import (
     _fit_affine_xy,
     _warp_masks_by_affine_xy,

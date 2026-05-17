@@ -12,17 +12,22 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-
-from bayescatrack.core.bridge import CalciumPlaneData
 from bayescatrack.association.pyrecest_global_assignment import session_edge_pairs
+from bayescatrack.core.bridge import CalciumPlaneData
 from bayescatrack.experiments.registration_qa_report import (
     RegistrationQAConfig,
     _benchmark_config,
+)
+from bayescatrack.experiments.registration_qa_report import (
     _config_from_args as _registration_config_from_args,
+)
+from bayescatrack.experiments.registration_qa_report import (
     _csv_fieldnames,
     _format_value,
     _linked_source_rois,
     _roi_lookup,
+)
+from bayescatrack.experiments.registration_qa_report import (
     build_arg_parser as _registration_qa_arg_parser,
 )
 from bayescatrack.experiments.track2p_benchmark import (

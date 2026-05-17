@@ -824,7 +824,9 @@ def _filter_tracks_by_seed_rois(
     return predicted_matrix[np.asarray(keep, dtype=bool)]
 
 
-def _reference_seed_roi_set(reference_matrix: np.ndarray, *, seed_session: int) -> set[int]:
+def _reference_seed_roi_set(
+    reference_matrix: np.ndarray, *, seed_session: int
+) -> set[int]:
     if seed_session < 0 or seed_session >= reference_matrix.shape[1]:
         raise IndexError(
             f"seed_session {seed_session} out of bounds for {reference_matrix.shape[1]} sessions"
