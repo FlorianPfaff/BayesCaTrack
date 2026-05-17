@@ -14,14 +14,32 @@ from bayescatrack import (
     build_consecutive_session_association_bundles,
     load_track2p_subject,
 )
+from bayescatrack.nonrigid_registration import (
+    NONRIGID_REGISTRATION_TRANSFORM_TYPES,
+    register_measurement_plane_by_nonrigid_fov,
+)
 
 
-RegistrationTransform = Literal["affine", "rigid", "fov-translation", "fov-affine", "none"]
-REGISTRATION_TRANSFORM_TYPES: tuple[RegistrationTransform, ...] = (
+RegistrationTransform = Literal[
     "affine",
     "rigid",
     "fov-translation",
     "fov-affine",
+    "bspline",
+    "b-spline",
+    "thin-plate-spline",
+    "tps",
+    "landmark-tps",
+    "local-affine-grid",
+    "optical-flow",
+    "none",
+]
+REGISTRATION_TRANSFORM_TYPES: tuple[str, ...] = (
+    "affine",
+    "rigid",
+    "fov-translation",
+    "fov-affine",
+    *NONRIGID_REGISTRATION_TRANSFORM_TYPES,
     "none",
 )
 
@@ -56,8 +74,9 @@ def _load_track2p_registration_backend() -> tuple[Any, Any]:
             "transform_type='rigid', or use transform_type='affine' to fall back "
             "to BayesCaTrack's NumPy FOV-affine registration when Track2p is "
             "unavailable. Request transform_type='fov-translation' explicitly "
-            "for the integer phase-correlation fallback, or transform_type='fov-affine' "
-            "for the NumPy FOV-affine fallback."
+            "for the integer phase-correlation fallback, transform_type='fov-affine' "
+            "for the NumPy FOV-affine fallback, or a nonrigid transform such as "
+            "'bspline', 'tps', 'local-affine-grid', or 'optical-flow' for growth-aware registration."
         ) from exc
     return reg_img_elastix, itk_reg_all_roi
 
@@ -112,6 +131,19 @@ def _fov_affine_registered_plane(
     ).registered_measurement_plane
 
 
+def _nonrigid_registered_plane(
+    reference_plane: CalciumPlaneData,
+    moving_plane: CalciumPlaneData,
+    *,
+    transform_type: str,
+) -> CalciumPlaneData:
+    return register_measurement_plane_by_nonrigid_fov(
+        reference_plane,
+        moving_plane,
+        transform_type=transform_type,
+    ).registered_measurement_plane
+
+
 def register_plane_pair(
     reference_plane: CalciumPlaneData,
     moving_plane: CalciumPlaneData,
@@ -131,6 +163,12 @@ def register_plane_pair(
         return _fov_translation_registered_plane(reference_plane, moving_plane)
     if transform_type == "fov-affine":
         return _fov_affine_registered_plane(reference_plane, moving_plane)
+    if transform_type in NONRIGID_REGISTRATION_TRANSFORM_TYPES:
+        return _nonrigid_registered_plane(
+            reference_plane,
+            moving_plane,
+            transform_type=transform_type,
+        )
 
     try:
         reg_img_elastix, itk_reg_all_roi = _load_track2p_registration_backend()
