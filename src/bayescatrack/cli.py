@@ -59,6 +59,10 @@ def _handle_benchmark(args: list[str]) -> int:
             help="Report registration quality on manual-GT Track2p links",
         )
         subparsers.add_parser(
+            "oracle-affine-qa",
+            help="Compare baseline registration to manual-GT oracle affine geometry",
+        )
+        subparsers.add_parser(
             "validate-track2p-inputs",
             help="Validate manual-GT ROI coverage before Track2p benchmarks",
         )
@@ -95,6 +99,12 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_registration_qa_main(args[1:]))
+    if args[0] == "oracle-affine-qa":
+        from bayescatrack.experiments.oracle_affine_registration_qa import (
+            main as _oracle_affine_qa_main,
+        )
+
+        return int(_oracle_affine_qa_main(args[1:]))
     if args[0] == "validate-track2p-inputs":
         from bayescatrack.experiments.track2p_input_validator import (
             main as _track2p_input_validator_main,
