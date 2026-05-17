@@ -119,11 +119,60 @@ def _pairwise_dilated_iou_matrix(
     *,
     radius: int,
 ) -> np.ndarray:
-    from bayescatrack.core import _bridge_impl  # pylint: disable=import-outside-toplevel,protected-access
-
     reference_dilated = _dilate_mask_stack(reference_masks, radius=radius)
     measurement_dilated = _dilate_mask_stack(measurement_masks, radius=radius)
-    return _bridge_impl._pairwise_iou_matrix(reference_dilated, measurement_dilated)  # pylint: disable=protected-access
+    return _pairwise_iou_matrix_sparse(reference_dilated, measurement_dilated)
+
+
+def _pairwise_iou_matrix_sparse(
+    reference_masks: np.ndarray,
+    measurement_masks: np.ndarray,
+) -> np.ndarray:
+    try:
+        from scipy import sparse  # type: ignore[import-not-found]  # pylint: disable=import-outside-toplevel
+    except ImportError:  # pragma: no cover - SciPy is available in benchmark environments.
+        from bayescatrack.core import _bridge_impl  # pylint: disable=import-outside-toplevel,protected-access
+
+        return _bridge_impl._pairwise_iou_matrix(reference_masks, measurement_masks)  # pylint: disable=protected-access
+
+    reference_array = np.asarray(reference_masks) > 0
+    measurement_array = np.asarray(measurement_masks) > 0
+    if reference_array.shape[1:] != measurement_array.shape[1:]:
+        raise ValueError("Mask stacks must have matching spatial shapes")
+
+    n_reference = int(reference_array.shape[0])
+    n_measurement = int(measurement_array.shape[0])
+    if n_reference == 0 or n_measurement == 0:
+        return np.zeros((n_reference, n_measurement), dtype=float)
+
+    reference_flat = reference_array.reshape(n_reference, -1)
+    measurement_flat = measurement_array.reshape(n_measurement, -1)
+    reference_roi, reference_pixel = np.nonzero(reference_flat)
+    measurement_roi, measurement_pixel = np.nonzero(measurement_flat)
+    reference_sparse = sparse.csr_matrix(
+        (
+            np.ones(reference_roi.shape[0], dtype=np.float32),
+            (reference_roi, reference_pixel),
+        ),
+        shape=reference_flat.shape,
+        dtype=np.float32,
+    )
+    measurement_sparse = sparse.csr_matrix(
+        (
+            np.ones(measurement_roi.shape[0], dtype=np.float32),
+            (measurement_roi, measurement_pixel),
+        ),
+        shape=measurement_flat.shape,
+        dtype=np.float32,
+    )
+    intersections = (reference_sparse @ measurement_sparse.T).toarray()
+    reference_areas = np.asarray(reference_sparse.sum(axis=1)).ravel()
+    measurement_areas = np.asarray(measurement_sparse.sum(axis=1)).ravel()
+    unions = reference_areas[:, None] + measurement_areas[None, :] - intersections
+    iou = np.zeros_like(intersections, dtype=float)
+    valid = unions > 0.0
+    iou[valid] = intersections[valid] / unions[valid]
+    return iou
 
 
 def _dilate_mask_stack(masks: np.ndarray, *, radius: int) -> np.ndarray:
