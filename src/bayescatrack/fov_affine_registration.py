@@ -16,6 +16,7 @@ class FovAffineEstimate:
     tile_measurement_xy: np.ndarray
     tile_shift_yx: np.ndarray
     tile_peak_correlation: np.ndarray
+    tile_residual_norm: np.ndarray
     fit_rmse: float
     fallback_translation: bool = False
 
