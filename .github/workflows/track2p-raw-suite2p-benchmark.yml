@@ -151,8 +151,21 @@ jobs:
           SOFT_IOU_RADII: ${{ inputs.soft_iou_radii }}
         run: |
           set -euo pipefail
+          python -m bayescatrack.experiments.track2p_fov_affine_benchmark \
+            --data benchmark-raw-suite2p-subjects \
+            --reference benchmark-raw-suite2p-subjects \
+            --reference-kind manual-gt \
+            --input-format suite2p \
+            --include-non-cells \
+            --no-include-behavior \
+            --method global-assignment \
+            --cost registered-iou \
+            --max-gap "$MAX_GAP" \
+            --format csv \
+            --output "results/global_registered_iou_fov_affine_gap${MAX_GAP}.csv"
+
           IFS=',' read -ra radii <<< "$SOFT_IOU_RADII"
-          compare_args=()
+          compare_args=(--input "FOV-affine-r0=results/global_registered_iou_fov_affine_gap${MAX_GAP}.csv")
           for radius in "${radii[@]}"; do
             radius="$(echo "$radius" | xargs)"
             if [[ -z "$radius" ]]; then
@@ -160,9 +173,9 @@ jobs:
             fi
             output="results/global_registered_iou_fov_affine_soft_iou_r${radius}_gap${MAX_GAP}.csv"
             python -m bayescatrack.experiments.track2p_fov_affine_benchmark \
-              --data "${{ steps.prep.outputs.data_root }}" \
-              --reference "${{ steps.prep.outputs.reference_root }}" \
-              --reference-kind "${{ steps.prep.outputs.reference_kind }}" \
+              --data benchmark-raw-suite2p-subjects \
+              --reference benchmark-raw-suite2p-subjects \
+              --reference-kind manual-gt \
               --input-format suite2p \
               --include-non-cells \
               --no-include-behavior \
@@ -172,10 +185,9 @@ jobs:
               --soft-iou-radius "$radius" \
               --format csv \
               --output "$output"
-            compare_args+=(--input "FOV-affine soft-r${radius}=${output}")
+            compare_args+=(--input "FOV-affine-soft-r${radius}=${output}")
           done
           bayescatrack benchmark compare "${compare_args[@]}" --output results/fov_affine_soft_iou_comparison.md
-          bayescatrack benchmark compare "${compare_args[@]}" --format csv --output results/fov_affine_soft_iou_comparison.csv
 
       - name: Run Track2p baseline
         if: ${{ !inputs.run_fov_affine_soft_iou_only }}
