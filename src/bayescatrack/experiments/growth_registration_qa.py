@@ -23,7 +23,6 @@ from bayescatrack.association.registered_masks import replace_empty_registered_m
 from bayescatrack.core.bridge import Track2pSession, build_session_pair_association_bundle
 from bayescatrack.experiments.oracle_affine_registration_qa import (
     OracleAffineFit,
-    _finite_median,
     _fit_affine_xy,
     _linked_iou,
     _manual_gt_links,
