@@ -52,6 +52,8 @@ def write_comparison(
     *,
     highlight_best: bool = False,
     include_best_summary: bool = False,
+    include_reference_gap_summary: bool = False,
+    reference_approach: str | None = None,
 ) -> None:
     """Write aggregate comparison rows as Markdown or CSV."""
 
@@ -65,6 +67,10 @@ def write_comparison(
     sections = []
     if include_best_summary:
         sections.append(format_best_summary(rows))
+    if include_reference_gap_summary:
+        sections.append(
+            format_reference_gap_summary(rows, reference_approach=reference_approach)
+        )
     sections.append(format_markdown_table(rows, highlight_best=highlight_best))
     output_path.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
 
@@ -126,6 +132,42 @@ def format_best_summary(rows: Sequence[dict[str, float | int | str]]) -> str:
     return "\n".join(body)
 
 
+def format_reference_gap_summary(
+    rows: Sequence[dict[str, float | int | str]],
+    *,
+    reference_approach: str | None,
+) -> str:
+    """Format a Markdown table comparing the best non-reference row to a baseline."""
+
+    reference = _reference_row(rows, reference_approach=reference_approach)
+    competitors = tuple(row for row in rows if row is not reference)
+    if not competitors:
+        raise ValueError("At least one non-reference approach is required")
+
+    reference_name = str(reference["approach"])
+    body = [
+        f"### Gap to {reference_name}",
+        "",
+        (
+            "| metric | "
+            f"{reference_name} | best non-reference approach | best non-reference value | gap |"
+        ),
+        "| --- | ---: | --- | ---: | ---: |",
+    ]
+    for column in _best_metric_columns():
+        reference_value = _as_float(reference[column])
+        competitor_names, competitor_value = _best_competitor_rows(competitors, column)
+        body.append(
+            "| "
+            f"{_best_metric_headers()[column]} | "
+            f"{_format_value(reference_value)} | "
+            f"{', '.join(competitor_names)} | "
+            f"{_format_value(competitor_value)} | "
+            f"{_format_delta(competitor_value - reference_value)} |"
+        )
+    return "\n".join(body)
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the comparison-table CLI parser."""
 
@@ -162,6 +204,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Prepend a Markdown summary naming the best approach for each metric",
     )
+    parser.add_argument(
+        "--include-reference-gap-summary",
+        action="store_true",
+        help="Prepend a Markdown summary of the best non-reference approach gap",
+    )
+    parser.add_argument(
+        "--reference-approach",
+        default=None,
+        help="Approach label used as the reference baseline in gap summaries",
+    )
     return parser
 
 
@@ -179,6 +231,8 @@ def main(argv: list[str] | None = None) -> int:
             args.format,
             highlight_best=args.highlight_best,
             include_best_summary=args.include_best_summary,
+            include_reference_gap_summary=args.include_reference_gap_summary,
+            reference_approach=args.reference_approach,
         )
     elif args.format == "csv":
         writer = csv.DictWriter(sys.stdout, fieldnames=_aggregate_columns())
@@ -188,6 +242,12 @@ def main(argv: list[str] | None = None) -> int:
         sections = []
         if args.include_best_summary:
             sections.append(format_best_summary(rows))
+        if args.include_reference_gap_summary:
+            sections.append(
+                format_reference_gap_summary(
+                    rows, reference_approach=args.reference_approach
+                )
+            )
         sections.append(format_markdown_table(rows, highlight_best=args.highlight_best))
         print("\n\n".join(sections))
     return 0
@@ -317,6 +377,38 @@ def _compute_best_rows(
     }
 
 
+def _reference_row(
+    rows: Sequence[dict[str, float | int | str]],
+    *,
+    reference_approach: str | None,
+) -> dict[str, float | int | str]:
+    if not rows:
+        raise ValueError("At least one aggregate row is required")
+    if reference_approach is None:
+        return rows[0]
+    matches = [row for row in rows if str(row["approach"]) == reference_approach]
+    if not matches:
+        available = ", ".join(str(row["approach"]) for row in rows)
+        raise ValueError(
+            f"Reference approach {reference_approach!r} not found; available: {available}"
+        )
+    return matches[0]
+
+
+def _best_competitor_rows(
+    rows: Sequence[dict[str, float | int | str]], column: str
+) -> tuple[tuple[str, ...], float]:
+    value = max(_as_float(row[column]) for row in rows)
+    return (
+        tuple(
+            str(row["approach"])
+            for row in rows
+            if _value_is_best(_as_float(row[column]), value)
+        ),
+        value,
+    )
+
+
 def _value_is_best(actual: float, expected: float) -> bool:
     return abs(actual - expected) < 1e-12
 
@@ -329,6 +421,10 @@ def _format_value(value: float | int | str, *, bold: bool = False) -> str:
     else:
         formatted = str(value)
     return f"**{formatted}**" if bold else formatted
+
+
+def _format_delta(value: float) -> str:
+    return f"{value:+.3f}"
 
 
 def _as_float(value: float | int | str) -> float:

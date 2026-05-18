@@ -8,6 +8,7 @@ from bayescatrack.experiments.benchmark_comparison import (
     aggregate_rows,
     format_best_summary,
     format_markdown_table,
+    format_reference_gap_summary,
     load_labeled_rows,
 )
 
@@ -134,3 +135,44 @@ def test_best_summary_names_best_approach_for_main_metrics():
     assert "### Best by Metric" in summary
     assert "| pairwise F1 mean | Tuned | 0.800 |" in summary
     assert "| complete-track F1 micro | Tuned | 0.880 |" in summary
+
+
+def test_reference_gap_summary_reports_best_non_reference_gap():
+    rows = [
+        {
+            "approach": "Track2p",
+            "subjects": 2,
+            "pairwise_f1_macro": 0.95,
+            "pairwise_f1_sd": 0.01,
+            "pairwise_f1_micro": 0.96,
+            "complete_track_f1_macro": 0.90,
+            "complete_track_f1_sd": 0.03,
+            "complete_track_f1_micro": 0.91,
+        },
+        {
+            "approach": "Global-IoU",
+            "subjects": 2,
+            "pairwise_f1_macro": 0.55,
+            "pairwise_f1_sd": 0.02,
+            "pairwise_f1_micro": 0.56,
+            "complete_track_f1_macro": 0.20,
+            "complete_track_f1_sd": 0.04,
+            "complete_track_f1_micro": 0.22,
+        },
+        {
+            "approach": "Tuned",
+            "subjects": 2,
+            "pairwise_f1_macro": 0.70,
+            "pairwise_f1_sd": 0.02,
+            "pairwise_f1_micro": 0.72,
+            "complete_track_f1_macro": 0.60,
+            "complete_track_f1_sd": 0.04,
+            "complete_track_f1_micro": 0.62,
+        },
+    ]
+
+    summary = format_reference_gap_summary(rows, reference_approach="Track2p")
+
+    assert "### Gap to Track2p" in summary
+    assert "| pairwise F1 mean | 0.950 | Tuned | 0.700 | -0.250 |" in summary
+    assert "| complete-track F1 micro | 0.910 | Tuned | 0.620 | -0.290 |" in summary

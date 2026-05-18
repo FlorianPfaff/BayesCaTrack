@@ -427,7 +427,7 @@ jobs:
           if [[ "$RUN_MONOTONE_LOSO" == "true" ]]; then
             args+=(--input "Monotone-LOSO=results/global_monotone_loso_gap${MAX_GAP}.csv")
           fi
-          bayescatrack benchmark compare "${args[@]}" --highlight-best --include-best-summary --output results/comparison.md
+          bayescatrack benchmark compare "${args[@]}" --highlight-best --include-best-summary --include-reference-gap-summary --reference-approach Track2p --output results/comparison.md
           bayescatrack benchmark compare "${args[@]}" --format csv --output results/comparison.csv
 
       - name: Add FOV-affine soft-IoU comparison to job summary
