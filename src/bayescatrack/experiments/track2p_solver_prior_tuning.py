@@ -19,7 +19,6 @@ from bayescatrack.association.pyrecest_global_assignment import (
     solve_global_assignment_from_pairwise_costs,
     tracks_to_suite2p_index_matrix,
 )
-from bayescatrack.evaluation.calibration_diagnostics import calibration_summary
 from bayescatrack.experiments.track2p_benchmark import (
     ProgressReporter,
     SubjectBenchmarkResult,
@@ -34,7 +33,7 @@ from bayescatrack.experiments.track2p_loso_calibration import (
     _collect_training_examples,
     _load_subject_calibration_data,
     _loso_logistic_model_kwargs,
-    _reference_training_options,
+    _score_holdout_calibration,
     _stringify_class_weight,
     _training_sample_weight,
     _validate_sample_weight_strategy,
@@ -125,7 +124,9 @@ def run_track2p_loso_solver_prior_tuning(
         )
     subject_dirs = tuple(discover_subject_dirs(config.data))
     if len(subject_dirs) < 2:
-        raise ValueError("LOSO solver-prior tuning requires at least two subject directories")
+        raise ValueError(
+            "LOSO solver-prior tuning requires at least two subject directories"
+        )
 
     feature_names = tuple(feature_names)
     sample_weight_strategy = _validate_sample_weight_strategy(sample_weight_strategy)
@@ -146,7 +147,9 @@ def run_track2p_loso_solver_prior_tuning(
 
     for held_out_index, held_out in enumerate(subject_data):
         training_subjects = tuple(
-            subject for index, subject in enumerate(subject_data) if index != held_out_index
+            subject
+            for index, subject in enumerate(subject_data)
+            if index != held_out_index
         )
         training_features, training_labels = _collect_training_examples(
             training_subjects,
@@ -156,7 +159,9 @@ def run_track2p_loso_solver_prior_tuning(
             held_out_subject=held_out.subject_name,
         )
         weights = _training_sample_weight(
-            training_labels, sample_weight=sample_weight, strategy=sample_weight_strategy
+            training_labels,
+            sample_weight=sample_weight,
+            strategy=sample_weight_strategy,
         )
         progress.step(f"fitting model for {held_out.subject_name}")
         calibrated_model = fit_logistic_association_model(
@@ -209,7 +214,9 @@ def run_track2p_loso_solver_prior_tuning(
         folds.append(
             LosoCalibrationFold(
                 held_out_subject=held_out.subject_name,
-                training_subjects=tuple(subject.subject_name for subject in training_subjects),
+                training_subjects=tuple(
+                    subject.subject_name for subject in training_subjects
+                ),
                 benchmark=SubjectBenchmarkResult(
                     subject=held_out.subject_name,
                     variant="Calibrated costs + LOSO tuned-prior global assignment",
@@ -238,7 +245,9 @@ def tune_solver_priors_for_training_subjects(
     """Tune global-assignment priors on LOSO training subjects only."""
 
     if not training_subjects:
-        raise ValueError("At least one training subject is required for solver-prior tuning")
+        raise ValueError(
+            "At least one training subject is required for solver-prior tuning"
+        )
 
     options = options or SolverPriorTuningOptions()
     candidates = _solver_prior_parameter_grid(config, options=options)
@@ -254,7 +263,9 @@ def tune_solver_priors_for_training_subjects(
 
     best: SolverPriorTuningResult | None = None
     for candidate in candidates:
-        mean_scores = _score_solver_prior_candidate(candidate, cached_subjects, config=config)
+        mean_scores = _score_solver_prior_candidate(
+            candidate, cached_subjects, config=config
+        )
         objective_value = float(mean_scores.get(options.objective, np.nan))
         if not np.isfinite(objective_value):
             continue
@@ -295,7 +306,9 @@ def _cache_solver_tuning_subject(
     return CachedSolverTuningSubject(
         subject=subject,
         pairwise_costs=pairwise_costs,
-        session_sizes=tuple(int(session.plane_data.n_rois) for session in subject.sessions),
+        session_sizes=tuple(
+            int(session.plane_data.n_rois) for session in subject.sessions
+        ),
         session_edges=session_edge_pairs(len(subject.sessions), max_gap=config.max_gap),
     )
 
@@ -354,26 +367,9 @@ def _solve_loso_assignment_with_priors(
     )
 
 
-def _score_holdout_calibration(
-    calibrated_model: Any,
-    held_out: SubjectCalibrationData,
-    *,
-    config: Track2pBenchmarkConfig,
-    feature_names: Sequence[str],
-) -> dict[str, float | int]:
-    features, labels = collect_reference_training_examples(
-        held_out.sessions,
-        held_out.reference,
-        session_edges=session_edge_pairs(len(held_out.sessions), max_gap=config.max_gap),
-        options=_reference_training_options(config, feature_names),
-    )
-    probabilities = np.asarray(
-        calibrated_model.model.predict_match_probability(features), dtype=float
-    ).reshape(-1)
-    return calibration_summary(probabilities, np.asarray(labels).reshape(-1))
-
-
-def _mean_numeric_scores(rows: Sequence[Mapping[str, float | int | str]]) -> dict[str, float]:
+def _mean_numeric_scores(
+    rows: Sequence[Mapping[str, float | int | str]],
+) -> dict[str, float]:
     values_by_key: dict[str, list[float]] = {}
     for row in rows:
         for key, value in row.items():
@@ -381,7 +377,9 @@ def _mean_numeric_scores(rows: Sequence[Mapping[str, float | int | str]]) -> dic
                 numeric_value = float(value)
                 if np.isfinite(numeric_value):
                     values_by_key.setdefault(key, []).append(numeric_value)
-    return {key: float(np.mean(values)) for key, values in values_by_key.items() if values}
+    return {
+        key: float(np.mean(values)) for key, values in values_by_key.items() if values
+    }
 
 
 def _solver_prior_parameter_grid(
@@ -432,7 +430,9 @@ def _solver_float_grid(
     positive: bool,
     name: str,
 ) -> tuple[float, ...]:
-    values = tuple(configured) if configured is not None else (*defaults, float(current))
+    values = (
+        tuple(configured) if configured is not None else (*defaults, float(current))
+    )
     values = _dedupe_float_values(values)
     if not values:
         raise ValueError(f"At least one {name} value is required")
@@ -457,7 +457,9 @@ def _solver_threshold_grid(
         raise ValueError("At least one solver prior cost threshold is required")
     for value in values:
         if value is not None and ((not np.isfinite(value)) or value < 0.0):
-            raise ValueError("solver prior cost thresholds must be non-negative finite numbers or none")
+            raise ValueError(
+                "solver prior cost thresholds must be non-negative finite numbers or none"
+            )
     return values
 
 
@@ -470,7 +472,9 @@ def _dedupe_float_values(values: Sequence[float]) -> tuple[float, ...]:
     return tuple(result)
 
 
-def _dedupe_threshold_values(values: Sequence[float | None]) -> tuple[float | None, ...]:
+def _dedupe_threshold_values(
+    values: Sequence[float | None],
+) -> tuple[float | None, ...]:
     result: list[float | None] = []
     for value in values:
         numeric_value = None if value is None else float(value)
