@@ -12,8 +12,8 @@ from typing import Any
 
 import numpy as np
 
+from bayescatrack.core import _bridge_impl
 from bayescatrack.core.bridge import CalciumPlaneData
-import bayescatrack.core._bridge_impl as _bridge_impl
 
 
 def registered_soft_iou_cost_kwargs(
@@ -195,9 +195,13 @@ def _install_cost_matrix_patch() -> None:
 def _install_global_assignment_preset() -> None:
     from bayescatrack.association import pyrecest_global_assignment as global_assignment
 
-    original = global_assignment._cost_kwargs_for_method
+    original = getattr(global_assignment, "_cost_kwargs_for_method")
     if getattr(original, "_bayescatrack_soft_overlap_patch", False):
-        global_assignment.registered_soft_iou_cost_kwargs = registered_soft_iou_cost_kwargs
+        setattr(
+            global_assignment,
+            "registered_soft_iou_cost_kwargs",
+            registered_soft_iou_cost_kwargs,
+        )
         return
 
     def _cost_kwargs_for_method_with_soft_overlap(cost: str) -> dict[str, Any]:
@@ -215,8 +219,16 @@ def _install_global_assignment_preset() -> None:
         "_bayescatrack_original",
         original,
     )
-    global_assignment._cost_kwargs_for_method = _cost_kwargs_for_method_with_soft_overlap
-    global_assignment.registered_soft_iou_cost_kwargs = registered_soft_iou_cost_kwargs
+    setattr(
+        global_assignment,
+        "_cost_kwargs_for_method",
+        _cost_kwargs_for_method_with_soft_overlap,
+    )
+    setattr(
+        global_assignment,
+        "registered_soft_iou_cost_kwargs",
+        registered_soft_iou_cost_kwargs,
+    )
 
 
 def _install_registration_qa_preset() -> None:
@@ -225,7 +237,7 @@ def _install_registration_qa_preset() -> None:
     except ImportError:  # pragma: no cover - optional CLI import path
         return
 
-    original = registration_qa_report._cost_kwargs
+    original = getattr(registration_qa_report, "_cost_kwargs")
     if getattr(original, "_bayescatrack_soft_overlap_patch", False):
         return
 
@@ -246,7 +258,11 @@ def _install_registration_qa_preset() -> None:
         "_bayescatrack_original",
         original,
     )
-    registration_qa_report._cost_kwargs = _registration_qa_cost_kwargs_with_soft_overlap
+    setattr(
+        registration_qa_report,
+        "_cost_kwargs",
+        _registration_qa_cost_kwargs_with_soft_overlap,
+    )
 
 
 def _pairwise_dilated_iou_matrix(
@@ -359,7 +375,9 @@ def _dilate_binary_mask_stack(masks: np.ndarray, radius: int) -> np.ndarray:
                 continue
             y_start = radius + offset_y
             x_start = radius + offset_x
-            dilated |= padded[:, y_start : y_start + height, x_start : x_start + width]
+            y_slice = slice(y_start, y_start + height)
+            x_slice = slice(x_start, x_start + width)
+            dilated |= padded[:, y_slice, x_slice]
     return dilated
 
 

@@ -22,6 +22,7 @@ from bayescatrack.association.pyrecest_global_assignment import (
 from bayescatrack.association.registered_masks import replace_empty_registered_masks
 from bayescatrack.core.bridge import Track2pSession, build_session_pair_association_bundle
 from bayescatrack.experiments.oracle_affine_registration_qa import (
+    ManualGTLink,
     OracleAffineFit,
     _fit_affine_xy,
     _linked_iou,
@@ -253,8 +254,8 @@ def _audit_subject(
             if len(links) < config.min_fit_links:
                 continue
             fit = _fit_affine_xy(
-                np.vstack([link[2] for link in links]),
-                np.vstack([link[3] for link in links]),
+                np.vstack([link.source_xy for link in links]),
+                np.vstack([link.target_xy for link in links]),
                 ridge=config.ridge,
                 require_full_rank=config.require_full_rank,
             )
@@ -289,15 +290,15 @@ def _edge_link_rows(
     target_index: int,
     source_session: Track2pSession,
     target_session: Track2pSession,
-    links: Sequence[tuple[int, int, np.ndarray, np.ndarray]],
+    links: Sequence[ManualGTLink],
     registered_plane: Any,
     fit: OracleAffineFit | None,
     config: GrowthRegistrationQAConfig,
 ) -> list[dict[str, Any]]:
-    source_locals = np.asarray([link[0] for link in links], dtype=int)
-    target_locals = np.asarray([link[1] for link in links], dtype=int)
-    source_xy = np.vstack([link[2] for link in links])
-    raw_target_xy = np.vstack([link[3] for link in links])
+    source_locals = np.asarray([link.source_local for link in links], dtype=int)
+    target_locals = np.asarray([link.target_local for link in links], dtype=int)
+    source_xy = np.vstack([link.source_xy for link in links])
+    raw_target_xy = np.vstack([link.target_xy for link in links])
     registered_xy_all = _mask_centroids_xy(registered_plane.roi_masks)
     registered_target_xy = registered_xy_all[target_locals]
     raw_iou = (
@@ -319,7 +320,9 @@ def _edge_link_rows(
 
     affine_values = _affine_summary(fit, source_session.plane_data.image_shape)
     rows: list[dict[str, Any]] = []
-    for link_index, (source_local, target_local, _, _) in enumerate(links):
+    for link_index, link in enumerate(links):
+        source_local = link.source_local
+        target_local = link.target_local
         cost_row = cost_matrix[source_local]
         gt_cost = float(cost_row[target_local])
         finite_costs = cost_row[np.isfinite(cost_row)]

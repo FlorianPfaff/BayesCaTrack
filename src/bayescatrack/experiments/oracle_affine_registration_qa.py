@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import sys
+from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,8 +14,8 @@ from typing import Any
 
 import numpy as np
 
-from bayescatrack.core.bridge import CalciumPlaneData
 from bayescatrack.association.pyrecest_global_assignment import session_edge_pairs
+from bayescatrack.core.bridge import CalciumPlaneData
 from bayescatrack.experiments.registration_qa_report import (
     RegistrationQAConfig,
     _benchmark_config,
@@ -51,6 +52,7 @@ class OracleAffineFit:
     """Moving-to-reference affine fit source_xy ~= A target_xy + b."""
 
     matrix_xy: np.ndarray
+    residual_xy: np.ndarray
     residual_norm: np.ndarray
     rank: int
     condition: float
@@ -62,8 +64,21 @@ class OracleAffineFit:
         return float(np.sqrt(np.mean(self.residual_norm**2)))
 
 
+@dataclass(frozen=True)
+class ManualGTLink:
+    """A present manual-GT link between two session-local ROIs."""
+
+    track_index: int
+    source_roi: int
+    target_roi: int
+    source_local: int
+    target_local: int
+    source_xy: np.ndarray
+    target_xy: np.ndarray
+
+
 def run_oracle_affine_qa_report(config: OracleAffineQAConfig) -> list[dict[str, Any]]:
-    """Return per-edge baseline-vs-oracle true-link geometry metrics."""
+    """Return per-link baseline-vs-oracle true-link geometry metrics."""
 
     if config.min_fit_links < 3:
         raise ValueError("min_fit_links must be at least 3")
@@ -111,8 +126,8 @@ def run_oracle_affine_qa_report(config: OracleAffineQAConfig) -> list[dict[str, 
             )
             if len(links) < config.min_fit_links:
                 continue
-            source_xy = np.vstack([link[2] for link in links])
-            target_xy = np.vstack([link[3] for link in links])
+            source_xy = np.vstack([link.source_xy for link in links])
+            target_xy = np.vstack([link.target_xy for link in links])
             fit = _fit_affine_xy(
                 source_xy,
                 target_xy,
@@ -127,8 +142,8 @@ def run_oracle_affine_qa_report(config: OracleAffineQAConfig) -> list[dict[str, 
             oracle = _oracle_affine_registered_plane(
                 source_session.plane_data, target_session.plane_data, fit
             )
-            rows.append(
-                _edge_row(
+            rows.extend(
+                _edge_rows(
                     subject_dir.name,
                     source_session.session_name,
                     target_session.session_name,
@@ -149,12 +164,24 @@ def run_oracle_affine_qa_report(config: OracleAffineQAConfig) -> list[dict[str, 
 def summarize_oracle_affine_qa(
     rows: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Return rows unchanged; kept for API symmetry with registration QA."""
+    """Aggregate oracle-affine link rows by subject and session edge."""
 
-    return [dict(row) for row in rows]
+    grouped: dict[tuple[str, int, int], list[Mapping[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[
+            (
+                str(row["subject"]),
+                int(row["source_session_index"]),
+                int(row["target_session_index"]),
+            )
+        ].append(row)
+    return [_oracle_summary_row(group) for _, group in sorted(grouped.items())]
 
 
 def format_oracle_affine_qa_table(rows: Sequence[Mapping[str, Any]]) -> str:
+    if rows and "n_gt_links" not in rows[0]:
+        return _format_oracle_affine_link_table(rows)
+
     columns = [
         "subject",
         "source_session_name",
@@ -165,9 +192,13 @@ def format_oracle_affine_qa_table(rows: Sequence[Mapping[str, Any]]) -> str:
         "nonzero_baseline_iou_rate",
         "median_oracle_iou",
         "nonzero_oracle_iou_rate",
+        "median_iou_gain",
         "median_baseline_centroid_distance",
         "median_oracle_centroid_distance",
+        "median_residual_norm_gain",
+        "p90_oracle_centroid_distance",
         "oracle_fit_rms_residual",
+        "oracle_fit_median_residual",
         "oracle_affine_det",
         "oracle_affine_scale_1",
         "oracle_affine_scale_2",
@@ -207,6 +238,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.description = (
         "Compare baseline registration to a manual-GT oracle affine warp."
     )
+    _add_transform_choice(parser, "fov-affine")
     parser.add_argument("--min-fit-links", type=int, default=3)
     parser.add_argument("--allow-rank-deficient-fit", action="store_true")
     parser.add_argument("--ridge", type=float, default=0.0)
@@ -223,11 +255,13 @@ def main(argv: list[str] | None = None) -> int:
         require_full_rank=not args.allow_rank_deficient_fit,
         ridge=args.ridge,
     )
-    rows = run_oracle_affine_qa_report(config)
+    rows: Sequence[Mapping[str, Any]] = run_oracle_affine_qa_report(config)
+    if args.level == "summary":
+        rows = summarize_oracle_affine_qa(rows)
     if args.output is not None:
         write_oracle_affine_qa_results(rows, args.output, args.format)
     elif args.format == "json":
-        print(json.dumps(rows, indent=2))
+        print(json.dumps(list(rows), indent=2))
     elif args.format == "csv":
         writer = csv.DictWriter(sys.stdout, fieldnames=_csv_fieldnames(rows))
         writer.writeheader()
@@ -243,13 +277,13 @@ def _manual_gt_links(
     reference_matrix: np.ndarray,
     source_index: int,
     target_index: int,
-) -> list[tuple[int, int, np.ndarray, np.ndarray]]:
+) -> list[ManualGTLink]:
     source_lookup = _roi_lookup(type("Session", (), {"plane_data": source_plane})())
     target_lookup = _roi_lookup(type("Session", (), {"plane_data": target_plane})())
     source_centroids = source_plane.centroids(order="xy").T
     target_centroids = target_plane.centroids(order="xy").T
-    links: list[tuple[int, int, np.ndarray, np.ndarray]] = []
-    for track in reference_matrix:
+    links: list[ManualGTLink] = []
+    for track_index, track in enumerate(reference_matrix):
         source_roi = track[source_index]
         target_roi = track[target_index]
         if source_roi is None or target_roi is None:
@@ -258,12 +292,17 @@ def _manual_gt_links(
         target_roi_int = int(target_roi)
         if source_roi_int not in source_lookup or target_roi_int not in target_lookup:
             continue
+        source_local = source_lookup[source_roi_int]
+        target_local = target_lookup[target_roi_int]
         links.append(
-            (
-                source_lookup[source_roi_int],
-                target_lookup[target_roi_int],
-                source_centroids[source_lookup[source_roi_int]],
-                target_centroids[target_lookup[target_roi_int]],
+            ManualGTLink(
+                track_index=track_index,
+                source_roi=source_roi_int,
+                target_roi=target_roi_int,
+                source_local=source_local,
+                target_local=target_local,
+                source_xy=source_centroids[source_local],
+                target_xy=target_centroids[target_local],
             )
         )
     return links
@@ -303,6 +342,7 @@ def _fit_affine_xy(
     residual = design @ coef - source_xy
     return OracleAffineFit(
         matrix_xy=coef.T,
+        residual_xy=residual,
         residual_norm=np.linalg.norm(residual, axis=1),
         rank=rank,
         condition=condition,
@@ -360,22 +400,22 @@ def _warp_masks_by_affine_xy(
     return warped.reshape((masks.shape[0], out_h, out_w))
 
 
-def _edge_row(
+def _edge_rows(
     subject: str,
     source_name: str,
     target_name: str,
     source_index: int,
     target_index: int,
-    links: Sequence[tuple[int, int, np.ndarray, np.ndarray]],
+    links: Sequence[ManualGTLink],
     source_plane: CalciumPlaneData,
     raw_target_plane: CalciumPlaneData,
     baseline_plane: CalciumPlaneData,
     oracle_plane: CalciumPlaneData,
     fit: OracleAffineFit,
     baseline_transform_type: str,
-) -> dict[str, Any]:
-    source_locals = np.asarray([link[0] for link in links], dtype=int)
-    target_locals = np.asarray([link[1] for link in links], dtype=int)
+) -> list[dict[str, Any]]:
+    source_locals = np.asarray([link.source_local for link in links], dtype=int)
+    target_locals = np.asarray([link.target_local for link in links], dtype=int)
     baseline_iou = _linked_iou(
         source_plane.roi_masks[source_locals], baseline_plane.roi_masks[target_locals]
     )
@@ -390,30 +430,13 @@ def _edge_row(
         if source_plane.image_shape == raw_target_plane.image_shape
         else np.full(len(links), np.nan)
     )
-    baseline_distance = _linked_centroid_distance(
-        source_plane, baseline_plane, source_locals, target_locals
-    )
-    oracle_distance = _linked_centroid_distance(
-        source_plane, oracle_plane, source_locals, target_locals
-    )
+    raw_centroids = _mask_centroids_xy(raw_target_plane.roi_masks)
+    baseline_centroids = _mask_centroids_xy(baseline_plane.roi_masks)
+    oracle_centroids = _mask_centroids_xy(oracle_plane.roi_masks)
+    center_xy = _image_center_xy(source_plane.image_shape)
     linear = fit.matrix_xy[:, :2]
     scales = np.linalg.svd(linear, compute_uv=False)
-    return {
-        "subject": subject,
-        "source_session_index": source_index,
-        "target_session_index": target_index,
-        "source_session_name": source_name,
-        "target_session_name": target_name,
-        "session_gap": target_index - source_index,
-        "n_gt_links": len(links),
-        "baseline_transform_type": baseline_transform_type,
-        "median_raw_iou": _finite_median(raw_iou),
-        "median_baseline_iou": _finite_median(baseline_iou),
-        "median_oracle_iou": _finite_median(oracle_iou),
-        "nonzero_baseline_iou_rate": _positive_rate(baseline_iou),
-        "nonzero_oracle_iou_rate": _positive_rate(oracle_iou),
-        "median_baseline_centroid_distance": _finite_median(baseline_distance),
-        "median_oracle_centroid_distance": _finite_median(oracle_distance),
+    affine_metadata = {
         "oracle_fit_n_links": fit.residual_norm.size,
         "oracle_fit_rank": fit.rank,
         "oracle_fit_condition": fit.condition,
@@ -425,6 +448,180 @@ def _edge_row(
         "oracle_affine_tx": float(fit.matrix_xy[0, 2]),
         "oracle_affine_ty": float(fit.matrix_xy[1, 2]),
     }
+    rows: list[dict[str, Any]] = []
+    for index, link in enumerate(links):
+        raw_metrics = _residual_metrics(
+            link.source_xy, raw_centroids[link.target_local], center_xy
+        )
+        baseline_metrics = _residual_metrics(
+            link.source_xy,
+            baseline_centroids[link.target_local],
+            center_xy,
+        )
+        oracle_metrics = _residual_metrics(
+            link.source_xy,
+            oracle_centroids[link.target_local],
+            center_xy,
+        )
+        rows.append(
+            {
+                "subject": subject,
+                "source_session_index": source_index,
+                "target_session_index": target_index,
+                "source_session_name": source_name,
+                "target_session_name": target_name,
+                "session_gap": target_index - source_index,
+                "track_index": link.track_index,
+                "source_roi": link.source_roi,
+                "target_roi": link.target_roi,
+                "source_local": link.source_local,
+                "target_local": link.target_local,
+                "baseline_transform_type": baseline_transform_type,
+                "source_x": float(link.source_xy[0]),
+                "source_y": float(link.source_xy[1]),
+                "raw_target_x": float(raw_centroids[link.target_local, 0]),
+                "raw_target_y": float(raw_centroids[link.target_local, 1]),
+                "baseline_target_x": float(baseline_centroids[link.target_local, 0]),
+                "baseline_target_y": float(baseline_centroids[link.target_local, 1]),
+                "oracle_target_x": float(oracle_centroids[link.target_local, 0]),
+                "oracle_target_y": float(oracle_centroids[link.target_local, 1]),
+                "raw_iou": float(raw_iou[index]),
+                "baseline_iou": float(baseline_iou[index]),
+                "oracle_iou": float(oracle_iou[index]),
+                "iou_gain": float(oracle_iou[index] - baseline_iou[index]),
+                **_prefixed_metrics("raw", raw_metrics),
+                **_prefixed_metrics("baseline", baseline_metrics),
+                **_prefixed_metrics("oracle", oracle_metrics),
+                "residual_norm_gain": float(
+                    baseline_metrics["norm"] - oracle_metrics["norm"]
+                ),
+                "fit_residual_x": float(fit.residual_xy[index, 0]),
+                "fit_residual_y": float(fit.residual_xy[index, 1]),
+                "fit_residual_norm": float(fit.residual_norm[index]),
+                **affine_metadata,
+            }
+        )
+    return rows
+
+
+def _oracle_summary_row(group: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    first = group[0]
+    return {
+        "subject": first["subject"],
+        "source_session_index": first["source_session_index"],
+        "target_session_index": first["target_session_index"],
+        "source_session_name": first["source_session_name"],
+        "target_session_name": first["target_session_name"],
+        "session_gap": first["session_gap"],
+        "n_gt_links": len(group),
+        "baseline_transform_type": first["baseline_transform_type"],
+        "median_raw_iou": _row_stat(group, "raw_iou"),
+        "median_baseline_iou": _row_stat(group, "baseline_iou"),
+        "median_oracle_iou": _row_stat(group, "oracle_iou"),
+        "median_iou_gain": _row_stat(group, "iou_gain"),
+        "nonzero_baseline_iou_rate": _row_positive_rate(group, "baseline_iou"),
+        "nonzero_oracle_iou_rate": _row_positive_rate(group, "oracle_iou"),
+        "median_baseline_centroid_distance": _row_stat(
+            group,
+            "baseline_residual_norm",
+        ),
+        "median_oracle_centroid_distance": _row_stat(
+            group,
+            "oracle_residual_norm",
+        ),
+        "p90_oracle_centroid_distance": _row_stat(
+            group,
+            "oracle_residual_norm",
+            90,
+        ),
+        "median_residual_norm_gain": _row_stat(group, "residual_norm_gain"),
+        "median_oracle_residual_x": _row_stat(group, "oracle_residual_x"),
+        "median_oracle_residual_y": _row_stat(group, "oracle_residual_y"),
+        "median_oracle_residual_radial": _row_stat(
+            group,
+            "oracle_residual_radial",
+        ),
+        "median_oracle_residual_tangential": _row_stat(
+            group,
+            "oracle_residual_tangential",
+        ),
+        "oracle_fit_n_links": first["oracle_fit_n_links"],
+        "oracle_fit_rank": first["oracle_fit_rank"],
+        "oracle_fit_condition": first["oracle_fit_condition"],
+        "oracle_fit_rms_residual": first["oracle_fit_rms_residual"],
+        "oracle_fit_median_residual": first["oracle_fit_median_residual"],
+        "oracle_affine_det": first["oracle_affine_det"],
+        "oracle_affine_scale_1": first["oracle_affine_scale_1"],
+        "oracle_affine_scale_2": first["oracle_affine_scale_2"],
+        "oracle_affine_tx": first["oracle_affine_tx"],
+        "oracle_affine_ty": first["oracle_affine_ty"],
+    }
+
+
+def _format_oracle_affine_link_table(rows: Sequence[Mapping[str, Any]]) -> str:
+    columns = [
+        "subject",
+        "source_session_name",
+        "target_session_name",
+        "track_index",
+        "source_roi",
+        "target_roi",
+        "baseline_iou",
+        "oracle_iou",
+        "iou_gain",
+        "baseline_residual_norm",
+        "oracle_residual_norm",
+        "residual_norm_gain",
+        "oracle_residual_x",
+        "oracle_residual_y",
+        "fit_residual_norm",
+    ]
+    lines = [
+        "| " + " | ".join(columns) + " |",
+        "| " + " | ".join(["---"] * len(columns)) + " |",
+    ]
+    for row in rows:
+        lines.append(
+            "| "
+            + " | ".join(_format_value(row.get(column, "")) for column in columns)
+            + " |"
+        )
+    return "\n".join(lines)
+
+
+def _residual_metrics(
+    source_xy: np.ndarray,
+    target_xy: np.ndarray,
+    center_xy: np.ndarray,
+) -> dict[str, float]:
+    source_xy = np.asarray(source_xy, dtype=float)
+    target_xy = np.asarray(target_xy, dtype=float)
+    residual = target_xy - source_xy
+    norm = float(np.linalg.norm(residual))
+    radial_axis = source_xy - center_xy
+    radial_norm = float(np.linalg.norm(radial_axis))
+    if radial_norm > np.spacing(1.0):
+        radial_unit = radial_axis / radial_norm
+    else:
+        radial_unit = np.asarray((0.0, 0.0), dtype=float)
+    tangent_unit = np.asarray((-radial_unit[1], radial_unit[0]), dtype=float)
+    return {
+        "x": float(residual[0]),
+        "y": float(residual[1]),
+        "norm": norm,
+        "angle": float(np.arctan2(residual[1], residual[0])),
+        "radial": float(np.dot(residual, radial_unit)),
+        "tangential": float(np.dot(residual, tangent_unit)),
+    }
+
+
+def _prefixed_metrics(prefix: str, metrics: Mapping[str, float]) -> dict[str, float]:
+    return {f"{prefix}_residual_{key}": float(value) for key, value in metrics.items()}
+
+
+def _image_center_xy(image_shape: tuple[int, int]) -> np.ndarray:
+    height, width = image_shape
+    return np.asarray(((width - 1.0) / 2.0, (height - 1.0) / 2.0), dtype=float)
 
 
 def _linked_iou(source_masks: np.ndarray, target_masks: np.ndarray) -> np.ndarray:
@@ -440,17 +637,6 @@ def _linked_iou(source_masks: np.ndarray, target_masks: np.ndarray) -> np.ndarra
     )
 
 
-def _linked_centroid_distance(
-    source_plane: CalciumPlaneData,
-    target_plane: CalciumPlaneData,
-    source_locals: np.ndarray,
-    target_locals: np.ndarray,
-) -> np.ndarray:
-    source_xy = _mask_centroids_xy(source_plane.roi_masks)[source_locals]
-    target_xy = _mask_centroids_xy(target_plane.roi_masks)[target_locals]
-    return np.linalg.norm(source_xy - target_xy, axis=1)
-
-
 def _mask_centroids_xy(masks: np.ndarray) -> np.ndarray:
     masks = np.asarray(masks)
     centroids = np.full((masks.shape[0], 2), np.nan, dtype=float)
@@ -461,6 +647,28 @@ def _mask_centroids_xy(masks: np.ndarray) -> np.ndarray:
     return centroids
 
 
+def _row_stat(
+    rows: Sequence[Mapping[str, Any]],
+    key: str,
+    percentile: float | None = None,
+) -> float:
+    values = np.asarray([row.get(key, np.nan) for row in rows], dtype=float)
+    values = values[np.isfinite(values)]
+    if not values.size:
+        return float("nan")
+    if percentile is None:
+        return float(np.median(values))
+    return float(np.percentile(values, percentile))
+
+
+def _row_positive_rate(rows: Sequence[Mapping[str, Any]], key: str) -> float:
+    values = np.asarray([row.get(key, np.nan) for row in rows], dtype=float)
+    values = values[np.isfinite(values)]
+    if not values.size:
+        return float("nan")
+    return float(np.mean(values > 0.0))
+
+
 def _finite_median(values: np.ndarray) -> float:
     finite = np.asarray(values, dtype=float)
     finite = finite[np.isfinite(finite)]
@@ -469,12 +677,14 @@ def _finite_median(values: np.ndarray) -> float:
     return float(np.median(finite))
 
 
-def _positive_rate(values: np.ndarray) -> float:
-    finite = np.asarray(values, dtype=float)
-    finite = finite[np.isfinite(finite)]
-    if not finite.size:
-        return float("nan")
-    return float(np.mean(finite > 0.0))
+def _add_transform_choice(parser: argparse.ArgumentParser, value: str) -> None:
+    for action in parser._actions:  # pylint: disable=protected-access
+        if action.dest != "transform_type" or action.choices is None:
+            continue
+        choices = tuple(action.choices)
+        if value not in choices:
+            action.choices = (*choices, value)
+        return
 
 
 if __name__ == "__main__":
