@@ -49,6 +49,7 @@ DEFAULT_ASSOCIATION_FEATURES = (
     "activity_similarity_available",
     "session_gap",
 )
+SPLIT_ROI_STAT_FEATURES: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
