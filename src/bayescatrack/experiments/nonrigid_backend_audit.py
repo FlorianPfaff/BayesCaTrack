@@ -7,7 +7,7 @@ import json
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 from bayescatrack.association.pyrecest_global_assignment import session_edge_pairs

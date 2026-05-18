@@ -124,6 +124,7 @@ def test_shifted_mask_cosine_can_be_used_as_additive_tie_breaker():
     measurement_plane = CalciumPlaneData(measurement)
     original_method = install_shifted_overlap_cost_patch()
     try:
+        # pylint: disable=unexpected-keyword-arg
         cost, components = reference_plane.build_pairwise_cost_matrix(
             measurement_plane,
             centroid_weight=0.0,
@@ -134,7 +135,7 @@ def test_shifted_mask_cosine_can_be_used_as_additive_tie_breaker():
             shifted_iou_radius=1,
             shifted_mask_cosine_weight=1.0,
             return_components=True,
-        )
+        )  # type: ignore[call-arg]
     finally:
         CalciumPlaneData.build_pairwise_cost_matrix = original_method  # type: ignore[method-assign]
 

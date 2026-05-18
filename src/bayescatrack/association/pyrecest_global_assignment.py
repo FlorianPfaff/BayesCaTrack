@@ -10,6 +10,9 @@ import numpy as np
 from bayescatrack.association.activity_similarity import (
     add_activity_similarity_components,
 )
+from bayescatrack.association.activity_tie_breaker import (
+    activity_tie_breaker_cost_matrix,
+)
 from bayescatrack.association.calibrated_costs import (
     CalibratedAssociationModel,
     calibrated_cost_matrix_from_bundle,
@@ -89,12 +92,24 @@ def build_registered_pairwise_costs(
     regularization: float = 1.0e-6,
     pairwise_cost_kwargs: Mapping[str, Any] | None = None,
     return_pairwise_components: bool = False,
+    activity_tie_breaker_weight: float = 0.0,
+    activity_tie_breaker_component: str = "activity_tiebreaker_cost",
+    activity_trace_source: str = "auto",
+    activity_event_threshold: float = 0.0,
 ) -> dict[SessionEdge, np.ndarray]:
     """Build registered pairwise cost matrices for consecutive and skip-session edges."""
 
     sessions = list(sessions)
     if cost == "calibrated" and calibrated_model is None:
         raise ValueError("calibrated_model is required when cost='calibrated'")
+    if activity_tie_breaker_weight < 0.0:
+        raise ValueError("activity_tie_breaker_weight must be non-negative")
+
+    needs_activity_components = (
+        return_pairwise_components
+        or cost == "calibrated"
+        or activity_tie_breaker_weight > 0.0
+    )
 
     base_cost_kwargs = _cost_kwargs_for_method(cost)
     if pairwise_cost_kwargs is not None:
@@ -121,14 +136,15 @@ def build_registered_pairwise_costs(
             velocity_variance=velocity_variance,
             regularization=regularization,
             pairwise_cost_kwargs=base_cost_kwargs,
-            return_pairwise_components=return_pairwise_components
-            or cost == "calibrated",
+            return_pairwise_components=needs_activity_components,
         )
-        if return_pairwise_components or cost == "calibrated":
+        if needs_activity_components:
             add_activity_similarity_components(
                 bundle.pairwise_components,
                 sessions[source_session].plane_data,
                 registered_measurement_plane,
+                trace_source=activity_trace_source,
+                event_threshold=activity_event_threshold,
             )
         if cost == "calibrated":
             assert calibrated_model is not None
@@ -139,6 +155,12 @@ def build_registered_pairwise_costs(
             )
         else:
             cost_matrix = np.asarray(bundle.pairwise_cost_matrix, dtype=float)
+        if activity_tie_breaker_weight > 0.0:
+            cost_matrix = np.asarray(cost_matrix, dtype=float) + activity_tie_breaker_cost_matrix(
+                bundle.pairwise_components,
+                component_name=activity_tie_breaker_component,
+                weight=activity_tie_breaker_weight,
+            )
         pairwise_costs[(source_session, target_session)] = (
             _penalize_empty_registered_roi_columns(
                 cost_matrix,
@@ -166,6 +188,10 @@ def solve_global_assignment_for_sessions(
     velocity_variance: float = 25.0,
     regularization: float = 1.0e-6,
     pairwise_cost_kwargs: Mapping[str, Any] | None = None,
+    activity_tie_breaker_weight: float = 0.0,
+    activity_tie_breaker_component: str = "activity_tiebreaker_cost",
+    activity_trace_source: str = "auto",
+    activity_event_threshold: float = 0.0,
 ) -> GlobalAssignmentRun:
     """Run PyRecEst's global path-cover assignment on registered BayesCaTrack costs."""
 
@@ -181,6 +207,10 @@ def solve_global_assignment_for_sessions(
         velocity_variance=velocity_variance,
         regularization=regularization,
         pairwise_cost_kwargs=pairwise_cost_kwargs,
+        activity_tie_breaker_weight=activity_tie_breaker_weight,
+        activity_tie_breaker_component=activity_tie_breaker_component,
+        activity_trace_source=activity_trace_source,
+        activity_event_threshold=activity_event_threshold,
     )
     session_sizes = tuple(int(session.plane_data.n_rois) for session in sessions)
     session_edges = session_edge_pairs(len(sessions), max_gap=max_gap)

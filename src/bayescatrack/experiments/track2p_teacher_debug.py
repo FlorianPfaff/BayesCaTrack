@@ -706,7 +706,7 @@ def _median_numeric(values: Iterable[CSVValue]) -> float | None:
 
 
 def _uniform_or_blank(values: Iterable[CSVValue]) -> CSVValue:
-    unique = {value for value in values}
+    unique = set(values)
     if len(unique) == 1:
         return next(iter(unique))
     return ""
