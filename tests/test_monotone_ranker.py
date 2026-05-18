@@ -1,93 +1,80 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from bayescatrack.association.calibrated_costs import ReferencePairwiseExamples
 from bayescatrack.association.monotone_ranker import (
-    MonotoneRankerTrainingOptions,
-    collect_monotone_preference_training_pairs,
-    fit_monotone_ranked_association_model_from_blocks,
+    MonotoneRankerOptions,
+    fit_monotone_ranking_association_model_from_blocks,
 )
 
 
-def _toy_rank_block() -> ReferencePairwiseExamples:
-    features = np.zeros((2, 2, 2), dtype=float)
-    features[..., 0] = np.array([[0.0, 4.0], [4.0, 0.0]])
-    features[..., 1] = 1.0
+def _example_block() -> ReferencePairwiseExamples:
+    feature_names = ("centroid_distance", "one_minus_iou", "session_gap")
+    centroid = np.array(
+        [
+            [0.0, 3.0, 8.0],
+            [4.0, 0.0, 7.0],
+            [8.0, 5.0, 0.0],
+        ],
+        dtype=float,
+    )
+    one_minus_iou = np.array(
+        [
+            [0.0, 0.8, 1.0],
+            [0.7, 0.0, 1.0],
+            [1.0, 0.9, 0.0],
+        ],
+        dtype=float,
+    )
+    features = np.stack([centroid, one_minus_iou, np.ones_like(centroid)], axis=-1)
+    labels = np.eye(3, dtype=int)
     return ReferencePairwiseExamples(
         session_a=0,
         session_b=1,
         features=features,
-        labels=np.eye(2, dtype=int),
-        reference_roi_indices=np.arange(2),
-        measurement_roi_indices=np.arange(2),
-        feature_names=("one_minus_iou", "session_gap"),
+        labels=labels,
+        reference_roi_indices=np.array([0, 1, 2], dtype=int),
+        measurement_roi_indices=np.array([0, 1, 2], dtype=int),
+        feature_names=feature_names,
     )
 
 
-def test_collect_monotone_preference_pairs_uses_row_and_column_hard_negatives():
-    positives, negatives = collect_monotone_preference_training_pairs(
-        (_toy_rank_block(),),
-        options=MonotoneRankerTrainingOptions(
-            row_negatives_per_positive=1,
-            column_negatives_per_positive=1,
-            max_preference_pairs=None,
+def test_monotone_ranker_learns_nonnegative_weights_and_ranks_gt_edges():
+    block = _example_block()
+
+    model = fit_monotone_ranking_association_model_from_blocks(
+        [block],
+        options=MonotoneRankerOptions(
+            max_iter=500,
+            learning_rate=0.1,
+            binary_loss_weight=0.05,
         ),
     )
 
-    assert positives.shape == negatives.shape == (4, 2)
-    assert np.all(positives[:, 0] == 0.0)
-    assert np.all(negatives[:, 0] == 4.0)
-
-
-def test_monotone_ranker_ranks_gt_edges_above_row_and_column_hard_negatives():
-    block = _toy_rank_block()
-
-    calibrated_model = fit_monotone_ranked_association_model_from_blocks(
-        (block,),
-        options=MonotoneRankerTrainingOptions(
-            row_negatives_per_positive=1,
-            column_negatives_per_positive=1,
-            max_preference_pairs=None,
-            learning_rate=0.2,
-            max_iter=200,
-            l2_regularization=1.0e-4,
-        ),
-    )
-    model = calibrated_model.model
     costs = model.pairwise_cost_matrix(block.features)
-    probabilities = model.predict_match_probability(block.features)
+    row_negative_min = np.min(np.where(block.labels == 0, costs, np.inf), axis=1)
 
     assert np.all(model.weights >= 0.0)
-    assert model.n_preference_pairs == 4
-    assert costs[0, 0] < costs[0, 1]
-    assert costs[1, 1] < costs[1, 0]
-    assert probabilities[0, 0] > probabilities[0, 1]
-    assert probabilities[1, 1] > probabilities[1, 0]
+    assert int(model.n_rank_constraints) > 0
+    assert np.all(np.diag(costs) < row_negative_min)
+    assert np.all(np.diag(model.predict_match_probability(block.features)) > 0.5)
 
 
-def test_monotone_ranker_ignores_non_cost_like_features_by_default():
-    block = _toy_rank_block()
-    features = np.concatenate(
+def test_monotone_ranker_cost_is_monotone_in_badness_features():
+    model = fit_monotone_ranking_association_model_from_blocks(
+        [_example_block()],
+        options=MonotoneRankerOptions(max_iter=500, learning_rate=0.1),
+    )
+
+    ordered_features = np.array(
         [
-            block.features,
-            np.array([[[0.0], [1.0]], [[1.0], [0.0]]], dtype=float),
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 0.5, 1.0],
         ],
-        axis=-1,
+        dtype=float,
     )
-    block = ReferencePairwiseExamples(
-        session_a=block.session_a,
-        session_b=block.session_b,
-        features=features,
-        labels=block.labels,
-        reference_roi_indices=block.reference_roi_indices,
-        measurement_roi_indices=block.measurement_roi_indices,
-        feature_names=("one_minus_iou", "session_gap", "activity_similarity_available"),
-    )
+    costs = model.pairwise_cost_matrix(ordered_features)
 
-    calibrated_model = fit_monotone_ranked_association_model_from_blocks((block,))
-    model = calibrated_model.model
-
-    assert "activity_similarity_available" not in model.trainable_feature_names
-    assert model.weights[2] == pytest.approx(0.0)
+    assert costs[0] <= costs[1] <= costs[2]

@@ -1,373 +1,414 @@
-"""Monotone pairwise ranking costs for ROI association.
-
-The ranker learns non-negative weights on cost-like pairwise features from
-manual-GT positive edges versus row/column hard negatives. Lower scores are
-better, so the learned model can be used as a calibrated-cost backend by the
-existing global-assignment solver.
-"""
+"""Monotone ranking association model for Track2p ROI linking."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-
 from bayescatrack.association.calibrated_costs import (
-    CalibratedAssociationModel,
+    DEFAULT_ASSOCIATION_FEATURES,
     ReferencePairwiseExamples,
+    pairwise_components_from_bundle,
+    pairwise_feature_tensor,
 )
 
-_DEFAULT_HARDNESS_FEATURES = (
-    "mahalanobis_centroid_distance",
-    "centroid_distance",
-    "one_minus_iou",
-    "one_minus_mask_cosine",
-    "area_ratio_cost",
-    "covariance_shape_cost",
-    "covariance_logdet_cost",
-    "roi_feature_cost",
-    "cell_probability_cost",
-    "activity_similarity_cost",
-)
-
-_DEFAULT_COST_LIKE_FEATURES = frozenset(
-    {
-        "centroid_distance",
-        "mahalanobis_centroid_distance",
-        "one_minus_iou",
-        "one_minus_mask_cosine",
-        "one_minus_covariance_shape_similarity",
-        "one_minus_activity_similarity",
-        "area_ratio_cost",
-        "covariance_shape_cost",
-        "covariance_logdet_cost",
-        "roi_feature_cost",
-        "cell_probability_cost",
-        "activity_similarity_cost",
-        "session_gap",
-    }
+DEFAULT_MONOTONE_BADNESS_FEATURES = tuple(
+    name
+    for name in DEFAULT_ASSOCIATION_FEATURES
+    if name != "activity_similarity_available"
 )
 
 
 @dataclass(frozen=True)
-class MonotoneRankerTrainingOptions:
-    """Hyperparameters for the manual-GT pairwise ranking objective."""
+class MonotoneRankerOptions:
+    """Projected-gradient options for the monotone hard-negative ranker."""
 
-    row_negatives_per_positive: int = 8
-    column_negatives_per_positive: int = 8
-    max_preference_pairs: int | None = 100_000
-    learning_rate: float = 0.1
-    max_iter: int = 500
-    tolerance: float = 1.0e-7
+    monotone_feature_names: tuple[str, ...] = ()
+    margin: float = 1.0
+    max_negatives_per_positive: int = 16
+    include_row_negatives: bool = True
+    include_column_negatives: bool = True
+    max_iter: int = 800
+    learning_rate: float = 0.05
     l2_regularization: float = 1.0e-3
-    random_state: int = 0
-    hardness_feature_names: tuple[str, ...] = ()
-    cost_like_feature_names: tuple[str, ...] = ()
-    positive_cost_target: float = 1.0
+    binary_loss_weight: float = 0.05
+    tolerance: float = 1.0e-8
 
     def __post_init__(self) -> None:
-        row_negatives = int(self.row_negatives_per_positive)
-        column_negatives = int(self.column_negatives_per_positive)
-        if row_negatives < 0 or column_negatives < 0:
-            raise ValueError("row/column negatives per positive must be non-negative")
-        if row_negatives + column_negatives <= 0:
-            raise ValueError("At least one row or column hard negative is required")
-        object.__setattr__(self, "row_negatives_per_positive", row_negatives)
-        object.__setattr__(self, "column_negatives_per_positive", column_negatives)
-        if self.max_preference_pairs is not None:
-            max_pairs = int(self.max_preference_pairs)
-            if max_pairs <= 0:
-                raise ValueError("max_preference_pairs must be positive or None")
-            object.__setattr__(self, "max_preference_pairs", max_pairs)
-        for name in ("learning_rate", "tolerance", "l2_regularization", "positive_cost_target"):
-            value = float(getattr(self, name))
-            if not np.isfinite(value) or value < 0.0 or (name in {"learning_rate", "positive_cost_target"} and value <= 0.0):
-                raise ValueError(f"{name} has an invalid value")
-            object.__setattr__(self, name, value)
-        max_iter = int(self.max_iter)
-        if max_iter <= 0:
+        object.__setattr__(
+            self, "monotone_feature_names", tuple(self.monotone_feature_names or ())
+        )
+        if self.margin <= 0.0:
+            raise ValueError("margin must be positive")
+        if self.max_negatives_per_positive <= 0:
+            raise ValueError("max_negatives_per_positive must be positive")
+        if not self.include_row_negatives and not self.include_column_negatives:
+            raise ValueError("At least one negative source must be enabled")
+        if self.max_iter <= 0:
             raise ValueError("max_iter must be positive")
-        object.__setattr__(self, "max_iter", max_iter)
-        object.__setattr__(self, "hardness_feature_names", tuple(self.hardness_feature_names or ()))
-        object.__setattr__(self, "cost_like_feature_names", tuple(self.cost_like_feature_names or ()))
+        if self.learning_rate <= 0.0:
+            raise ValueError("learning_rate must be positive")
+        if self.l2_regularization < 0.0:
+            raise ValueError("l2_regularization must be non-negative")
+        if self.binary_loss_weight < 0.0:
+            raise ValueError("binary_loss_weight must be non-negative")
+        if self.tolerance < 0.0:
+            raise ValueError("tolerance must be non-negative")
 
 
 @dataclass(frozen=True)
-class MonotonePairwiseRanker:
-    """Non-negative additive lower-is-better pairwise cost model."""
+class MonotoneRankingAssociationModel:
+    """Association model whose cost is monotone in badness features."""
 
     feature_names: tuple[str, ...]
+    monotone_feature_names: tuple[str, ...]
+    feature_center: np.ndarray
+    feature_scale: np.ndarray
     weights: np.ndarray
-    impute_values: np.ndarray
-    feature_scales: np.ndarray
-    cost_scale: float
-    decision_cost: float
-    probability_temperature: float
-    training_loss: float
-    n_preference_pairs: int
-    n_iterations: int
-    trainable_feature_names: tuple[str, ...]
+    decision_offset: float
+    training_rank_loss: float
+    training_binary_loss: float
+    n_rank_constraints: int
+    n_training_examples: int
+    n_positive_examples: int
 
     @property
-    def weights_(self) -> np.ndarray:
-        """Sklearn-style alias for learned non-negative feature weights."""
+    def model(self) -> "MonotoneRankingAssociationModel":
+        """Compatibility with wrappers that access ``calibrated_model.model``."""
 
-        return np.asarray(self.weights, dtype=float)
+        return self
+
+    def raw_cost_score(self, features: Any) -> np.ndarray:
+        """Return the normalized linear badness score."""
+
+        normalized = self._normalized_features(features)
+        return np.tensordot(normalized, self.weights, axes=([-1], [0]))
 
     def pairwise_cost_matrix(self, features: Any) -> np.ndarray:
-        """Return lower-is-better assignment costs for pairwise feature tensors."""
+        """Return non-negative assignment costs."""
 
-        prepared = self._prepare_features(features)
-        scores = np.sum(prepared * self.weights, axis=-1)
-        costs = scores / max(float(self.cost_scale), 1.0e-12)
-        return np.maximum(np.nan_to_num(costs, nan=1.0e6, posinf=1.0e6, neginf=0.0), 0.0)
+        return _softplus(self.raw_cost_score(features) - self.decision_offset)
 
     def predict_match_probability(self, features: Any) -> np.ndarray:
-        """Return a monotone ranking-confidence diagnostic, not a calibrated posterior."""
+        """Return sigmoid match probabilities."""
 
-        costs = self.pairwise_cost_matrix(features)
-        logits = (float(self.decision_cost) - costs) / max(float(self.probability_temperature), 1.0e-12)
-        return _sigmoid(logits)
+        return _sigmoid(self.decision_offset - self.raw_cost_score(features))
 
-    def diagnostics(self, *, prefix: str = "monotone") -> dict[str, float | int]:
-        """Return compact training diagnostics for benchmark output rows."""
+    def pairwise_cost_matrix_from_components(
+        self, pairwise_components: Mapping[str, Any]
+    ) -> np.ndarray:
+        return self.pairwise_cost_matrix(
+            pairwise_feature_tensor(pairwise_components, feature_names=self.feature_names)
+        )
 
-        rows: dict[str, float | int] = {
-            f"{prefix}_preference_pairs": int(self.n_preference_pairs),
-            f"{prefix}_iterations": int(self.n_iterations),
-            f"{prefix}_training_loss": float(self.training_loss),
-            f"{prefix}_cost_scale": float(self.cost_scale),
-            f"{prefix}_decision_cost": float(self.decision_cost),
-        }
-        for feature_name, weight in zip(self.feature_names, self.weights):
-            rows[f"{prefix}_weight_{_metric_safe_name(feature_name)}"] = float(weight)
-        return rows
+    def pairwise_probability_matrix_from_components(
+        self, pairwise_components: Mapping[str, Any]
+    ) -> np.ndarray:
+        return self.predict_match_probability(
+            pairwise_feature_tensor(pairwise_components, feature_names=self.feature_names)
+        )
 
-    def _prepare_features(self, features: Any) -> np.ndarray:
-        values = np.asarray(features, dtype=float)
-        if values.ndim < 1:
-            raise ValueError("features must have a final feature dimension")
-        if values.shape[-1] != len(self.feature_names):
-            raise ValueError(f"Expected {len(self.feature_names)} features, got {values.shape[-1]}")
-        clean = np.where(np.isfinite(values), values, self.impute_values)
-        return clean / self.feature_scales
+    def pairwise_cost_matrix_from_bundle(
+        self, bundle: Any, *, session_gap: int | float = 1.0
+    ) -> np.ndarray:
+        return self.pairwise_cost_matrix_from_components(
+            pairwise_components_from_bundle(bundle, session_gap=session_gap)
+        )
+
+    def pairwise_probability_matrix_from_bundle(
+        self, bundle: Any, *, session_gap: int | float = 1.0
+    ) -> np.ndarray:
+        return self.pairwise_probability_matrix_from_components(
+            pairwise_components_from_bundle(bundle, session_gap=session_gap)
+        )
+
+    def _normalized_features(self, features: Any) -> np.ndarray:
+        array = np.asarray(features, dtype=float)
+        if array.shape[-1] != len(self.feature_names):
+            raise ValueError("Feature tensor does not match model feature schema")
+        indices = [self.feature_names.index(name) for name in self.monotone_feature_names]
+        selected = np.nan_to_num(
+            array[..., indices], nan=0.0, posinf=1.0e6, neginf=-1.0e6
+        )
+        return (selected - self.feature_center) / self.feature_scale
 
 
-def fit_monotone_ranked_association_model_from_blocks(
+# pylint: disable=too-many-locals
+def fit_monotone_ranking_association_model_from_blocks(
     example_blocks: Sequence[ReferencePairwiseExamples],
     *,
-    feature_names: Sequence[str] | None = None,
-    options: MonotoneRankerTrainingOptions | None = None,
-) -> CalibratedAssociationModel:
-    """Fit a calibrated-association wrapper backed by a monotone ranker."""
+    options: MonotoneRankerOptions | None = None,
+) -> MonotoneRankingAssociationModel:
+    """Fit a non-negative hard-negative ranking model from pairwise GT blocks."""
 
     blocks = tuple(example_blocks)
     if not blocks:
         raise ValueError("At least one pairwise example block is required")
-    names = tuple(feature_names or blocks[0].feature_names)
-    for block in blocks:
-        if tuple(block.feature_names) != names:
-            raise ValueError("All pairwise example blocks must use the same feature_names")
-    positive_features, negative_features = collect_monotone_preference_training_pairs(blocks, options=options)
-    model = fit_monotone_pairwise_ranker(positive_features, negative_features, feature_names=names, options=options)
-    return CalibratedAssociationModel(model=model, feature_names=names)
-
-
-def collect_monotone_preference_training_pairs(
-    example_blocks: Sequence[ReferencePairwiseExamples],
-    *,
-    options: MonotoneRankerTrainingOptions | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Collect positive-vs-hard-negative feature pairs from labeled blocks."""
-
-    options = options or MonotoneRankerTrainingOptions()
-    positive_blocks: list[np.ndarray] = []
-    negative_blocks: list[np.ndarray] = []
-    for block in example_blocks:
-        features, labels = _validated_pairwise_block_arrays(block)
-        hardness = _pairwise_hardness_score(block, options.hardness_feature_names)
-        positive_rows, positive_cols = np.nonzero(labels != 0)
-        for row, col in zip(positive_rows, positive_cols):
-            positive = features[row, col, :]
-            for neg_col in _ordered_limited_indices(hardness[row, :], np.flatnonzero(labels[row, :] == 0), options.row_negatives_per_positive):
-                positive_blocks.append(positive)
-                negative_blocks.append(features[row, neg_col, :])
-            for neg_row in _ordered_limited_indices(hardness[:, col], np.flatnonzero(labels[:, col] == 0), options.column_negatives_per_positive):
-                positive_blocks.append(positive)
-                negative_blocks.append(features[neg_row, col, :])
-    if not positive_blocks:
-        raise ValueError("No monotone ranking preference pairs were collected")
-    positives = np.asarray(positive_blocks, dtype=float)
-    negatives = np.asarray(negative_blocks, dtype=float)
-    if options.max_preference_pairs is not None and positives.shape[0] > options.max_preference_pairs:
-        rng = np.random.default_rng(int(options.random_state))
-        keep = np.sort(rng.choice(positives.shape[0], size=int(options.max_preference_pairs), replace=False))
-        positives = positives[keep]
-        negatives = negatives[keep]
-    return positives, negatives
-
-
-def fit_monotone_pairwise_ranker(
-    positive_features: Any,
-    negative_features: Any,
-    *,
-    feature_names: Sequence[str],
-    options: MonotoneRankerTrainingOptions | None = None,
-) -> MonotonePairwiseRanker:
-    """Fit non-negative weights from positive-lower-than-negative preferences."""
-
-    options = options or MonotoneRankerTrainingOptions()
-    names = tuple(feature_names)
-    positives = np.asarray(positive_features, dtype=float)
-    negatives = np.asarray(negative_features, dtype=float)
-    if positives.shape != negatives.shape or positives.ndim != 2:
-        raise ValueError("positive_features and negative_features must share shape (n_pairs, n_features)")
-    if positives.shape[1] != len(names):
-        raise ValueError("feature_names length does not match feature matrix width")
-    finite_stack = np.concatenate([positives, negatives], axis=0)
-    impute_values = _finite_column_median(finite_stack)
-    scales = _robust_feature_scales(finite_stack, impute_values)
-    pos = np.where(np.isfinite(positives), positives, impute_values) / scales
-    neg = np.where(np.isfinite(negatives), negatives, impute_values) / scales
-    diffs = pos - neg
-    trainable = _trainable_feature_mask(names, options.cost_like_feature_names)
-    if not np.any(trainable):
-        raise ValueError("No cost-like trainable feature was selected")
-    weights = np.zeros(len(names), dtype=float)
-    weights[trainable] = 1.0 / np.sqrt(float(np.sum(trainable)))
-    last_loss = np.inf
-    iterations = 0
-    for iteration in range(int(options.max_iter)):
-        margins = diffs @ weights
-        sigma = _sigmoid(margins)
-        grad = np.mean(diffs * sigma[:, None], axis=0) + float(options.l2_regularization) * weights
-        grad[~trainable] = 0.0
-        weights[trainable] = np.maximum(weights[trainable] - float(options.learning_rate) * grad[trainable], 0.0)
-        loss = float(np.mean(np.logaddexp(0.0, diffs @ weights)) + 0.5 * float(options.l2_regularization) * np.dot(weights, weights))
-        iterations = iteration + 1
-        if abs(last_loss - loss) <= float(options.tolerance):
-            last_loss = loss
-            break
-        last_loss = loss
-    raw_pos = pos @ weights
-    raw_neg = neg @ weights
-    positive_median = _finite_median(raw_pos, default=1.0)
-    negative_median = _finite_median(raw_neg, default=positive_median + 1.0)
-    cost_scale = positive_median / float(options.positive_cost_target) if positive_median > 1.0e-12 else max(negative_median / 4.0, 1.0)
-    scaled_pos = raw_pos / max(cost_scale, 1.0e-12)
-    scaled_neg = raw_neg / max(cost_scale, 1.0e-12)
-    pos_med = _finite_median(scaled_pos, default=1.0)
-    neg_med = _finite_median(scaled_neg, default=pos_med + 1.0)
-    decision_cost = 0.5 * (pos_med + neg_med)
-    probability_temperature = max(abs(neg_med - pos_med), 1.0)
-    return MonotonePairwiseRanker(
-        feature_names=names,
+    options = options or MonotoneRankerOptions()
+    feature_names = _shared_feature_names(blocks)
+    monotone_names = _resolve_monotone_feature_names(
+        feature_names, options.monotone_feature_names
+    )
+    feature_indices = np.asarray(
+        [feature_names.index(name) for name in monotone_names], dtype=int
+    )
+    raw_examples, labels, raw_constraints = _collect_training_arrays(
+        blocks, feature_indices=feature_indices, options=options
+    )
+    center, scale = _robust_normalizer(raw_examples)
+    examples = (raw_examples - center) / scale
+    constraints = raw_constraints / scale
+    weights, offset, rank_loss, binary_loss = _fit_projected_ranker(
+        examples, labels, constraints, options=options
+    )
+    return MonotoneRankingAssociationModel(
+        feature_names=feature_names,
+        monotone_feature_names=monotone_names,
+        feature_center=center,
+        feature_scale=scale,
         weights=weights,
-        impute_values=impute_values,
-        feature_scales=scales,
-        cost_scale=float(cost_scale),
-        decision_cost=float(decision_cost),
-        probability_temperature=float(probability_temperature),
-        training_loss=float(last_loss),
-        n_preference_pairs=int(positives.shape[0]),
-        n_iterations=int(iterations),
-        trainable_feature_names=tuple(name for name, is_trainable in zip(names, trainable) if is_trainable),
+        decision_offset=offset,
+        training_rank_loss=rank_loss,
+        training_binary_loss=binary_loss,
+        n_rank_constraints=int(constraints.shape[0]),
+        n_training_examples=int(labels.size),
+        n_positive_examples=int(np.sum(labels != 0)),
     )
 
 
-def _validated_pairwise_block_arrays(block: ReferencePairwiseExamples) -> tuple[np.ndarray, np.ndarray]:
-    features = np.asarray(block.features, dtype=float)
-    labels = np.asarray(block.labels, dtype=int)
-    if features.ndim != 3:
-        raise ValueError("Pairwise training features must be three-dimensional")
-    if labels.shape != features.shape[:2]:
-        raise ValueError("Pairwise labels must match the first two feature dimensions")
-    if features.shape[-1] != len(block.feature_names):
-        raise ValueError("feature_names length does not match feature tensor width")
-    return features, labels
+def _shared_feature_names(blocks: Sequence[ReferencePairwiseExamples]) -> tuple[str, ...]:
+    feature_names = tuple(blocks[0].feature_names)
+    if not feature_names:
+        raise ValueError("At least one feature is required")
+    for block in blocks[1:]:
+        if tuple(block.feature_names) != feature_names:
+            raise ValueError("All example blocks must use the same feature schema")
+    return feature_names
 
 
-def _pairwise_hardness_score(block: ReferencePairwiseExamples, hardness_feature_names: Sequence[str]) -> np.ndarray:
-    features, labels = _validated_pairwise_block_arrays(block)
-    names = tuple(block.feature_names)
-    selected = tuple(hardness_feature_names) or tuple(name for name in _DEFAULT_HARDNESS_FEATURES if name in names)
+def _resolve_monotone_feature_names(
+    feature_names: Sequence[str], requested: Sequence[str]
+) -> tuple[str, ...]:
+    if requested:
+        selected = tuple(requested)
+    else:
+        selected = tuple(
+            name for name in DEFAULT_MONOTONE_BADNESS_FEATURES if name in feature_names
+        )
+        if not selected:
+            selected = tuple(
+                name
+                for name in feature_names
+                if name != "session_gap" and not name.endswith("_available")
+            )
+    missing = [name for name in selected if name not in feature_names]
+    if missing:
+        raise ValueError(
+            "Monotone features are absent from the feature tensor: "
+            + ", ".join(missing)
+        )
     if not selected:
-        selected = tuple(name for name in names if name != "session_gap" and not name.endswith("_available"))
-    if not selected:
-        return np.zeros(labels.shape, dtype=float)
-    planes = []
-    for name in selected:
-        if name not in names:
-            raise ValueError(f"Hard-negative feature {name!r} is missing")
-        planes.append(_robust_normalized_cost_plane(features[..., names.index(name)]))
-    return np.mean(np.stack(planes, axis=0), axis=0)
+        raise ValueError("At least one monotone badness feature is required")
+    return selected
 
 
-def _ordered_limited_indices(scores: np.ndarray, candidate_indices: np.ndarray, limit: int) -> np.ndarray:
-    if limit <= 0 or candidate_indices.size == 0:
-        return np.empty((0,), dtype=int)
-    ordered = candidate_indices[np.lexsort((candidate_indices, np.asarray(scores, dtype=float)[candidate_indices]))]
-    return ordered[:limit]
+# pylint: disable=too-many-locals
+def _collect_training_arrays(
+    blocks: Sequence[ReferencePairwiseExamples],
+    *,
+    feature_indices: np.ndarray,
+    options: MonotoneRankerOptions,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    examples: list[np.ndarray] = []
+    labels_out: list[int] = []
+    constraints: list[np.ndarray] = []
+    seen_examples: set[tuple[int, int, int]] = set()
+    for block_index, block in enumerate(blocks):
+        features = np.nan_to_num(
+            np.asarray(block.features, dtype=float), nan=0.0, posinf=1.0e6, neginf=-1.0e6
+        )
+        labels = np.asarray(block.labels, dtype=int)
+        if features.ndim != 3 or labels.shape != features.shape[:2]:
+            raise ValueError("Pairwise features and labels have incompatible shapes")
+        selected = features[..., feature_indices]
+        hardness = np.mean(selected, axis=-1)
+        for positive_row, positive_col in np.argwhere(labels != 0):
+            positive_features = selected[positive_row, positive_col]
+            key = (block_index, int(positive_row), int(positive_col))
+            if key not in seen_examples:
+                seen_examples.add(key)
+                examples.append(positive_features)
+                labels_out.append(1)
+            for negative_row, negative_col in _hard_negative_positions(
+                labels, hardness, int(positive_row), int(positive_col), options
+            ):
+                negative_features = selected[negative_row, negative_col]
+                key = (block_index, int(negative_row), int(negative_col))
+                if key not in seen_examples:
+                    seen_examples.add(key)
+                    examples.append(negative_features)
+                    labels_out.append(0)
+                constraints.append(positive_features - negative_features)
+    if not examples:
+        raise ValueError("No positive reference examples were found")
+    if not constraints:
+        raise ValueError("No hard-negative ranking constraints were found")
+    return (
+        np.asarray(examples, dtype=float),
+        np.asarray(labels_out, dtype=int),
+        np.asarray(constraints, dtype=float),
+    )
 
 
-def _trainable_feature_mask(feature_names: Sequence[str], explicit_cost_like_names: Sequence[str]) -> np.ndarray:
-    names = tuple(feature_names)
-    if explicit_cost_like_names:
-        explicit = set(explicit_cost_like_names)
-        missing = sorted(explicit - set(names))
-        if missing:
-            raise ValueError("cost_like_feature_names are missing: " + ", ".join(missing))
-        return np.asarray([name in explicit for name in names], dtype=bool)
-    return np.asarray([name in _DEFAULT_COST_LIKE_FEATURES for name in names], dtype=bool)
+def _hard_negative_positions(
+    labels: np.ndarray,
+    hardness: np.ndarray,
+    positive_row: int,
+    positive_col: int,
+    options: MonotoneRankerOptions,
+) -> tuple[tuple[int, int], ...]:
+    positions: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+
+    def add_candidates(candidates: Sequence[tuple[int, int]]) -> None:
+        for row, col in candidates:
+            key = (int(row), int(col))
+            if key in seen:
+                continue
+            seen.add(key)
+            positions.append(key)
+            if len(positions) >= options.max_negatives_per_positive:
+                return
+
+    if options.include_row_negatives:
+        columns = np.flatnonzero(labels[positive_row] == 0)
+        order = np.lexsort((columns, hardness[positive_row, columns]))
+        add_candidates([(positive_row, int(col)) for col in columns[order]])
+    if len(positions) < options.max_negatives_per_positive and options.include_column_negatives:
+        rows = np.flatnonzero(labels[:, positive_col] == 0)
+        order = np.lexsort((rows, hardness[rows, positive_col]))
+        add_candidates([(int(row), positive_col) for row in rows[order]])
+    return tuple(positions)
 
 
-def _finite_column_median(values: np.ndarray) -> np.ndarray:
-    result = np.zeros((values.shape[1],), dtype=float)
-    for col in range(values.shape[1]):
-        finite = values[:, col][np.isfinite(values[:, col])]
-        result[col] = float(np.median(finite)) if finite.size else 0.0
-    return result
-
-
-def _robust_feature_scales(values: np.ndarray, impute_values: np.ndarray) -> np.ndarray:
-    clean = np.where(np.isfinite(values), values, impute_values)
-    q25 = np.percentile(clean, 25.0, axis=0)
-    q75 = np.percentile(clean, 75.0, axis=0)
-    scales = q75 - q25
-    std = np.std(clean, axis=0)
-    scales = np.where(scales > 1.0e-12, scales, std)
-    return np.where(scales > 1.0e-12, scales, 1.0)
-
-
-def _robust_normalized_cost_plane(values: np.ndarray) -> np.ndarray:
-    plane = np.nan_to_num(np.asarray(values, dtype=float), nan=0.0, posinf=1.0e6, neginf=-1.0e6)
-    finite = plane[np.isfinite(plane)]
-    if finite.size == 0:
-        return np.zeros_like(plane, dtype=float)
-    center = float(np.median(finite))
-    mad = float(np.median(np.abs(finite - center)))
-    scale = 1.4826 * mad
-    if not np.isfinite(scale) or scale <= 1.0e-12:
-        scale = float(np.std(finite))
-    if not np.isfinite(scale) or scale <= 1.0e-12:
-        scale = 1.0
-    return (plane - center) / scale
-
-
-def _finite_median(values: np.ndarray, *, default: float) -> float:
-    finite = np.asarray(values, dtype=float)
-    finite = finite[np.isfinite(finite)]
-    if finite.size == 0:
-        return float(default)
-    return float(np.median(finite))
-
-
-def _sigmoid(values: np.ndarray) -> np.ndarray:
+def _robust_normalizer(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     values = np.asarray(values, dtype=float)
-    return np.where(values >= 0.0, 1.0 / (1.0 + np.exp(-values)), np.exp(values) / (1.0 + np.exp(values)))
+    center = np.median(values, axis=0)
+    q75, q25 = np.percentile(values, [75.0, 25.0], axis=0)
+    scale = (q75 - q25) / 1.349
+    fallback = np.std(values, axis=0)
+    scale = np.where(np.isfinite(scale) & (scale > 1.0e-12), scale, fallback)
+    scale = np.where(np.isfinite(scale) & (scale > 1.0e-12), scale, 1.0)
+    return center.astype(float), scale.astype(float)
 
 
-def _metric_safe_name(name: str) -> str:
-    return "".join(ch if ch.isalnum() else "_" for ch in name)
+# pylint: disable=too-many-locals
+def _fit_projected_ranker(
+    examples: np.ndarray,
+    labels: np.ndarray,
+    constraints: np.ndarray,
+    *,
+    options: MonotoneRankerOptions,
+) -> tuple[np.ndarray, float, float, float]:
+    weights = np.full((examples.shape[1],), 1.0 / examples.shape[1], dtype=float)
+    offset = _initial_offset(examples @ weights, labels)
+    sample_weights = _balanced_binary_weights(labels)
+    previous_loss = np.inf
+    rank_loss = np.inf
+    binary_loss = np.inf
+    for iteration in range(options.max_iter):
+        deltas = constraints @ weights
+        violations = np.maximum(0.0, options.margin + deltas)
+        rank_loss = float(np.mean(violations * violations))
+        rank_gradient = 2.0 * np.mean(violations[:, None] * constraints, axis=0)
+        scores = examples @ weights
+        probabilities = _sigmoid(offset - scores)
+        binary_loss = _weighted_log_loss(probabilities, labels, sample_weights)
+        residual = sample_weights * (labels.astype(float) - probabilities)
+        denom = max(float(np.sum(sample_weights)), 1.0)
+        binary_gradient = (examples.T @ residual) / denom
+        offset_gradient = float(
+            np.sum(sample_weights * (probabilities - labels.astype(float))) / denom
+        )
+        gradient = (
+            rank_gradient
+            + options.binary_loss_weight * binary_gradient
+            + options.l2_regularization * weights
+        )
+        step = options.learning_rate / np.sqrt(1.0 + iteration / 50.0)
+        weights = np.maximum(0.0, weights - step * gradient)
+        offset -= step * options.binary_loss_weight * offset_gradient
+        loss = (
+            rank_loss
+            + options.binary_loss_weight * binary_loss
+            + 0.5 * options.l2_regularization * float(weights @ weights)
+        )
+        if np.isfinite(previous_loss) and abs(previous_loss - loss) <= options.tolerance:
+            break
+        previous_loss = loss
+    scores = examples @ weights
+    offset = _fit_offset(scores, labels, sample_weights, initial_offset=offset)
+    probabilities = _sigmoid(offset - scores)
+    binary_loss = _weighted_log_loss(probabilities, labels, sample_weights)
+    rank_loss = float(np.mean(np.maximum(0.0, options.margin + constraints @ weights) ** 2))
+    return weights.astype(float), float(offset), rank_loss, binary_loss
+
+
+def _initial_offset(scores: np.ndarray, labels: np.ndarray) -> float:
+    positive = scores[labels != 0]
+    negative = scores[labels == 0]
+    if positive.size and negative.size:
+        return float(0.5 * (np.median(positive) + np.median(negative)))
+    return float(np.median(scores)) if scores.size else 0.0
+
+
+def _fit_offset(
+    scores: np.ndarray, labels: np.ndarray, sample_weights: np.ndarray, *, initial_offset: float
+) -> float:
+    offset = float(initial_offset)
+    targets = labels.astype(float)
+    for _ in range(50):
+        probabilities = _sigmoid(offset - scores)
+        gradient = float(np.sum(sample_weights * (probabilities - targets)))
+        hessian = float(np.sum(sample_weights * probabilities * (1.0 - probabilities)))
+        if hessian <= 1.0e-12:
+            break
+        step = gradient / hessian
+        offset -= step
+        if abs(step) <= 1.0e-10 * max(1.0, abs(offset)):
+            break
+    return float(offset)
+
+
+def _balanced_binary_weights(labels: np.ndarray) -> np.ndarray:
+    labels = np.asarray(labels, dtype=int).reshape(-1)
+    weights = np.ones(labels.shape, dtype=float)
+    for is_positive in (False, True):
+        mask = labels != 0 if is_positive else labels == 0
+        count = int(np.sum(mask))
+        if count:
+            weights[mask] = labels.size / (2.0 * count)
+    return weights
+
+
+def _weighted_log_loss(probabilities: np.ndarray, labels: np.ndarray, weights: np.ndarray) -> float:
+    p = np.clip(np.asarray(probabilities, dtype=float), 1.0e-12, 1.0 - 1.0e-12)
+    y = np.asarray(labels, dtype=float)
+    return float(np.sum(weights * (-y * np.log(p) - (1.0 - y) * np.log(1.0 - p))) / max(float(np.sum(weights)), 1.0))
+
+
+def _sigmoid(values: Any) -> np.ndarray:
+    values = np.asarray(values, dtype=float)
+    out = np.empty_like(values, dtype=float)
+    positive = values >= 0.0
+    out[positive] = 1.0 / (1.0 + np.exp(-values[positive]))
+    exp_values = np.exp(values[~positive])
+    out[~positive] = exp_values / (1.0 + exp_values)
+    return out
+
+
+def _softplus(values: Any) -> np.ndarray:
+    values = np.asarray(values, dtype=float)
+    return np.log1p(np.exp(-np.abs(values))) + np.maximum(values, 0.0)

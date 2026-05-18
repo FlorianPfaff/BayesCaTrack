@@ -71,12 +71,23 @@ class MonotoneRankerOptions:
         object.__setattr__(
             self,
             "hardness_feature_names",
-            tuple(() if self.hardness_feature_names is None else self.hardness_feature_names),
+            tuple(
+                ()
+                if self.hardness_feature_names is None
+                else self.hardness_feature_names
+            ),
         )
         if self.feature_directions is not None:
-            directions = {str(key): float(value) for key, value in self.feature_directions.items()}
-            if any((not np.isfinite(value)) or value == 0.0 for value in directions.values()):
-                raise ValueError("feature_directions values must be finite and non-zero")
+            directions = {
+                str(key): float(value) for key, value in self.feature_directions.items()
+            }
+            if any(
+                (not np.isfinite(value)) or value == 0.0
+                for value in directions.values()
+            ):
+                raise ValueError(
+                    "feature_directions values must be finite and non-zero"
+                )
             object.__setattr__(self, "feature_directions", directions)
 
 
@@ -107,13 +118,17 @@ class MonotonePairwiseRanker:
         """Return the uncalibrated ranking score; lower is more match-like."""
 
         normalized = self._normalized_features(features)
-        return np.tensordot(normalized, np.asarray(self.weights, dtype=float), axes=([-1], [0]))
+        return np.tensordot(
+            normalized, np.asarray(self.weights, dtype=float), axes=([-1], [0])
+        )
 
     def predict_match_probability(self, features: Any) -> np.ndarray:
         """Return monotone match probabilities derived from the learned score."""
 
         score = np.asarray(self.predict_score(features), dtype=float)
-        logits = float(self.probability_intercept) - score / float(self.probability_score_scale)
+        logits = float(self.probability_intercept) - score / float(
+            self.probability_score_scale
+        )
         return _sigmoid(logits)
 
     def pairwise_cost_matrix(self, features: Any) -> np.ndarray:
@@ -145,10 +160,14 @@ class MonotonePairwiseRanker:
     def _normalized_features(self, features: Any) -> np.ndarray:
         feature_array = np.asarray(features, dtype=float)
         if feature_array.shape[-1] != len(self.feature_names):
-            raise ValueError(f"Expected {len(self.feature_names)} features, got {feature_array.shape[-1]}")
+            raise ValueError(
+                f"Expected {len(self.feature_names)} features, got {feature_array.shape[-1]}"
+            )
         finite = np.nan_to_num(feature_array, nan=0.0, posinf=1.0e6, neginf=-1.0e6)
         signed = finite * np.asarray(self.feature_directions, dtype=float)
-        return (signed - np.asarray(self.feature_center, dtype=float)) / np.asarray(self.feature_scale, dtype=float)
+        return (signed - np.asarray(self.feature_center, dtype=float)) / np.asarray(
+            self.feature_scale, dtype=float
+        )
 
 
 def fit_monotone_ranked_association_model(
@@ -162,7 +181,10 @@ def fit_monotone_ranked_association_model(
     options = options or MonotoneRankerOptions()
     feature_names_tuple = _validated_feature_names(example_blocks, feature_names)
     directions = np.asarray(
-        [_feature_direction(name, options.feature_directions) for name in feature_names_tuple],
+        [
+            _feature_direction(name, options.feature_directions)
+            for name in feature_names_tuple
+        ],
         dtype=float,
     )
     binary_features, binary_labels, differences = _collect_training_arrays(
@@ -172,7 +194,9 @@ def fit_monotone_ranked_association_model(
         options=options,
     )
     signed_binary = _finite_features(binary_features) * directions
-    center, scale = _robust_center_scale(signed_binary.reshape(-1, signed_binary.shape[-1]))
+    center, scale = _robust_center_scale(
+        signed_binary.reshape(-1, signed_binary.shape[-1])
+    )
     normalized_differences = differences / scale
     weights = _fit_projected_logistic_ranker(normalized_differences, options)
     ranker = MonotonePairwiseRanker(
@@ -226,7 +250,9 @@ def _collect_training_arrays(
             positive = features[row, col]
             binary_features.append(positive)
             binary_labels.append(1)
-            negatives = _hard_negative_indices(labels, hardness, int(row), int(col), options=options)
+            negatives = _hard_negative_indices(
+                labels, hardness, int(row), int(col), options=options
+            )
             for neg_row, neg_col in negatives:
                 negative = features[neg_row, neg_col]
                 binary_features.append(negative)
@@ -237,16 +263,29 @@ def _collect_training_arrays(
     feature_array = np.asarray(binary_features, dtype=float)
     label_array = np.asarray(binary_labels, dtype=int)
     difference_array = np.asarray(differences, dtype=float)
-    if options.max_preference_pairs is not None and difference_array.shape[0] > options.max_preference_pairs:
+    if (
+        options.max_preference_pairs is not None
+        and difference_array.shape[0] > options.max_preference_pairs
+    ):
         rng = np.random.default_rng(options.random_seed)
-        keep = np.sort(rng.choice(difference_array.shape[0], size=options.max_preference_pairs, replace=False))
+        keep = np.sort(
+            rng.choice(
+                difference_array.shape[0],
+                size=options.max_preference_pairs,
+                replace=False,
+            )
+        )
         difference_array = difference_array[keep]
     return feature_array, label_array, difference_array
 
 
-def _selected_block_features(block: ReferencePairwiseExamples, feature_names: tuple[str, ...]) -> np.ndarray:
+def _selected_block_features(
+    block: ReferencePairwiseExamples, feature_names: tuple[str, ...]
+) -> np.ndarray:
     feature_indices = [tuple(block.feature_names).index(name) for name in feature_names]
-    return _finite_features(np.asarray(block.features, dtype=float)[..., feature_indices])
+    return _finite_features(
+        np.asarray(block.features, dtype=float)[..., feature_indices]
+    )
 
 
 def _hard_negative_indices(
@@ -260,12 +299,22 @@ def _hard_negative_indices(
     negatives: list[tuple[int, int]] = []
     if options.row_negatives_per_positive:
         row_candidates = np.flatnonzero(labels[row] == 0)
-        ordered_cols = row_candidates[np.argsort(hardness[row, row_candidates], kind="mergesort")]
-        negatives.extend((row, int(candidate_col)) for candidate_col in ordered_cols[: options.row_negatives_per_positive])
+        ordered_cols = row_candidates[
+            np.argsort(hardness[row, row_candidates], kind="mergesort")
+        ]
+        negatives.extend(
+            (row, int(candidate_col))
+            for candidate_col in ordered_cols[: options.row_negatives_per_positive]
+        )
     if options.column_negatives_per_positive:
         col_candidates = np.flatnonzero(labels[:, col] == 0)
-        ordered_rows = col_candidates[np.argsort(hardness[col_candidates, col], kind="mergesort")]
-        negatives.extend((int(candidate_row), col) for candidate_row in ordered_rows[: options.column_negatives_per_positive])
+        ordered_rows = col_candidates[
+            np.argsort(hardness[col_candidates, col], kind="mergesort")
+        ]
+        negatives.extend(
+            (int(candidate_row), col)
+            for candidate_row in ordered_rows[: options.column_negatives_per_positive]
+        )
     return list(dict.fromkeys(negatives))
 
 
@@ -278,17 +327,24 @@ def _hardness_score(
     if options.hardness_feature_names:
         names = tuple(options.hardness_feature_names)
     else:
-        names = tuple(name for name in _DEFAULT_HARDNESS_FEATURES if name in feature_names)
+        names = tuple(
+            name for name in _DEFAULT_HARDNESS_FEATURES if name in feature_names
+        )
     if not names:
         signed = selected_features * directions
         return np.mean(_robust_normalize_planes(signed), axis=-1)
     indices = [feature_names.index(name) for name in names if name in feature_names]
     if not indices:
         return np.zeros(selected_features.shape[:2], dtype=float)
-    return np.mean(_robust_normalize_planes(selected_features[..., indices] * directions[indices]), axis=-1)
+    return np.mean(
+        _robust_normalize_planes(selected_features[..., indices] * directions[indices]),
+        axis=-1,
+    )
 
 
-def _fit_projected_logistic_ranker(differences: np.ndarray, options: MonotoneRankerOptions) -> np.ndarray:
+def _fit_projected_logistic_ranker(
+    differences: np.ndarray, options: MonotoneRankerOptions
+) -> np.ndarray:
     differences = np.asarray(differences, dtype=float)
     weights = np.zeros((differences.shape[1],), dtype=float)
     learning_rate = float(options.learning_rate)
@@ -301,7 +357,9 @@ def _fit_projected_logistic_ranker(differences: np.ndarray, options: MonotoneRan
     return weights
 
 
-def _feature_direction(feature_name: str, overrides: Mapping[str, float] | None) -> float:
+def _feature_direction(
+    feature_name: str, overrides: Mapping[str, float] | None
+) -> float:
     if overrides is not None and feature_name in overrides:
         return 1.0 if float(overrides[feature_name]) > 0.0 else -1.0
     lower = feature_name.lower()
@@ -315,7 +373,9 @@ def _feature_direction(feature_name: str, overrides: Mapping[str, float] | None)
 
 
 def _finite_features(features: np.ndarray) -> np.ndarray:
-    return np.nan_to_num(np.asarray(features, dtype=float), nan=0.0, posinf=1.0e6, neginf=-1.0e6)
+    return np.nan_to_num(
+        np.asarray(features, dtype=float), nan=0.0, posinf=1.0e6, neginf=-1.0e6
+    )
 
 
 def _robust_center_scale(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -335,7 +395,12 @@ def _robust_normalize_planes(values: np.ndarray) -> np.ndarray:
     return (values - center) / scale
 
 
-def _score_scale(signed_binary: np.ndarray, center: np.ndarray, scale: np.ndarray, weights: np.ndarray) -> float:
+def _score_scale(
+    signed_binary: np.ndarray,
+    center: np.ndarray,
+    scale: np.ndarray,
+    weights: np.ndarray,
+) -> float:
     scores = ((signed_binary - center) / scale) @ weights
     finite_scores = scores[np.isfinite(scores)]
     if finite_scores.size == 0:

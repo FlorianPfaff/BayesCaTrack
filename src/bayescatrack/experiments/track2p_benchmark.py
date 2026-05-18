@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import numpy as np
-from bayescatrack.association.calibrated_costs import CalibratedAssociationModel
 from bayescatrack.association.pyrecest_global_assignment import (
     AssociationCost,
     GlobalAssignmentRun,
@@ -524,7 +523,7 @@ def solve_configured_global_assignment(
     config: Track2pBenchmarkConfig,
     *,
     cost: AssociationCost | None = None,
-    calibrated_model: CalibratedAssociationModel | None = None,
+    calibrated_model: Any | None = None,
 ) -> GlobalAssignmentRun:
     """Run global assignment using the benchmark configuration knobs."""
 
@@ -824,7 +823,9 @@ def _filter_tracks_by_seed_rois(
     return predicted_matrix[np.asarray(keep, dtype=bool)]
 
 
-def _reference_seed_roi_set(reference_matrix: np.ndarray, *, seed_session: int) -> set[int]:
+def _reference_seed_roi_set(
+    reference_matrix: np.ndarray, *, seed_session: int
+) -> set[int]:
     if seed_session < 0 or seed_session >= reference_matrix.shape[1]:
         raise IndexError(
             f"seed_session {seed_session} out of bounds for {reference_matrix.shape[1]} sessions"
