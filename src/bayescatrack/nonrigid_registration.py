@@ -46,7 +46,7 @@ class NonrigidRegistration:
     inverse_x: np.ndarray
 
 
-# pylint: disable=too-many-arguments,too-many-locals
+# pylint: disable=too-many-arguments,too-many-locals,too-many-branches
 def register_measurement_plane_by_nonrigid_fov(
     reference_plane: CalciumPlaneData,
     measurement_plane: CalciumPlaneData,
@@ -56,6 +56,7 @@ def register_measurement_plane_by_nonrigid_fov(
     min_tile_size: int = 24,
     max_shift_fraction: float = 0.75,
     tps_regularization: float = 1.0e-3,
+    bspline_regularization: float = 1.0e-2,
     optical_flow_iterations: int = 12,
     optical_flow_alpha: float = 25.0,
     **unused_options: object,
@@ -70,6 +71,8 @@ def register_measurement_plane_by_nonrigid_fov(
         raise ValueError("grid_shape must contain at least two tiles per axis")
     if tps_regularization < 0.0:
         raise ValueError("tps_regularization must be non-negative")
+    if bspline_regularization < 0.0:
+        raise ValueError("bspline_regularization must be non-negative")
     if optical_flow_iterations < 0:
         raise ValueError("optical_flow_iterations must be non-negative")
     if optical_flow_alpha <= 0.0:
@@ -86,6 +89,7 @@ def register_measurement_plane_by_nonrigid_fov(
     )
     output_shape = reference_plane.image_shape
     base_y, base_x = _affine_inverse_grid(estimate.inverse_matrix_xy, output_shape)
+    bspline_control_shape = _bspline_control_shape(output_shape, grid_shape)
 
     reference_xy = np.asarray(estimate.tile_reference_xy, dtype=float)
     measurement_xy = np.asarray(estimate.tile_measurement_xy, dtype=float)
@@ -100,9 +104,19 @@ def register_measurement_plane_by_nonrigid_fov(
                 fallback_x=base_x,
             )
             backend = "thin-plate-spline-landmark-warp"
+        elif method == "bspline":
+            inverse_y, inverse_x = _bspline_inverse_grid(
+                reference_xy,
+                measurement_xy,
+                output_shape,
+                fallback_y=base_y,
+                fallback_x=base_x,
+                control_shape_yx=bspline_control_shape,
+                regularization=bspline_regularization,
+            )
+            backend = "tensor-product-cubic-bspline-landmark-warp"
         else:
             nearest = 4 if method == "local-affine-grid" else None
-            smooth_iterations = 2 if method == "bspline" else 0
             inverse_y, inverse_x = _idw_inverse_grid(
                 reference_xy,
                 measurement_xy,
@@ -110,7 +124,7 @@ def register_measurement_plane_by_nonrigid_fov(
                 fallback_y=base_y,
                 fallback_x=base_x,
                 nearest=nearest,
-                smooth_iterations=smooth_iterations,
+                smooth_iterations=0,
             )
             backend = (
                 "local-landmark-grid-warp"
@@ -153,6 +167,10 @@ def register_measurement_plane_by_nonrigid_fov(
             "nonrigid_registration_fallback_translation": bool(estimate.fallback_translation),
             "nonrigid_registration_inverse_warp_valid_fraction": valid_fraction,
             "nonrigid_registration_tps_regularization": float(tps_regularization),
+            "nonrigid_registration_bspline_regularization": float(bspline_regularization),
+            "nonrigid_registration_bspline_control_shape": tuple(
+                int(value) for value in bspline_control_shape
+            ),
             "nonrigid_registration_optical_flow_iterations": int(optical_flow_iterations),
             "nonrigid_registration_optical_flow_alpha": float(optical_flow_alpha),
         }
@@ -254,6 +272,176 @@ def _idw_inverse_grid(
         inv_y = _smooth_field(inv_y, fallback_y)
         inv_x = _smooth_field(inv_x, fallback_x)
     return inv_y, inv_x
+
+
+def _bspline_control_shape(
+    output_shape: tuple[int, int],
+    grid_shape: tuple[int, int],
+) -> tuple[int, int]:
+    """Return a padded cubic B-spline control lattice shape in y/x order."""
+
+    del output_shape
+    return (
+        max(4, int(grid_shape[0]) + 3),
+        max(4, int(grid_shape[1]) + 3),
+    )
+
+
+# pylint: disable=too-many-arguments,too-many-locals
+def _bspline_inverse_grid(
+    reference_xy: np.ndarray,
+    measurement_xy: np.ndarray,
+    output_shape: tuple[int, int],
+    *,
+    fallback_y: np.ndarray,
+    fallback_x: np.ndarray,
+    control_shape_yx: tuple[int, int],
+    regularization: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    control_disp_y, control_disp_x = _fit_bspline_control_displacements(
+        reference_xy,
+        measurement_xy,
+        output_shape,
+        fallback_y=fallback_y,
+        fallback_x=fallback_x,
+        control_shape_yx=control_shape_yx,
+        regularization=regularization,
+    )
+    yy, xx = np.indices(output_shape, dtype=float)
+    query = np.column_stack((xx.ravel(), yy.ravel()))
+    inv_y_flat = np.empty(query.shape[0], dtype=float)
+    inv_x_flat = np.empty(query.shape[0], dtype=float)
+    chunk_size = 32768
+    disp_y_flat = control_disp_y.ravel()
+    disp_x_flat = control_disp_x.ravel()
+    for start in range(0, query.shape[0], chunk_size):
+        stop = min(start + chunk_size, query.shape[0])
+        chunk = query[start:stop]
+        basis = _bspline_design_matrix(chunk, output_shape, control_shape_yx)
+        inv_x_flat[start:stop] = chunk[:, 0] + basis @ disp_x_flat
+        inv_y_flat[start:stop] = chunk[:, 1] + basis @ disp_y_flat
+    inv_y = inv_y_flat.reshape(output_shape)
+    inv_x = inv_x_flat.reshape(output_shape)
+    return _fill_invalid(inv_y, fallback_y), _fill_invalid(inv_x, fallback_x)
+
+
+# pylint: disable=too-many-arguments,too-many-locals
+def _fit_bspline_control_displacements(
+    reference_xy: np.ndarray,
+    measurement_xy: np.ndarray,
+    output_shape: tuple[int, int],
+    *,
+    fallback_y: np.ndarray,
+    fallback_x: np.ndarray,
+    control_shape_yx: tuple[int, int],
+    regularization: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    reference_xy = np.asarray(reference_xy, dtype=float)
+    measurement_xy = np.asarray(measurement_xy, dtype=float)
+    displacement_xy = measurement_xy - reference_xy
+    design = _bspline_design_matrix(reference_xy, output_shape, control_shape_yx)
+    control_xy = _bspline_control_positions(output_shape, control_shape_yx)
+    fallback_control_x = _sample_scalar_field_bilinear(fallback_x, control_xy)
+    fallback_control_y = _sample_scalar_field_bilinear(fallback_y, control_xy)
+    fallback_disp_x = fallback_control_x - control_xy[:, 0]
+    fallback_disp_y = fallback_control_y - control_xy[:, 1]
+    penalty = float(max(regularization, 0.0))
+    normal = design.T @ design + penalty * np.eye(design.shape[1])
+    rhs_x = design.T @ displacement_xy[:, 0] + penalty * fallback_disp_x
+    rhs_y = design.T @ displacement_xy[:, 1] + penalty * fallback_disp_y
+    coef_x = _solve_or_lstsq(normal, rhs_x)
+    coef_y = _solve_or_lstsq(normal, rhs_y)
+    return coef_y.reshape(control_shape_yx), coef_x.reshape(control_shape_yx)
+
+
+def _solve_or_lstsq(system: np.ndarray, rhs: np.ndarray) -> np.ndarray:
+    try:
+        return np.linalg.solve(system, rhs)
+    except np.linalg.LinAlgError:
+        return np.linalg.lstsq(system, rhs, rcond=None)[0]
+
+
+def _bspline_design_matrix(
+    points_xy: np.ndarray,
+    output_shape: tuple[int, int],
+    control_shape_yx: tuple[int, int],
+) -> np.ndarray:
+    points_xy = np.asarray(points_xy, dtype=float)
+    control_y, control_x = int(control_shape_yx[0]), int(control_shape_yx[1])
+    control_coord_y, control_coord_x = _bspline_control_coordinates(
+        points_xy,
+        output_shape,
+        control_shape_yx,
+    )
+    base_y = np.floor(control_coord_y).astype(int)
+    base_x = np.floor(control_coord_x).astype(int)
+    weights_y = _cubic_bspline_weights(control_coord_y - base_y)
+    weights_x = _cubic_bspline_weights(control_coord_x - base_x)
+    design = np.zeros((points_xy.shape[0], control_y * control_x), dtype=float)
+    rows = np.arange(points_xy.shape[0])
+    for offset_y in range(4):
+        node_y = np.clip(base_y + offset_y - 1, 0, control_y - 1)
+        for offset_x in range(4):
+            node_x = np.clip(base_x + offset_x - 1, 0, control_x - 1)
+            columns = node_y * control_x + node_x
+            weights = weights_y[:, offset_y] * weights_x[:, offset_x]
+            np.add.at(design, (rows, columns), weights)
+    return design
+
+
+def _bspline_control_coordinates(
+    points_xy: np.ndarray,
+    output_shape: tuple[int, int],
+    control_shape_yx: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray]:
+    height, width = int(output_shape[0]), int(output_shape[1])
+    control_y, control_x = int(control_shape_yx[0]), int(control_shape_yx[1])
+    scale_x = (control_x - 3) / max(width - 1, 1)
+    scale_y = (control_y - 3) / max(height - 1, 1)
+    return 1.0 + points_xy[:, 1] * scale_y, 1.0 + points_xy[:, 0] * scale_x
+
+
+def _bspline_control_positions(
+    output_shape: tuple[int, int],
+    control_shape_yx: tuple[int, int],
+) -> np.ndarray:
+    height, width = int(output_shape[0]), int(output_shape[1])
+    control_y, control_x = int(control_shape_yx[0]), int(control_shape_yx[1])
+    node_y, node_x = np.indices((control_y, control_x), dtype=float)
+    x = (node_x.ravel() - 1.0) * max(width - 1, 1) / max(control_x - 3, 1)
+    y = (node_y.ravel() - 1.0) * max(height - 1, 1) / max(control_y - 3, 1)
+    return np.column_stack((x, y))
+
+
+def _sample_scalar_field_bilinear(field: np.ndarray, points_xy: np.ndarray) -> np.ndarray:
+    field = np.asarray(field, dtype=float)
+    x = np.clip(points_xy[:, 0], 0.0, max(field.shape[1] - 1, 0))
+    y = np.clip(points_xy[:, 1], 0.0, max(field.shape[0] - 1, 0))
+    y0 = np.floor(y).astype(int)
+    x0 = np.floor(x).astype(int)
+    y1 = np.clip(y0 + 1, 0, field.shape[0] - 1)
+    x1 = np.clip(x0 + 1, 0, field.shape[1] - 1)
+    wy = y - y0
+    wx = x - x0
+    return (
+        (1.0 - wy) * (1.0 - wx) * field[y0, x0]
+        + (1.0 - wy) * wx * field[y0, x1]
+        + wy * (1.0 - wx) * field[y1, x0]
+        + wy * wx * field[y1, x1]
+    )
+
+
+def _cubic_bspline_weights(fraction: np.ndarray) -> np.ndarray:
+    fraction = np.asarray(fraction, dtype=float)
+    return np.column_stack(
+        (
+            ((1.0 - fraction) ** 3) / 6.0,
+            (3.0 * fraction**3 - 6.0 * fraction**2 + 4.0) / 6.0,
+            (-3.0 * fraction**3 + 3.0 * fraction**2 + 3.0 * fraction + 1.0)
+            / 6.0,
+            fraction**3 / 6.0,
+        )
+    )
 
 
 def _tps_inverse_grid(
