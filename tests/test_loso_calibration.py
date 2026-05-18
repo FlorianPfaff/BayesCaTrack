@@ -68,6 +68,7 @@ def _install_fake_pyrecest(monkeypatch):
     fake_models = types.ModuleType("pyrecest.utils.association_models")
     fake_assignment = types.ModuleType("pyrecest.utils.multisession_assignment")
     fit_models = []
+    solve_kwargs = []
 
     class LogisticPairwiseAssociationModel:
         def __init__(self, **kwargs):
@@ -95,11 +96,13 @@ def _install_fake_pyrecest(monkeypatch):
     def solve_multisession_assignment(pairwise_costs, **kwargs):
         assert set(pairwise_costs) == {(0, 1), (0, 2), (1, 2)}
         assert kwargs["session_sizes"] == (2, 2, 2)
+        solve_kwargs.append(dict(kwargs))
         return Result()
 
     fake_models.LogisticPairwiseAssociationModel = LogisticPairwiseAssociationModel
     fake_models.fit_models = fit_models
     fake_assignment.solve_multisession_assignment = solve_multisession_assignment
+    fake_assignment.solve_kwargs = solve_kwargs
     monkeypatch.setitem(sys.modules, "pyrecest", fake_pyrecest)
     monkeypatch.setitem(sys.modules, "pyrecest.utils", fake_utils)
     monkeypatch.setitem(sys.modules, "pyrecest.utils.association_models", fake_models)
@@ -238,6 +241,54 @@ def test_loso_calibration_balanced_strategy_uses_one_explicit_weighting(
         _features, labels, sample_weight = model.fit_args
         assert sample_weight is not None
         assert np.asarray(sample_weight).shape == labels.shape
+
+
+def test_loso_calibration_tunes_solver_priors_inside_training_fold(
+    tmp_path, monkeypatch, write_raw_npy_session
+):
+    _prepare_loso_fixture(
+        tmp_path,
+        monkeypatch,
+        lambda subject_dir: _write_ground_truth_subject(
+            subject_dir, write_raw_npy_session
+        ),
+    )
+    from bayescatrack.experiments.track2p_loso_calibration import (
+        SolverPriorTuningOptions,
+        run_track2p_loso_calibration,
+    )
+
+    results = run_track2p_loso_calibration(
+        _loso_config(tmp_path),
+        tune_solver_priors=True,
+        solver_prior_options=SolverPriorTuningOptions(
+            objective="complete_track_f1",
+            start_costs=(0.75,),
+            end_costs=(0.8,),
+            gap_penalties=(0.4,),
+            cost_thresholds=(2.5,),
+        ),
+    ).to_benchmark_results()
+
+    assert [result.subject for result in results] == ["jm001", "jm002"]
+    for result in results:
+        row = result.to_dict()
+        assert row["variant"] == "Calibrated costs + LOSO tuned-prior global assignment"
+        assert row["solver_prior_objective"] == "complete_track_f1"
+        assert row["solver_prior_objective_score"] == pytest.approx(1.0)
+        assert row["solver_prior_candidate_count"] == 1
+        assert row["tuned_start_cost"] == pytest.approx(0.75)
+        assert row["tuned_end_cost"] == pytest.approx(0.8)
+        assert row["tuned_gap_penalty"] == pytest.approx(0.4)
+        assert row["tuned_cost_threshold"] == pytest.approx(2.5)
+
+    fake_assignment = sys.modules["pyrecest.utils.multisession_assignment"]
+    assert len(fake_assignment.solve_kwargs) == 4
+    for kwargs in fake_assignment.solve_kwargs:
+        assert kwargs["start_cost"] == pytest.approx(0.75)
+        assert kwargs["end_cost"] == pytest.approx(0.8)
+        assert kwargs["gap_penalty"] == pytest.approx(0.4)
+        assert kwargs["cost_threshold"] == pytest.approx(2.5)
 
 
 def test_loso_calibration_uses_aligned_rows_when_track2p_reference_is_absent(
