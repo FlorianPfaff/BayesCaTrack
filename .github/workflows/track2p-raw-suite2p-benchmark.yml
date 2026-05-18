@@ -45,10 +45,20 @@ on:
         type: boolean
         default: false
         required: true
+      run_shifted_iou_only:
+        description: "Run only the tuned FOV-affine shifted-IoU comparison"
+        type: boolean
+        default: false
+        required: true
       soft_iou_radii:
         description: "Comma-separated soft-IoU radii for FOV-affine sweep"
         type: string
         default: "1,2,3"
+        required: true
+      shifted_iou_radii:
+        description: "Comma-separated shifted-IoU radii for tuned FOV-affine comparison"
+        type: string
+        default: "2"
         required: true
       exclude_subjects:
         description: "Comma-separated manual-GT subjects to exclude"
@@ -195,8 +205,65 @@ jobs:
           done
           bayescatrack benchmark compare "${compare_args[@]}" --output results/fov_affine_soft_iou_comparison.md
 
+      - name: Run tuned FOV-affine shifted-IoU comparison
+        if: ${{ inputs.run_shifted_iou_only }}
+        env:
+          MAX_GAP: ${{ inputs.max_gap }}
+          SHIFTED_IOU_RADII: ${{ inputs.shifted_iou_radii }}
+        run: |
+          set -euo pipefail
+          python -m bayescatrack.experiments.track2p_fov_affine_benchmark \
+            --data benchmark-raw-suite2p-subjects \
+            --reference benchmark-raw-suite2p-subjects \
+            --reference-kind manual-gt \
+            --input-format suite2p \
+            --include-non-cells \
+            --no-include-behavior \
+            --method global-assignment \
+            --cost registered-iou \
+            --max-gap "$MAX_GAP" \
+            --start-cost 1 \
+            --end-cost 1 \
+            --gap-penalty 0.6 \
+            --cost-threshold 2 \
+            --progress \
+            --format csv \
+            --output "results/global_registered_iou_fov_affine_tuned_gap${MAX_GAP}.csv"
+
+          IFS=',' read -ra radii <<< "$SHIFTED_IOU_RADII"
+          compare_args=(--input "FOV-affine-r0-tuned=results/global_registered_iou_fov_affine_tuned_gap${MAX_GAP}.csv")
+          for radius in "${radii[@]}"; do
+            radius="$(echo "$radius" | xargs)"
+            if [[ -z "$radius" ]]; then
+              continue
+            fi
+            output="results/global_registered_shifted_iou_fov_affine_r${radius}_tuned_gap${MAX_GAP}.csv"
+            python -m bayescatrack.experiments.track2p_shifted_iou_benchmark \
+              --data benchmark-raw-suite2p-subjects \
+              --reference benchmark-raw-suite2p-subjects \
+              --reference-kind manual-gt \
+              --input-format suite2p \
+              --include-non-cells \
+              --no-include-behavior \
+              --method global-assignment \
+              --cost registered-iou \
+              --transform-type fov-affine \
+              --max-gap "$MAX_GAP" \
+              --start-cost 1 \
+              --end-cost 1 \
+              --gap-penalty 0.6 \
+              --cost-threshold 2 \
+              --shifted-iou-radius "$radius" \
+              --progress \
+              --format csv \
+              --output "$output"
+            compare_args+=(--input "FOV-affine-shifted-r${radius}-tuned=${output}")
+          done
+          bayescatrack benchmark compare "${compare_args[@]}" --output results/fov_affine_shifted_iou_comparison.md
+          bayescatrack benchmark compare "${compare_args[@]}" --format csv --output results/fov_affine_shifted_iou_comparison.csv
+
       - name: Run Track2p baseline
-        if: ${{ !inputs.run_fov_affine_soft_iou_only }}
+        if: ${{ !inputs.run_fov_affine_soft_iou_only && !inputs.run_shifted_iou_only }}
         run: |
           bayescatrack benchmark track2p \
             --data "${{ steps.prep.outputs.data_root }}" \
@@ -210,7 +277,7 @@ jobs:
             --output results/track2p_baseline.csv
 
       - name: Run registered-IoU global assignment
-        if: ${{ !inputs.run_fov_affine_soft_iou_only }}
+        if: ${{ !inputs.run_fov_affine_soft_iou_only && !inputs.run_shifted_iou_only }}
         run: |
           bayescatrack benchmark track2p \
             --data "${{ steps.prep.outputs.data_root }}" \
@@ -227,7 +294,7 @@ jobs:
             --output results/global_registered_iou_gap${{ inputs.max_gap }}.csv
 
       - name: Run ROI-aware global assignment
-        if: ${{ !inputs.run_fov_affine_soft_iou_only }}
+        if: ${{ !inputs.run_fov_affine_soft_iou_only && !inputs.run_shifted_iou_only }}
         run: |
           bayescatrack benchmark track2p \
             --data "${{ steps.prep.outputs.data_root }}" \
@@ -246,7 +313,7 @@ jobs:
             --output results/global_roi_aware_gap${{ inputs.max_gap }}.csv
 
       - name: Run calibrated LOSO global assignment
-        if: ${{ inputs.run_calibrated_loso && !inputs.run_fov_affine_soft_iou_only }}
+        if: ${{ inputs.run_calibrated_loso && !inputs.run_fov_affine_soft_iou_only && !inputs.run_shifted_iou_only }}
         run: |
           bayescatrack benchmark track2p \
             --data "${{ steps.prep.outputs.data_root }}" \
@@ -264,7 +331,7 @@ jobs:
             --output results/global_calibrated_loso_gap${{ inputs.max_gap }}.csv
 
       - name: Aggregate benchmark comparison
-        if: ${{ !inputs.run_fov_affine_soft_iou_only }}
+        if: ${{ !inputs.run_fov_affine_soft_iou_only && !inputs.run_shifted_iou_only }}
         env:
           MAX_GAP: ${{ inputs.max_gap }}
           RUN_LOSO: ${{ inputs.run_calibrated_loso }}
@@ -291,6 +358,20 @@ jobs:
             echo "max_gap: ${{ inputs.max_gap }}"
             echo "soft_iou_radii: ${{ inputs.soft_iou_radii }}"
             cat results/fov_affine_soft_iou_comparison.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Add FOV-affine shifted-IoU comparison to job summary
+        if: always() && hashFiles('results/fov_affine_shifted_iou_comparison.md') != ''
+        run: |
+          {
+            echo "## Tuned FOV-affine shifted-IoU comparison"
+            echo "Included usable manual-GT subjects: ${{ steps.prep.outputs.included }}"
+            echo "Excluded by user: ${{ steps.prep.outputs.excluded_by_user }}"
+            echo "include_non_cells: true"
+            echo "max_gap: ${{ inputs.max_gap }}"
+            echo "solver: start_cost=1, end_cost=1, gap_penalty=0.6, cost_threshold=2"
+            echo "shifted_iou_radii: ${{ inputs.shifted_iou_radii }}"
+            cat results/fov_affine_shifted_iou_comparison.md
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Add comparison to job summary
