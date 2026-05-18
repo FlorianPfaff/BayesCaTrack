@@ -6,10 +6,12 @@ import pytest
 from bayescatrack.experiments.benchmark_comparison import (
     ComparisonInput,
     aggregate_rows,
+    build_reference_gap_rows,
     format_best_summary,
     format_markdown_table,
     format_reference_gap_summary,
     load_labeled_rows,
+    write_reference_gap_csv,
 )
 
 
@@ -75,7 +77,7 @@ def test_aggregate_rows_reports_macro_and_micro_f1(tmp_path):
 
 
 def test_markdown_table_highlights_best_cells():
-    rows = [
+    rows: list[dict[str, float | int | str]] = [
         {
             "approach": "Base",
             "subjects": 10,
@@ -107,7 +109,7 @@ def test_markdown_table_highlights_best_cells():
 
 
 def test_best_summary_names_best_approach_for_main_metrics():
-    rows = [
+    rows: list[dict[str, float | int | str]] = [
         {
             "approach": "Base",
             "subjects": 2,
@@ -138,7 +140,7 @@ def test_best_summary_names_best_approach_for_main_metrics():
 
 
 def test_reference_gap_summary_reports_best_non_reference_gap():
-    rows = [
+    rows: list[dict[str, float | int | str]] = [
         {
             "approach": "Track2p",
             "subjects": 2,
@@ -176,3 +178,42 @@ def test_reference_gap_summary_reports_best_non_reference_gap():
     assert "### Gap to Track2p" in summary
     assert "| pairwise F1 mean | 0.950 | Tuned | 0.700 | -0.250 |" in summary
     assert "| complete-track F1 micro | 0.910 | Tuned | 0.620 | -0.290 |" in summary
+
+
+def test_reference_gap_csv_is_machine_readable(tmp_path):
+    rows: list[dict[str, float | int | str]] = [
+        {
+            "approach": "Track2p",
+            "subjects": 2,
+            "pairwise_f1_macro": 0.95,
+            "pairwise_f1_sd": 0.01,
+            "pairwise_f1_micro": 0.96,
+            "complete_track_f1_macro": 0.90,
+            "complete_track_f1_sd": 0.03,
+            "complete_track_f1_micro": 0.91,
+        },
+        {
+            "approach": "Tuned",
+            "subjects": 2,
+            "pairwise_f1_macro": 0.70,
+            "pairwise_f1_sd": 0.02,
+            "pairwise_f1_micro": 0.72,
+            "complete_track_f1_macro": 0.60,
+            "complete_track_f1_sd": 0.04,
+            "complete_track_f1_micro": 0.62,
+        },
+    ]
+
+    gap_rows = build_reference_gap_rows(rows, reference_approach="Track2p")
+    output_path = tmp_path / "reference_gaps.csv"
+    write_reference_gap_csv(rows, output_path, reference_approach="Track2p")
+
+    with output_path.open("r", encoding="utf-8", newline="") as handle:
+        csv_rows = list(csv.DictReader(handle))
+
+    assert gap_rows[0]["metric_column"] == "pairwise_f1_macro"
+    assert gap_rows[0]["gap_to_reference"] == pytest.approx(-0.25)
+    assert csv_rows[0]["metric"] == "pairwise F1 mean"
+    assert csv_rows[0]["reference_approach"] == "Track2p"
+    assert csv_rows[0]["best_non_reference_approach"] == "Tuned"
+    assert float(csv_rows[0]["gap_to_reference"]) == pytest.approx(-0.25)

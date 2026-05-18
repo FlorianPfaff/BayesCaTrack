@@ -75,6 +75,23 @@ def write_comparison(
     output_path.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
 
 
+def write_reference_gap_csv(
+    rows: Sequence[dict[str, float | int | str]],
+    output_path: Path,
+    *,
+    reference_approach: str | None,
+) -> None:
+    """Write machine-readable best non-reference gaps to a CSV artifact."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=_reference_gap_columns())
+        writer.writeheader()
+        writer.writerows(
+            build_reference_gap_rows(rows, reference_approach=reference_approach)
+        )
+
+
 def format_markdown_table(
     rows: Sequence[dict[str, float | int | str]],
     *,
@@ -139,12 +156,8 @@ def format_reference_gap_summary(
 ) -> str:
     """Format a Markdown table comparing the best non-reference row to a baseline."""
 
-    reference = _reference_row(rows, reference_approach=reference_approach)
-    competitors = tuple(row for row in rows if row is not reference)
-    if not competitors:
-        raise ValueError("At least one non-reference approach is required")
-
-    reference_name = str(reference["approach"])
+    gap_rows = build_reference_gap_rows(rows, reference_approach=reference_approach)
+    reference_name = str(gap_rows[0]["reference_approach"])
     body = [
         f"### Gap to {reference_name}",
         "",
@@ -154,18 +167,47 @@ def format_reference_gap_summary(
         ),
         "| --- | ---: | --- | ---: | ---: |",
     ]
+    for row in gap_rows:
+        body.append(
+            "| "
+            f"{row['metric']} | "
+            f"{_format_value(_as_float(row['reference_value']))} | "
+            f"{row['best_non_reference_approach']} | "
+            f"{_format_value(_as_float(row['best_non_reference_value']))} | "
+            f"{_format_delta(_as_float(row['gap_to_reference']))} |"
+        )
+    return "\n".join(body)
+
+
+def build_reference_gap_rows(
+    rows: Sequence[dict[str, float | int | str]],
+    *,
+    reference_approach: str | None,
+) -> list[dict[str, float | str]]:
+    """Build structured rows comparing best competitors to a reference approach."""
+
+    reference = _reference_row(rows, reference_approach=reference_approach)
+    competitors = tuple(row for row in rows if row is not reference)
+    if not competitors:
+        raise ValueError("At least one non-reference approach is required")
+
+    reference_name = str(reference["approach"])
+    gap_rows: list[dict[str, float | str]] = []
     for column in _best_metric_columns():
         reference_value = _as_float(reference[column])
         competitor_names, competitor_value = _best_competitor_rows(competitors, column)
-        body.append(
-            "| "
-            f"{_best_metric_headers()[column]} | "
-            f"{_format_value(reference_value)} | "
-            f"{', '.join(competitor_names)} | "
-            f"{_format_value(competitor_value)} | "
-            f"{_format_delta(competitor_value - reference_value)} |"
+        gap_rows.append(
+            {
+                "metric": _best_metric_headers()[column],
+                "metric_column": column,
+                "reference_approach": reference_name,
+                "reference_value": reference_value,
+                "best_non_reference_approach": ", ".join(competitor_names),
+                "best_non_reference_value": competitor_value,
+                "gap_to_reference": competitor_value - reference_value,
+            }
         )
-    return "\n".join(body)
+    return gap_rows
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -214,6 +256,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=None,
         help="Approach label used as the reference baseline in gap summaries",
     )
+    parser.add_argument(
+        "--reference-gap-output",
+        type=Path,
+        default=None,
+        help="Optional CSV path for best non-reference gaps to the reference approach",
+    )
     return parser
 
 
@@ -224,6 +272,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     inputs = [_parse_input_spec(spec) for spec in args.input]
     rows = aggregate_rows(load_labeled_rows(inputs))
+    if args.reference_gap_output is not None:
+        write_reference_gap_csv(
+            rows,
+            args.reference_gap_output,
+            reference_approach=args.reference_approach,
+        )
     if args.output is not None:
         write_comparison(
             rows,
@@ -326,6 +380,18 @@ def _aggregate_columns() -> list[str]:
         "complete_track_f1_macro",
         "complete_track_f1_sd",
         "complete_track_f1_micro",
+    ]
+
+
+def _reference_gap_columns() -> list[str]:
+    return [
+        "metric",
+        "metric_column",
+        "reference_approach",
+        "reference_value",
+        "best_non_reference_approach",
+        "best_non_reference_value",
+        "gap_to_reference",
     ]
 
 
