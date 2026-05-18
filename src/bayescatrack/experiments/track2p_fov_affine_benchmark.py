@@ -63,6 +63,34 @@ def _add_soft_iou_options(parser: Any) -> None:
             "max(exact IoU, dilated IoU) so near-miss masks are not hard zero-overlap candidates."
         ),
     )
+    parser.add_argument(
+        "--shifted-iou-radius",
+        type=int,
+        default=None,
+        help=(
+            "Optional local integer shift-search radius in pixels. Use with "
+            "--cost registered-shifted-iou, or set --shifted-iou-weight when "
+            "combining shifted overlap with another cost."
+        ),
+    )
+    parser.add_argument(
+        "--shifted-iou-weight",
+        type=float,
+        default=None,
+        help="Optional additive weight for shifted-IoU cost.",
+    )
+    parser.add_argument(
+        "--shifted-mask-cosine-weight",
+        type=float,
+        default=None,
+        help="Optional additive weight for shifted mask-cosine cost.",
+    )
+    parser.add_argument(
+        "--best-shift-norm-weight",
+        type=float,
+        default=None,
+        help="Optional additive weight penalizing nonzero best-overlap shifts.",
+    )
 
 
 def _soft_iou_pairwise_cost_matrix(
@@ -267,6 +295,30 @@ def _write_stdout(rows: list[dict[str, Any]], output_format: str) -> None:
     print(format_benchmark_table(rows))
 
 
+def _apply_shifted_overlap_cli_options(config: Any, args: Any) -> Any:
+    if not (
+        args.shifted_iou_radius is not None
+        or args.shifted_iou_weight is not None
+        or args.shifted_mask_cosine_weight is not None
+        or args.best_shift_norm_weight is not None
+    ):
+        return config
+    pairwise_cost_kwargs = dict(config.pairwise_cost_kwargs or {})
+    if args.shifted_iou_radius is not None:
+        pairwise_cost_kwargs["shifted_iou_radius"] = int(args.shifted_iou_radius)
+    if args.shifted_iou_weight is not None:
+        pairwise_cost_kwargs["shifted_iou_weight"] = float(args.shifted_iou_weight)
+    if args.shifted_mask_cosine_weight is not None:
+        pairwise_cost_kwargs["shifted_mask_cosine_weight"] = float(
+            args.shifted_mask_cosine_weight
+        )
+    if args.best_shift_norm_weight is not None:
+        pairwise_cost_kwargs["best_shift_norm_weight"] = float(
+            args.best_shift_norm_weight
+        )
+    return replace(config, pairwise_cost_kwargs=pairwise_cost_kwargs)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     parser.prog = "bayescatrack benchmark track2p-fov-affine"
@@ -278,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
         pairwise_cost_kwargs = dict(config.pairwise_cost_kwargs or {})
         pairwise_cost_kwargs["soft_iou_radius"] = int(args.soft_iou_radius)
         config = replace(config, pairwise_cost_kwargs=pairwise_cost_kwargs)
+    config = _apply_shifted_overlap_cli_options(config, args)
 
     import bayescatrack.association.pyrecest_global_assignment as assignment
 
@@ -308,6 +361,26 @@ def main(argv: list[str] | None = None) -> int:
     for row in rows:
         row["registration_wrapper"] = "fov-affine"
         row["soft_iou_radius"] = int(args.soft_iou_radius)
+        row["shifted_iou_radius"] = (
+            "default"
+            if args.shifted_iou_radius is None
+            else int(args.shifted_iou_radius)
+        )
+        row["shifted_iou_weight"] = (
+            "default"
+            if args.shifted_iou_weight is None
+            else float(args.shifted_iou_weight)
+        )
+        row["shifted_mask_cosine_weight"] = (
+            "default"
+            if args.shifted_mask_cosine_weight is None
+            else float(args.shifted_mask_cosine_weight)
+        )
+        row["best_shift_norm_weight"] = (
+            "default"
+            if args.best_shift_norm_weight is None
+            else float(args.best_shift_norm_weight)
+        )
     if args.output is not None:
         write_results(rows, Path(args.output), args.format)
     else:
