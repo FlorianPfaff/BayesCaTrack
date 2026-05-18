@@ -133,12 +133,12 @@ def test_tune_solver_priors_selects_best_training_candidate(monkeypatch):
         lambda *_args, **_kwargs: {(0, 1): np.asarray([[0.0]], dtype=float)},
     )
 
-    class Result:
+    class FakeSolverResult:
         def __init__(self, start_cost):
             self.tracks = [start_cost]
 
     def fake_solver(_pairwise_costs, **kwargs):
-        return Result(kwargs["start_cost"])
+        return FakeSolverResult(kwargs["start_cost"])
 
     monkeypatch.setattr(tuning, "_load_pyrecest_multisession_solver", lambda: fake_solver)
     monkeypatch.setattr(
