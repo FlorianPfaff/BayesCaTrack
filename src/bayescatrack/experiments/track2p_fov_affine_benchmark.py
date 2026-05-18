@@ -194,9 +194,9 @@ def _pairwise_iou_matrix_sparse(
             _bridge_impl,
         )
 
-        return _bridge_impl._pairwise_iou_matrix(
+        return _bridge_impl._pairwise_iou_matrix(  # pylint: disable=protected-access
             reference_masks, measurement_masks
-        )  # pylint: disable=protected-access
+        )
 
     reference_array = np.asarray(reference_masks) > 0
     measurement_array = np.asarray(measurement_masks) > 0

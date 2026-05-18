@@ -6,6 +6,7 @@ import pytest
 from bayescatrack.experiments.benchmark_comparison import (
     ComparisonInput,
     aggregate_rows,
+    format_best_summary,
     format_markdown_table,
     load_labeled_rows,
 )
@@ -102,3 +103,34 @@ def test_markdown_table_highlights_best_cells():
     assert "**0.900**" in table
     assert "**0.700**" in table
     assert "**0.880**" in table
+
+
+def test_best_summary_names_best_approach_for_main_metrics():
+    rows = [
+        {
+            "approach": "Base",
+            "subjects": 2,
+            "pairwise_f1_macro": 0.60,
+            "pairwise_f1_sd": 0.01,
+            "pairwise_f1_micro": 0.50,
+            "complete_track_f1_macro": 0.40,
+            "complete_track_f1_sd": 0.03,
+            "complete_track_f1_micro": 0.20,
+        },
+        {
+            "approach": "Tuned",
+            "subjects": 2,
+            "pairwise_f1_macro": 0.80,
+            "pairwise_f1_sd": 0.02,
+            "pairwise_f1_micro": 0.90,
+            "complete_track_f1_macro": 0.70,
+            "complete_track_f1_sd": 0.04,
+            "complete_track_f1_micro": 0.88,
+        },
+    ]
+
+    summary = format_best_summary(rows)
+
+    assert "### Best by Metric" in summary
+    assert "| pairwise F1 mean | Tuned | 0.800 |" in summary
+    assert "| complete-track F1 micro | Tuned | 0.880 |" in summary

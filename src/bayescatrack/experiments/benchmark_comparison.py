@@ -51,6 +51,7 @@ def write_comparison(
     output_format: str,
     *,
     highlight_best: bool = False,
+    include_best_summary: bool = False,
 ) -> None:
     """Write aggregate comparison rows as Markdown or CSV."""
 
@@ -61,10 +62,11 @@ def write_comparison(
             writer.writeheader()
             writer.writerows(rows)
         return
-    output_path.write_text(
-        format_markdown_table(rows, highlight_best=highlight_best) + "\n",
-        encoding="utf-8",
-    )
+    sections = []
+    if include_best_summary:
+        sections.append(format_best_summary(rows))
+    sections.append(format_markdown_table(rows, highlight_best=highlight_best))
+    output_path.write_text("\n\n".join(sections) + "\n", encoding="utf-8")
 
 
 def format_markdown_table(
@@ -106,6 +108,24 @@ def format_markdown_table(
     return "\n".join(body)
 
 
+def format_best_summary(rows: Sequence[dict[str, float | int | str]]) -> str:
+    """Format a short Markdown summary naming the best approach per metric."""
+
+    best_rows = _compute_best_rows(rows)
+    body = [
+        "### Best by Metric",
+        "",
+        "| metric | approach | value |",
+        "| --- | --- | ---: |",
+    ]
+    for column in _best_metric_columns():
+        approaches, value = best_rows[column]
+        body.append(
+            f"| {_best_metric_headers()[column]} | {', '.join(approaches)} | {_format_value(value)} |"
+        )
+    return "\n".join(body)
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the comparison-table CLI parser."""
 
@@ -137,6 +157,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Highlight best metric values in Markdown output",
     )
+    parser.add_argument(
+        "--include-best-summary",
+        action="store_true",
+        help="Prepend a Markdown summary naming the best approach for each metric",
+    )
     return parser
 
 
@@ -149,14 +174,22 @@ def main(argv: list[str] | None = None) -> int:
     rows = aggregate_rows(load_labeled_rows(inputs))
     if args.output is not None:
         write_comparison(
-            rows, args.output, args.format, highlight_best=args.highlight_best
+            rows,
+            args.output,
+            args.format,
+            highlight_best=args.highlight_best,
+            include_best_summary=args.include_best_summary,
         )
     elif args.format == "csv":
         writer = csv.DictWriter(sys.stdout, fieldnames=_aggregate_columns())
         writer.writeheader()
         writer.writerows(rows)
     else:
-        print(format_markdown_table(rows, highlight_best=args.highlight_best))
+        sections = []
+        if args.include_best_summary:
+            sections.append(format_best_summary(rows))
+        sections.append(format_markdown_table(rows, highlight_best=args.highlight_best))
+        print("\n\n".join(sections))
     return 0
 
 
@@ -236,18 +269,52 @@ def _aggregate_columns() -> list[str]:
     ]
 
 
-def _compute_best_values(
-    rows: Sequence[dict[str, float | int | str]],
-) -> dict[str, float]:
-    columns = {
+def _best_metric_columns() -> tuple[str, ...]:
+    return (
         "pairwise_f1_macro",
         "pairwise_f1_micro",
         "complete_track_f1_macro",
         "complete_track_f1_micro",
+    )
+
+
+def _best_metric_headers() -> dict[str, str]:
+    return {
+        "pairwise_f1_macro": "pairwise F1 mean",
+        "pairwise_f1_micro": "pairwise F1 micro",
+        "complete_track_f1_macro": "complete-track F1 mean",
+        "complete_track_f1_micro": "complete-track F1 micro",
     }
+
+
+def _compute_best_values(
+    rows: Sequence[dict[str, float | int | str]],
+) -> dict[str, float]:
     if not rows:
         return {}
-    return {column: max(_as_float(row[column]) for row in rows) for column in columns}
+    return {
+        column: max(_as_float(row[column]) for row in rows)
+        for column in _best_metric_columns()
+    }
+
+
+def _compute_best_rows(
+    rows: Sequence[dict[str, float | int | str]],
+) -> dict[str, tuple[tuple[str, ...], float]]:
+    if not rows:
+        raise ValueError("At least one aggregate row is required")
+    best_values = _compute_best_values(rows)
+    return {
+        column: (
+            tuple(
+                str(row["approach"])
+                for row in rows
+                if _value_is_best(_as_float(row[column]), best_values[column])
+            ),
+            best_values[column],
+        )
+        for column in _best_metric_columns()
+    }
 
 
 def _value_is_best(actual: float, expected: float) -> bool:
