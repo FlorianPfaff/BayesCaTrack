@@ -19,7 +19,9 @@ def _spot_image(shape: tuple[int, int], center_yx: tuple[int, int]) -> np.ndarra
 def _plane(shape: tuple[int, int], center_yx: tuple[int, int]) -> CalciumPlaneData:
     mask = np.zeros((1, *shape), dtype=bool)
     y, x = center_yx
-    mask[0, y - 2 : y + 3, x - 2 : x + 3] = True
+    y_start, y_stop = y - 2, y + 3
+    x_start, x_stop = x - 2, x + 3
+    mask[0, y_start:y_stop, x_start:x_stop] = True
     return CalciumPlaneData(
         roi_masks=mask,
         fov=_spot_image(shape, center_yx),
