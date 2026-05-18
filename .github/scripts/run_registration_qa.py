@@ -4,13 +4,15 @@ import argparse
 from pathlib import Path
 from typing import cast
 
+from bayescatrack.experiments.nonrigid_backend_audit import (
+    run_registration_backend_audit_report,
+    write_nonrigid_registration_backend_audit_results,
+)
 from bayescatrack.experiments.registration_qa_report import (
     RegistrationQAConfig,
     RegistrationQACost,
     run_registration_qa_report,
-    summarize_registration_backend_usage,
     summarize_registration_qa_links,
-    write_registration_backend_audit_results,
     write_registration_qa_results,
 )
 from bayescatrack.experiments.track2p_benchmark import ReferenceKind
@@ -61,37 +63,41 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _config_from_args(args: argparse.Namespace) -> RegistrationQAConfig:
+    return RegistrationQAConfig(
+        data=args.data,
+        reference=args.reference,
+        reference_kind=cast(ReferenceKind, args.reference_kind),
+        input_format=args.input_format,
+        max_gap=args.max_gap,
+        transform_type=args.transform_type,
+        cost=cast(RegistrationQACost, args.cost),
+        cost_threshold=None if args.no_cost_threshold else args.cost_threshold,
+        include_behavior=args.include_behavior,
+        include_non_cells=args.include_non_cells,
+        weighted_masks=args.weighted_masks,
+        weighted_centroids=args.weighted_centroids,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
-    rows = run_registration_qa_report(
-        RegistrationQAConfig(
-            data=args.data,
-            reference=args.reference,
-            reference_kind=cast(ReferenceKind, args.reference_kind),
-            input_format=args.input_format,
-            max_gap=args.max_gap,
-            transform_type=args.transform_type,
-            cost=cast(RegistrationQACost, args.cost),
-            cost_threshold=None if args.no_cost_threshold else args.cost_threshold,
-            include_behavior=args.include_behavior,
-            include_non_cells=args.include_non_cells,
-            weighted_masks=args.weighted_masks,
-            weighted_centroids=args.weighted_centroids,
-        )
-    )
+    config = _config_from_args(args)
+    rows = run_registration_qa_report(config)
     summary_rows = summarize_registration_qa_links(rows)
-    backend_audit_rows = summarize_registration_backend_usage(rows)
     write_registration_qa_results(rows, args.links_output, "csv")
     write_registration_qa_results(summary_rows, args.summary_csv_output, "csv")
     write_registration_qa_results(summary_rows, args.summary_table_output, "table")
     if args.backend_audit_csv_output is not None:
-        write_registration_backend_audit_results(
+        backend_audit_rows = run_registration_backend_audit_report(config)
+        write_nonrigid_registration_backend_audit_results(
             backend_audit_rows,
             args.backend_audit_csv_output,
             "csv",
         )
     if args.backend_audit_table_output is not None:
-        write_registration_backend_audit_results(
+        backend_audit_rows = run_registration_backend_audit_report(config)
+        write_nonrigid_registration_backend_audit_results(
             backend_audit_rows,
             args.backend_audit_table_output,
             "table",

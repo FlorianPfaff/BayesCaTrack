@@ -26,6 +26,12 @@ on:
           - affine
           - rigid
           - fov-translation
+          - fov-affine
+          - bspline
+          - tps
+          - thin-plate-spline
+          - local-affine-grid
+          - optical-flow
           - none
         default: affine
         required: true

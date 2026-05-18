@@ -31,6 +31,12 @@ on:
           - affine
           - rigid
           - fov-translation
+          - fov-affine
+          - bspline
+          - tps
+          - thin-plate-spline
+          - local-affine-grid
+          - optical-flow
           - gt-affine-oracle
           - none
         default: affine
