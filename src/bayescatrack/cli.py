@@ -59,6 +59,18 @@ def _handle_benchmark(args: list[str]) -> int:
             help="Run LOSO calibrated global assignment with monotone ranking costs",
         )
         subparsers.add_parser(
+            "track2p-teacher-debug",
+            help="Export Bayes/Track2p/manual-GT disagreement diagnostics",
+        )
+        subparsers.add_parser(
+            "track2p-teacher-diagnostics",
+            help="Alias for track2p-teacher-debug",
+        )
+        subparsers.add_parser(
+            "edge-ranking",
+            help="Rank manual-GT Track2p edges within pairwise cost/feature matrices",
+        )
+        subparsers.add_parser(
             "registration-qa",
             help="Report registration quality on manual-GT Track2p links",
         )
@@ -107,6 +119,18 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_track2p_monotone_loso_main(args[1:]))
+    if args[0] in {"track2p-teacher-debug", "track2p-teacher-diagnostics"}:
+        from bayescatrack.experiments.track2p_teacher_debug import (
+            main as _track2p_teacher_debug_main,
+        )
+
+        return int(_track2p_teacher_debug_main(args[1:]))
+    if args[0] == "edge-ranking":
+        from bayescatrack.experiments.track2p_edge_ranking import (
+            main as _track2p_edge_ranking_main,
+        )
+
+        return int(_track2p_edge_ranking_main(args[1:]))
     if args[0] == "registration-qa":
         from bayescatrack.experiments.registration_qa_report import (
             main as _registration_qa_main,
