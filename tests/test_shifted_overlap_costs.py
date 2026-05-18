@@ -134,7 +134,7 @@ def test_shifted_mask_cosine_can_be_used_as_additive_tie_breaker():
             shifted_iou_radius=1,
             shifted_mask_cosine_weight=1.0,
             return_components=True,
-        )
+        )  # type: ignore[call-arg]
     finally:
         CalciumPlaneData.build_pairwise_cost_matrix = original_method  # type: ignore[method-assign]
 

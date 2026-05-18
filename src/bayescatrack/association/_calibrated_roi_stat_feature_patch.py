@@ -14,20 +14,14 @@ _ORIGINAL_FEATURE_TRANSFORMS_FOR_ATTR = (
     "_bayescatrack_original_feature_transforms_for"
 )
 
-DEFAULT_ASSOCIATION_FEATURES = tuple(
-    feature_name
-    for feature_name in _ORIGINAL_DEFAULT_ASSOCIATION_FEATURES
-    if feature_name != "roi_feature_cost"
-)
-DEFAULT_ASSOCIATION_FEATURES = tuple(
-    (*SPLIT_ROI_STAT_FEATURES, feature_name)
-    if feature_name == "cell_probability_cost"
-    else (feature_name,)
-    for feature_name in DEFAULT_ASSOCIATION_FEATURES
-)
-DEFAULT_ASSOCIATION_FEATURES = tuple(
-    item for group in DEFAULT_ASSOCIATION_FEATURES for item in group
-)
+_patched_default_association_features: list[str] = []
+for _feature_name in _ORIGINAL_DEFAULT_ASSOCIATION_FEATURES:
+    if _feature_name == "roi_feature_cost":
+        continue
+    if _feature_name == "cell_probability_cost":
+        _patched_default_association_features.extend(SPLIT_ROI_STAT_FEATURES)
+    _patched_default_association_features.append(_feature_name)
+DEFAULT_ASSOCIATION_FEATURES: tuple[str, ...] = tuple(_patched_default_association_features)
 
 if not hasattr(_calibrated_costs, _ORIGINAL_FEATURE_TRANSFORMS_FOR_ATTR):
     setattr(
@@ -86,8 +80,8 @@ def _patch_dataclass_default(class_object: Any, field_name: str) -> None:
     _replace_default_feature_tuple(class_object.__init__)
 
 
-_calibrated_costs.SPLIT_ROI_STAT_FEATURES = SPLIT_ROI_STAT_FEATURES
-_calibrated_costs.DEFAULT_ASSOCIATION_FEATURES = DEFAULT_ASSOCIATION_FEATURES
+setattr(_calibrated_costs, "SPLIT_ROI_STAT_FEATURES", SPLIT_ROI_STAT_FEATURES)
+setattr(_calibrated_costs, "DEFAULT_ASSOCIATION_FEATURES", DEFAULT_ASSOCIATION_FEATURES)
 _calibrated_costs._feature_transforms_for = _feature_transforms_for  # pylint: disable=protected-access
 
 _patch_dataclass_default(_calibrated_costs.CalibratedAssociationModel, "feature_names")
