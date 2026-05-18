@@ -4,6 +4,7 @@
 
 from .._exports import BRIDGE_PUBLIC_NAMES
 from . import _bridge_impl
+from . import _local_evidence as _local_evidence
 from . import _mahalanobis as _mahalanobis
 from . import _roi_stat_features as _roi_stat_features
 
@@ -11,6 +12,7 @@ _mahalanobis.install_mahalanobis_pairwise_features(_bridge_impl.CalciumPlaneData
 _roi_stat_features.install_split_roi_stat_pairwise_features(
     _bridge_impl.CalciumPlaneData
 )
+_local_evidence.install_local_evidence_pairwise_features(_bridge_impl.CalciumPlaneData)
 
 CalciumPlaneData = _bridge_impl.CalciumPlaneData
 SessionAssociationBundle = _bridge_impl.SessionAssociationBundle
