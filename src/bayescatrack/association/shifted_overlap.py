@@ -262,6 +262,9 @@ def _pairwise_shifted_iou_from_support(
     best_shift_y: np.ndarray = np.zeros(cost_shape, dtype=float)
     best_shift_x: np.ndarray = np.zeros(cost_shape, dtype=float)
     best_shift_norm: np.ndarray = np.zeros(cost_shape, dtype=float)
+    reference_order = np.argsort(reference_support.pixel, kind="stable")
+    reference_pixel = reference_support.pixel[reference_order]
+    reference_roi = reference_support.roi[reference_order]
 
     for dy, dx in shift_offsets(radius):
         shifted_y: np.ndarray = measurement_support.y + dy
@@ -281,12 +284,14 @@ def _pairwise_shifted_iou_from_support(
             minlength=n_measurement,
         ).astype(float)
         intersections = _pairwise_binary_intersections_from_support(
-            reference_support.pixel,
-            reference_support.roi,
+            reference_pixel,
+            reference_roi,
             shifted_pixels,
             shifted_rois,
             num_reference=int(n_reference),
             num_measurement=n_measurement,
+            num_pixels=int(height * width),
+            reference_is_sorted=True,
         )
         unions = (
             reference_support.areas[:, None]
@@ -342,15 +347,32 @@ def _pairwise_binary_intersections_from_support(
     *,
     num_reference: int,
     num_measurement: int,
+    num_pixels: int,
+    reference_is_sorted: bool = False,
 ) -> np.ndarray:
     result: np.ndarray = np.zeros((num_reference, num_measurement), dtype=float)
     if reference_pixel.size == 0 or measurement_pixel.size == 0:
         return result
 
-    reference_order = np.argsort(reference_pixel, kind="stable")
+    unique_pixel_result = _bridge_impl._pairwise_unique_pixel_mask_dot(  # pylint: disable=protected-access
+        reference_pixel,
+        reference_roi,
+        np.ones(reference_roi.shape[0], dtype=float),
+        measurement_pixel,
+        measurement_roi,
+        np.ones(measurement_roi.shape[0], dtype=float),
+        num_pixels=num_pixels,
+        num_reference=num_reference,
+        num_measurement=num_measurement,
+    )
+    if unique_pixel_result is not None:
+        return unique_pixel_result
+
+    if not reference_is_sorted:
+        reference_order = np.argsort(reference_pixel, kind="stable")
+        reference_pixel = reference_pixel[reference_order]
+        reference_roi = reference_roi[reference_order]
     measurement_order = np.argsort(measurement_pixel, kind="stable")
-    reference_pixel = reference_pixel[reference_order]
-    reference_roi = reference_roi[reference_order]
     measurement_pixel = measurement_pixel[measurement_order]
     measurement_roi = measurement_roi[measurement_order]
 
