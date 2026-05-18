@@ -330,9 +330,9 @@ def _pairwise_one_sided_distance_overlap(
         raise ValueError("Mask stacks must have matching spatial shapes")
     scores = np.zeros((source_support.shape[0], query_support.shape[0]), dtype=float)
     query_areas = np.maximum(
-        _bridge_impl._mask_support_areas(
+        _bridge_impl._mask_support_areas(  # pylint: disable=protected-access
             query_support
-        ),  # pylint: disable=protected-access
+        ),
         1.0,
     )
     covered = np.zeros_like(source_support, dtype=bool)

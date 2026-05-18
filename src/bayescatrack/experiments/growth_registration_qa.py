@@ -232,14 +232,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = _registration_qa_arg_parser()
     parser.prog = "bayescatrack benchmark growth-registration-qa"
     parser.description = "Report spatially resolved growth/deformation registration QA on manual-GT links."
-    level_action = parser._option_string_actions[
+    level_action = parser._option_string_actions[  # pylint: disable=protected-access
         "--level"
-    ]  # pylint: disable=protected-access
+    ]
     level_action.choices = ("links", "spatial-summary")
     level_action.default = "spatial-summary"
-    transform_action = parser._option_string_actions[
+    transform_action = parser._option_string_actions[  # pylint: disable=protected-access
         "--transform-type"
-    ]  # pylint: disable=protected-access
+    ]
     transform_action.choices = (
         "affine",
         "rigid",
