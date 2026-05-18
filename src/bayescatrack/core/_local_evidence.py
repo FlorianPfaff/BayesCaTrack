@@ -114,14 +114,20 @@ def install_local_evidence_pairwise_features(calcium_plane_cls: type[Any]) -> No
             components.update(
                 {
                     "binary_intersection": overlap_components["binary_intersection"],
-                    "weighted_intersection": overlap_components["weighted_intersection"],
+                    "weighted_intersection": overlap_components[
+                        "weighted_intersection"
+                    ],
                     "weighted_dice_similarity": weighted_dice_similarity,
                     "weighted_dice_cost": weighted_dice_cost,
                     "overlap_min_fraction": overlap_components["overlap_min_fraction"],
                     "overlap_max_fraction": overlap_components["overlap_max_fraction"],
                     "overlap_fraction_cost": overlap_fraction_cost,
-                    "reference_containment": overlap_components["reference_containment"],
-                    "measurement_containment": overlap_components["measurement_containment"],
+                    "reference_containment": overlap_components[
+                        "reference_containment"
+                    ],
+                    "measurement_containment": overlap_components[
+                        "measurement_containment"
+                    ],
                     "containment_asymmetry_cost": containment_asymmetry_cost,
                 }
             )
@@ -142,13 +148,15 @@ def install_local_evidence_pairwise_features(calcium_plane_cls: type[Any]) -> No
             components["distance_transform_cost"] = distance_transform_cost
 
         if local_evidence_components or image_patch_weight > 0.0:
-            image_patch_correlation, image_patch_valid = _pairwise_fov_patch_correlations(
-                self,
-                other,
-                order=order,
-                weighted_centroids=weighted_centroids,
-                patch_radius=patch_radius,
-                similarity_epsilon=similarity_epsilon,
+            image_patch_correlation, image_patch_valid = (
+                _pairwise_fov_patch_correlations(
+                    self,
+                    other,
+                    order=order,
+                    weighted_centroids=weighted_centroids,
+                    patch_radius=patch_radius,
+                    similarity_epsilon=similarity_epsilon,
+                )
             )
             image_patch_cost = np.where(
                 image_patch_valid,
@@ -176,7 +184,9 @@ def install_local_evidence_pairwise_features(calcium_plane_cls: type[Any]) -> No
                 scale=spatial_scale,
             )
             if neighbor_constellation_weight > 0.0:
-                total_cost += neighbor_constellation_weight * neighbor_constellation_cost
+                total_cost += (
+                    neighbor_constellation_weight * neighbor_constellation_cost
+                )
             components["neighbor_constellation_cost"] = neighbor_constellation_cost
 
         if local_evidence_components or centroid_rank_weight > 0.0:
@@ -229,7 +239,9 @@ def _pairwise_local_overlap_components(
     min_areas = np.minimum(areas_reference[:, None], areas_measurement[None, :])
     max_areas = np.maximum(areas_reference[:, None], areas_measurement[None, :])
 
-    reference_containment = _safe_fraction(binary_intersections, areas_reference[:, None])
+    reference_containment = _safe_fraction(
+        binary_intersections, areas_reference[:, None]
+    )
     measurement_containment = _safe_fraction(
         binary_intersections, areas_measurement[None, :]
     )
@@ -259,7 +271,9 @@ def _pairwise_local_overlap_components(
         "overlap_max_fraction": _safe_fraction(binary_intersections, max_areas),
         "reference_containment": reference_containment,
         "measurement_containment": measurement_containment,
-        "containment_asymmetry": np.abs(reference_containment - measurement_containment),
+        "containment_asymmetry": np.abs(
+            reference_containment - measurement_containment
+        ),
     }
 
 
@@ -366,9 +380,13 @@ def _chamfer_distance_to_mask(mask: np.ndarray) -> np.ndarray:
             if y_index > 0:
                 best = min(best, distances[y_index - 1, x_index] + 1.0)
                 if x_index > 0:
-                    best = min(best, distances[y_index - 1, x_index - 1] + diagonal_cost)
+                    best = min(
+                        best, distances[y_index - 1, x_index - 1] + diagonal_cost
+                    )
                 if x_index + 1 < width:
-                    best = min(best, distances[y_index - 1, x_index + 1] + diagonal_cost)
+                    best = min(
+                        best, distances[y_index - 1, x_index + 1] + diagonal_cost
+                    )
             if x_index > 0:
                 best = min(best, distances[y_index, x_index - 1] + 1.0)
             distances[y_index, x_index] = best
@@ -379,9 +397,13 @@ def _chamfer_distance_to_mask(mask: np.ndarray) -> np.ndarray:
             if y_index + 1 < height:
                 best = min(best, distances[y_index + 1, x_index] + 1.0)
                 if x_index > 0:
-                    best = min(best, distances[y_index + 1, x_index - 1] + diagonal_cost)
+                    best = min(
+                        best, distances[y_index + 1, x_index - 1] + diagonal_cost
+                    )
                 if x_index + 1 < width:
-                    best = min(best, distances[y_index + 1, x_index + 1] + diagonal_cost)
+                    best = min(
+                        best, distances[y_index + 1, x_index + 1] + diagonal_cost
+                    )
             if x_index + 1 < width:
                 best = min(best, distances[y_index, x_index + 1] + 1.0)
             distances[y_index, x_index] = best
@@ -463,10 +485,11 @@ def _normalized_image_patches(
             continue
         padded_x = x_index + patch_radius
         padded_y = y_index + patch_radius
-        patch = padded[
-            padded_y - patch_radius : padded_y + patch_radius + 1,
-            padded_x - patch_radius : padded_x + patch_radius + 1,
-        ]
+        y_start = padded_y - patch_radius
+        y_stop = padded_y + patch_radius + 1
+        x_start = padded_x - patch_radius
+        x_stop = padded_x + patch_radius + 1
+        patch = padded[y_start:y_stop, x_start:x_stop]
         if patch.shape != (patch_size, patch_size):
             continue
         finite = np.isfinite(patch)

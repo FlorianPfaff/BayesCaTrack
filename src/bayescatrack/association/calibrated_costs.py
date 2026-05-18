@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+
 from bayescatrack.association._pyrecest_feature_compat import (
     CalibratedPairwiseAssociationModel,
     FeatureTransform,
@@ -50,6 +51,7 @@ DEFAULT_ASSOCIATION_FEATURES = (
     "session_gap",
 )
 SPLIT_ROI_STAT_FEATURES: tuple[str, ...] = ()
+LOCAL_EVIDENCE_ASSOCIATION_FEATURES: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

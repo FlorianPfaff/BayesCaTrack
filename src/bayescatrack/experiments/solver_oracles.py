@@ -16,7 +16,10 @@ from bayescatrack.association.pyrecest_global_assignment import (
     session_edge_pairs,
 )
 from bayescatrack.association.registered_masks import replace_empty_registered_masks
-from bayescatrack.core.bridge import Track2pSession, build_session_pair_association_bundle
+from bayescatrack.core.bridge import (
+    Track2pSession,
+    build_session_pair_association_bundle,
+)
 from bayescatrack.experiments.track2p_benchmark import _is_valid_roi_index
 
 
@@ -41,15 +44,19 @@ def solve_from_pairwise_costs(
         expected = (sizes[source], sizes[target])
         if costs[(source, target)].shape != expected:
             raise ValueError(f"Cost matrix {(source, target)!r} has wrong shape")
-    result = ga._load_pyrecest_multisession_solver()(  # pylint: disable=protected-access
-        costs,
-        session_sizes=sizes,
-        start_cost=float(start_cost),
-        end_cost=float(end_cost),
-        gap_penalty=float(gap_penalty),
-        cost_threshold=cost_threshold,
+    result = (
+        ga._load_pyrecest_multisession_solver()(  # pylint: disable=protected-access
+            costs,
+            session_sizes=sizes,
+            start_cost=float(start_cost),
+            end_cost=float(end_cost),
+            gap_penalty=float(gap_penalty),
+            cost_threshold=cost_threshold,
+        )
     )
-    return GlobalAssignmentRun(result=result, pairwise_costs=costs, session_sizes=sizes, session_edges=edges)
+    return GlobalAssignmentRun(
+        result=result, pairwise_costs=costs, session_sizes=sizes, session_edges=edges
+    )
 
 
 def oracle_edge_costs(
@@ -64,7 +71,9 @@ def oracle_edge_costs(
     costs: dict[tuple[int, int], np.ndarray] = {}
     for source, target in session_edge_pairs(len(sessions), max_gap=max_gap):
         matrix = np.full((sizes[source], sizes[target]), float(large_cost), dtype=float)
-        for row, col in manual_gt_local_links(sessions, reference_matrix, source, target):
+        for row, col in manual_gt_local_links(
+            sessions, reference_matrix, source, target
+        ):
             matrix[row, col] = 0.0
         costs[(source, target)] = matrix
     return costs
@@ -103,7 +112,9 @@ def oracle_rank_k_costs(
     for source, target in session_edge_pairs(len(sessions), max_gap=max_gap):
         base = np.asarray(base_costs[(source, target)], dtype=float)
         matrix = np.full(base.shape, float(large_cost), dtype=float)
-        for row, col in manual_gt_local_links(sessions, reference_matrix, source, target):
+        for row, col in manual_gt_local_links(
+            sessions, reference_matrix, source, target
+        ):
             if row_rank_with_pessimistic_ties(base, row, col) <= rank_k:
                 matrix[row, col] = 0.0
         costs[(source, target)] = matrix
@@ -139,15 +150,26 @@ def oracle_registration_costs(
     costs: dict[tuple[int, int], np.ndarray] = {}
     for source, target in session_edge_pairs(len(sessions), max_gap=max_gap):
         registered = oracle_affine_registered_plane(
-            sessions[source], sessions[target], reference_matrix, source, target,
-            min_fit_links=min_fit_links, require_full_rank=require_full_rank, ridge=ridge,
+            sessions[source],
+            sessions[target],
+            reference_matrix,
+            source,
+            target,
+            min_fit_links=min_fit_links,
+            require_full_rank=require_full_rank,
+            ridge=ridge,
         )
         registered, empty = replace_empty_registered_masks(registered)
         bundle = build_session_pair_association_bundle(
-            sessions[source], sessions[target], measurement_plane_in_reference_frame=registered,
-            order=order, weighted_centroids=weighted_centroids,
-            velocity_variance=velocity_variance, regularization=regularization,
-            pairwise_cost_kwargs=kwargs, return_pairwise_components=False,
+            sessions[source],
+            sessions[target],
+            measurement_plane_in_reference_frame=registered,
+            order=order,
+            weighted_centroids=weighted_centroids,
+            velocity_variance=velocity_variance,
+            regularization=regularization,
+            pairwise_cost_kwargs=kwargs,
+            return_pairwise_components=False,
         )
         matrix = np.asarray(bundle.pairwise_cost_matrix, dtype=float).copy()
         matrix[:, empty] = float(kwargs.get("large_cost", large_cost))
@@ -156,7 +178,10 @@ def oracle_registration_costs(
 
 
 def manual_gt_local_links(
-    sessions: Sequence[Track2pSession], reference_matrix: np.ndarray, source: int, target: int
+    sessions: Sequence[Track2pSession],
+    reference_matrix: np.ndarray,
+    source: int,
+    target: int,
 ) -> list[tuple[int, int]]:
     """Return manual-GT links in loaded local ROI coordinates."""
     source_lookup = loaded_roi_index_lookup(sessions[source])
@@ -174,17 +199,25 @@ def manual_gt_local_links(
 
 def loaded_roi_index_lookup(session: Track2pSession) -> dict[int, int]:
     roi_indices = session.plane_data.roi_indices
-    suite2p_indices = np.asarray(roi_indices, dtype=int) if roi_indices is not None else np.arange(session.plane_data.n_rois, dtype=int)
+    suite2p_indices = (
+        np.asarray(roi_indices, dtype=int)
+        if roi_indices is not None
+        else np.arange(session.plane_data.n_rois, dtype=int)
+    )
     lookup: dict[int, int] = {}
     for local, suite2p_index in enumerate(suite2p_indices):
         key = int(suite2p_index)
         if key in lookup:
-            raise ValueError(f"Duplicate Suite2p ROI index {key} in session {session.session_name!r}")
+            raise ValueError(
+                f"Duplicate Suite2p ROI index {key} in session {session.session_name!r}"
+            )
         lookup[key] = int(local)
     return lookup
 
 
-def row_rank_with_pessimistic_ties(cost_matrix: np.ndarray, row_index: int, col_index: int) -> float:
+def row_rank_with_pessimistic_ties(
+    cost_matrix: np.ndarray, row_index: int, col_index: int
+) -> float:
     row = np.asarray(cost_matrix[row_index], dtype=float)
     true_cost = float(row[col_index])
     if not np.isfinite(true_cost):
@@ -209,13 +242,24 @@ def oracle_affine_registered_plane(
         _manual_gt_links,
         _oracle_affine_registered_plane,
     )
-    links = _manual_gt_links(source_session.plane_data, target_session.plane_data, reference_matrix, source_index, target_index)
+
+    links = _manual_gt_links(
+        source_session.plane_data,
+        target_session.plane_data,
+        reference_matrix,
+        source_index,
+        target_index,
+    )
     if len(links) < min_fit_links:
-        raise ValueError(f"Not enough manual-GT links for oracle affine registration: got {len(links)}, need {min_fit_links}")
+        raise ValueError(
+            f"Not enough manual-GT links for oracle affine registration: got {len(links)}, need {min_fit_links}"
+        )
     fit = _fit_affine_xy(
-        np.vstack([link[2] for link in links]),
-        np.vstack([link[3] for link in links]),
+        np.vstack([link.source_xy for link in links]),
+        np.vstack([link.target_xy for link in links]),
         ridge=ridge,
         require_full_rank=require_full_rank,
     )
-    return _oracle_affine_registered_plane(source_session.plane_data, target_session.plane_data, fit)
+    return _oracle_affine_registered_plane(
+        source_session.plane_data, target_session.plane_data, fit
+    )

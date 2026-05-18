@@ -121,7 +121,9 @@ def run_track2p_monotone_loso_calibration(
             "monotone_feature_names": ",".join(calibrated_model.monotone_feature_names),
             "monotone_rank_constraints": int(calibrated_model.n_rank_constraints),
             "monotone_training_rank_loss": float(calibrated_model.training_rank_loss),
-            "monotone_training_binary_loss": float(calibrated_model.training_binary_loss),
+            "monotone_training_binary_loss": float(
+                calibrated_model.training_binary_loss
+            ),
             **_monotone_option_scores(options),
             **calibration_scores,
         }
@@ -212,32 +214,56 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--data", required=True, type=Path)
     parser.add_argument("--plane", dest="plane_name", default="plane0")
-    parser.add_argument("--input-format", default="auto", choices=("auto", "suite2p", "npy"))
+    parser.add_argument(
+        "--input-format", default="auto", choices=("auto", "suite2p", "npy")
+    )
     parser.add_argument("--reference", type=Path, default=None)
-    parser.add_argument("--reference-kind", default="manual-gt", choices=("auto", "manual-gt", "track2p-output", "aligned-subject-rows"))
-    parser.add_argument("--allow-track2p-as-reference-for-smoke-test", action="store_true")
+    parser.add_argument(
+        "--reference-kind",
+        default="manual-gt",
+        choices=("auto", "manual-gt", "track2p-output", "aligned-subject-rows"),
+    )
+    parser.add_argument(
+        "--allow-track2p-as-reference-for-smoke-test", action="store_true"
+    )
     parser.add_argument("--curated-only", action="store_true")
     parser.add_argument("--seed-session", type=int, default=0)
-    parser.add_argument("--restrict-to-reference-seed-rois", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--restrict-to-reference-seed-rois",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--max-gap", type=int, default=2)
-    parser.add_argument("--transform-type", default="affine", choices=("affine", "rigid", "fov-translation", "none"))
+    parser.add_argument(
+        "--transform-type",
+        default="affine",
+        choices=("affine", "rigid", "fov-translation", "none"),
+    )
     parser.add_argument("--start-cost", type=float, default=5.0)
     parser.add_argument("--end-cost", type=float, default=5.0)
     parser.add_argument("--gap-penalty", type=float, default=1.0)
     parser.add_argument("--cost-threshold", type=float, default=6.0)
     parser.add_argument("--no-cost-threshold", action="store_true")
-    parser.add_argument("--include-behavior", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--include-behavior", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--include-non-cells", action="store_true")
     parser.add_argument("--cell-probability-threshold", type=float, default=0.5)
     parser.add_argument("--weighted-masks", action="store_true")
-    parser.add_argument("--exclude-overlapping-pixels", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--exclude-overlapping-pixels",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument("--order", default="xy", choices=("xy", "yx"))
     parser.add_argument("--weighted-centroids", action="store_true")
     parser.add_argument("--velocity-variance", type=float, default=25.0)
     parser.add_argument("--regularization", type=float, default=1.0e-6)
     parser.add_argument("--pairwise-cost-kwargs-json", default=None)
     parser.add_argument("--monotone-ranker-kwargs-json", default=None)
-    parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--progress", action=argparse.BooleanOptionalAction, default=True
+    )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--format", choices=("table", "json", "csv"), default="table")
     return parser
@@ -310,7 +336,9 @@ def _monotone_options_from_args(args: argparse.Namespace) -> MonotoneRankerOptio
     return MonotoneRankerOptions(**parsed)
 
 
-def _write_stdout(rows: Sequence[dict[str, float | int | str]], output_format: OutputFormat) -> None:
+def _write_stdout(
+    rows: Sequence[dict[str, float | int | str]], output_format: OutputFormat
+) -> None:
     if output_format == "json":
         print(json.dumps(list(rows), indent=2))
         return

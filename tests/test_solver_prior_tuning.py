@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+
 from bayescatrack.experiments import solver_prior_tuning as tuning
 from bayescatrack.experiments.track2p_benchmark import Track2pBenchmarkConfig
 from bayescatrack.experiments.track2p_solver_prior_tuning import (
@@ -36,7 +37,7 @@ class _Subject:
 
 def _config(**kwargs):
     return Track2pBenchmarkConfig(
-        data="/tmp/track2p",
+        data="track2p",
         method="global-assignment",
         split="leave-one-subject-out",
         cost="calibrated",
@@ -140,7 +141,9 @@ def test_tune_solver_priors_selects_best_training_candidate(monkeypatch):
     def fake_solver(_pairwise_costs, **kwargs):
         return FakeSolverResult(kwargs["start_cost"])
 
-    monkeypatch.setattr(tuning, "_load_pyrecest_multisession_solver", lambda: fake_solver)
+    monkeypatch.setattr(
+        tuning, "_load_pyrecest_multisession_solver", lambda: fake_solver
+    )
     monkeypatch.setattr(
         tuning,
         "tracks_to_suite2p_index_matrix",
