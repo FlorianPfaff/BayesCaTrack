@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 import numpy as np
 
@@ -68,7 +69,7 @@ def test_bayes_cost_lookup_reports_rank_threshold_and_missing_reason() -> None:
         SimpleNamespace(plane_data=SimpleNamespace(roi_indices=np.asarray([100, 200, 300]), n_rois=3)),
     ]
     lookup = _BayesEdgeCostLookup.from_sessions(
-        sessions,
+        cast(list[Any], sessions),
         {(0, 1): np.asarray([[3.0, 1.0, 5.0], [0.5, 2.0, 4.0]])},
         gap_penalty=0.0,
         cost_threshold=1.5,
@@ -126,7 +127,9 @@ def test_summary_rows_aggregate_dataset_subject_and_session_edge_levels() -> Non
         },
     ]
 
-    summary = _summary_rows(detail_rows)
+    summary = _summary_rows(
+        cast(list[dict[str, str | int | float | bool | None]], detail_rows)
+    )
     dataset_row = next(row for row in summary if row["scope"] == "dataset")
     assert dataset_row["count"] == 2
     assert dataset_row["candidate_present_rate"] == 0.5

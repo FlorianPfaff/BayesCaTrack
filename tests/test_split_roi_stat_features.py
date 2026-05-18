@@ -15,7 +15,9 @@ from bayescatrack.core.bridge import CalciumPlaneData
 def _masks(n_rois: int) -> np.ndarray:
     masks = np.zeros((n_rois, 8, 8), dtype=bool)
     for roi_index in range(n_rois):
-        masks[roi_index, roi_index : roi_index + 2, roi_index : roi_index + 2] = True
+        row_slice = slice(roi_index, roi_index + 2)
+        col_slice = slice(roi_index, roi_index + 2)
+        masks[roi_index, row_slice, col_slice] = True
     return masks
 
 

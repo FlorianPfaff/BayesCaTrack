@@ -217,9 +217,7 @@ def summarize_edge_ranking_rows(
     hit_ks = tuple(int(value) for value in hit_ks)
     summaries: list[dict[str, float | int | str]] = []
     for key, group_rows in groups.items():
-        summary: dict[str, float | int | str] = {
-            group_key: key_value for group_key, key_value in zip(group_keys, key)
-        }
+        summary: dict[str, float | int | str] = dict(zip(group_keys, key))
         present_rows = [_row for _row in group_rows if _truthy_int(_row.get("edge_present", 0))]
         finite_rows = [
             _row for _row in present_rows if _truthy_int(_row.get("true_is_finite", 0))

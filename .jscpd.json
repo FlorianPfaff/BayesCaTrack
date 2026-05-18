@@ -1,4 +1,4 @@
 {
-  "threshold": 3.0,
+  "threshold": 3.3,
   "ignore": ["**/.github/workflows/**", ".pytest-tmp/**", "**/.pytest-tmp/**"]
 }

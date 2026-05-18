@@ -246,8 +246,17 @@ def run_track2p_loso_solver_priors(
 
     folds: list[LosoSolverPriorFold] = []
     for held_out_index, held_out in enumerate(subjects):
-        training_subjects = tuple(subject for index, subject in enumerate(subjects) if index != held_out_index)
-        tuning = tune_solver_priors(training_subjects, config=config, search=search, cost=config.cost)
+        training_subjects = tuple(
+            subject
+            for index, subject in enumerate(subjects)
+            if index != held_out_index
+        )
+        tuning = tune_solver_priors(
+            cast(Sequence[SolverPriorSubject], training_subjects),
+            config=config,
+            search=search,
+            cost=config.cost,
+        )
         solve_config = tuning.config_with_best_priors(config)
         assignment = solve_configured_global_assignment(held_out.sessions, solve_config, cost=config.cost)
         predicted = tracks_to_suite2p_index_matrix(assignment.result.tracks, held_out.sessions)
@@ -504,7 +513,19 @@ def _write_rows(rows: Sequence[dict[str, float | int | str]], output: Path | Non
 
 
 def _fieldnames(rows: Sequence[dict[str, float | int | str]]) -> list[str]:
-    preferred = ["subject", "variant", "method", "held_out_subject", "training_subjects", "pairwise_f1", "complete_track_f1", "learned_start_cost", "learned_end_cost", "learned_gap_penalty", "learned_cost_threshold"]
+    preferred = [
+        "subject",
+        "variant",
+        "method",
+        "held_out_subject",
+        "training_subjects",
+        "pairwise_f1",
+        "complete_track_f1",
+        "learned_start_cost",
+        "learned_end_cost",
+        "learned_gap_penalty",
+        "learned_cost_threshold",
+    ]
     remaining = sorted({key for row in rows for key in row} - set(preferred))
     return [key for key in preferred if any(key in row for row in rows)] + remaining
 
