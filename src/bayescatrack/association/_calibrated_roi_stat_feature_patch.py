@@ -20,7 +20,7 @@ DEFAULT_ASSOCIATION_FEATURES = tuple(
     if feature_name != "roi_feature_cost"
 )
 DEFAULT_ASSOCIATION_FEATURES = tuple(
-    SPLIT_ROI_STAT_FEATURES
+    (*SPLIT_ROI_STAT_FEATURES, feature_name)
     if feature_name == "cell_probability_cost"
     else (feature_name,)
     for feature_name in DEFAULT_ASSOCIATION_FEATURES
