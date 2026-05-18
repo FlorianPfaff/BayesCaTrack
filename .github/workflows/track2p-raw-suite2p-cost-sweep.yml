@@ -33,6 +33,7 @@ on:
         options:
           - affine
           - rigid
+          - fov-affine
           - fov-translation
           - none
         default: affine
