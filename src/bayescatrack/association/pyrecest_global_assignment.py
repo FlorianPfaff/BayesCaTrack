@@ -233,19 +233,51 @@ def solve_global_assignment_for_sessions(
             config=higher_order_consistency_config,
         )
     session_edges = session_edge_pairs(len(sessions), max_gap=max_gap)
-    result = _load_pyrecest_multisession_solver()(
+    return solve_global_assignment_from_pairwise_costs(
         pairwise_costs,
         session_sizes=session_sizes,
+        session_edges=session_edges,
+        start_cost=start_cost,
+        end_cost=end_cost,
+        gap_penalty=gap_penalty,
+        cost_threshold=cost_threshold,
+    )
+
+
+def solve_global_assignment_from_pairwise_costs(
+    pairwise_costs: Mapping[SessionEdge, np.ndarray],
+    *,
+    session_sizes: Sequence[int],
+    session_edges: Sequence[SessionEdge] | None = None,
+    start_cost: float = 5.0,
+    end_cost: float = 5.0,
+    gap_penalty: float = 1.0,
+    cost_threshold: float | None = 6.0,
+) -> GlobalAssignmentRun:
+    """Run PyRecEst's global assignment using already-built pairwise costs.
+
+    This is useful for fold-internal solver-prior tuning: registration and
+    pairwise cost construction are expensive, while start/end/gap/threshold
+    sweeps only require re-running the path-cover solver on the same cost
+    matrices.
+    """
+
+    costs = dict(pairwise_costs)
+    sizes = tuple(int(size) for size in session_sizes)
+    edges = tuple(session_edges) if session_edges is not None else tuple(sorted(costs))
+    result = _load_pyrecest_multisession_solver()(
+        costs,
+        session_sizes=sizes,
         start_cost=float(start_cost),
         end_cost=float(end_cost),
         gap_penalty=float(gap_penalty),
-        cost_threshold=cost_threshold,
+        cost_threshold=None if cost_threshold is None else float(cost_threshold),
     )
     return GlobalAssignmentRun(
         result=result,
-        pairwise_costs=pairwise_costs,
-        session_sizes=session_sizes,
-        session_edges=session_edges,
+        pairwise_costs=costs,
+        session_sizes=sizes,
+        session_edges=edges,
     )
 
 
