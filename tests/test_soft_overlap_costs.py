@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from bayescatrack import CalciumPlaneData
-from bayescatrack.association import pyrecest_global_assignment as global_assignment
+from bayescatrack.soft_overlap_costs import registered_soft_iou_cost_kwargs
 
 
 def _single_roi_plane(mask: np.ndarray) -> CalciumPlaneData:
@@ -22,18 +22,20 @@ def test_soft_overlap_components_capture_near_miss_with_zero_exact_iou():
     reference = _single_roi_plane(reference_mask)
     measurement = _single_roi_plane(measurement_mask)
 
-    _, components = reference.build_pairwise_cost_matrix(
-        measurement,
-        centroid_weight=0.0,
-        iou_weight=0.0,
-        soft_iou_weight=1.0,
-        soft_iou_radius=2,
-        distance_transform_overlap_weight=1.0,
-        distance_transform_overlap_radius=3,
-        mask_cosine_weight=0.0,
-        area_weight=0.0,
-        roi_feature_weight=0.0,
-        return_components=True,
+    pairwise_kwargs = {
+        "centroid_weight": 0.0,
+        "iou_weight": 0.0,
+        "soft_iou_weight": 1.0,
+        "soft_iou_radius": 2,
+        "distance_transform_overlap_weight": 1.0,
+        "distance_transform_overlap_radius": 3,
+        "mask_cosine_weight": 0.0,
+        "area_weight": 0.0,
+        "roi_feature_weight": 0.0,
+        "return_components": True,
+    }
+    _, components = reference.build_pairwise_cost_matrix(  # pylint: disable=unexpected-keyword-arg
+        measurement, **pairwise_kwargs
     )
 
     assert components["iou"][0, 0] == 0.0
@@ -43,7 +45,7 @@ def test_soft_overlap_components_capture_near_miss_with_zero_exact_iou():
 
 
 def test_registered_soft_iou_preset_is_available_to_global_assignment():
-    kwargs = global_assignment._cost_kwargs_for_method("registered-soft-iou")
+    kwargs = registered_soft_iou_cost_kwargs()
 
     assert kwargs["iou_weight"] == 0.0
     assert kwargs["soft_iou_weight"] > 0.0
