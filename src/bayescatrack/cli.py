@@ -55,6 +55,10 @@ def _handle_benchmark(args: list[str]) -> int:
             help="Sweep Track2p global-assignment cost scales and thresholds",
         )
         subparsers.add_parser(
+            "track2p-teacher-audit",
+            help="Cross-tab manual GT, Track2p output, and BayesCaTrack edges",
+        )
+        subparsers.add_parser(
             "registration-qa",
             help="Report registration quality on manual-GT Track2p links",
         )
@@ -97,6 +101,12 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_track2p_cost_sweep_main(args[1:]))
+    if args[0] == "track2p-teacher-audit":
+        from bayescatrack.experiments.track2p_teacher_audit import (
+            main as _track2p_teacher_audit_main,
+        )
+
+        return int(_track2p_teacher_audit_main(args[1:]))
     if args[0] == "registration-qa":
         from bayescatrack.experiments.registration_qa_report import (
             main as _registration_qa_main,
