@@ -8,7 +8,7 @@ import numpy.testing as npt
 from bayescatrack import CalciumPlaneData
 from bayescatrack.association import pyrecest_global_assignment as assignment
 from bayescatrack.association.pyrecest_global_assignment import registered_iou_cost_kwargs
-from bayescatrack.soft_overlap_costs import (
+from bayescatrack.shifted_overlap_costs import (
     _pairwise_shifted_overlap_matrices,
     _translate_mask_stack,
     registered_shifted_iou_cost_kwargs,
