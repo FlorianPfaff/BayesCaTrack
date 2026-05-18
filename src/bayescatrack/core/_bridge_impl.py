@@ -269,44 +269,85 @@ class CalciumPlaneData:
             if weight_value < 0.0:
                 raise ValueError(f"{weight_name} must be non-negative")
 
-        centroid_distances = self.pairwise_centroid_distances(
-            other,
-            order=order,
-            weighted=weighted_centroids,
-        )
-        centroid_scale = _estimate_default_centroid_scale(
-            self,
-            other,
-            centroid_scale=centroid_scale,
-        )
-        centroid_cost = (centroid_distances / centroid_scale) ** 2
+        cost_shape = (self.n_rois, other.n_rois)
+        zero_cost = np.zeros(cost_shape, dtype=float)
+        total_cost = np.zeros(cost_shape, dtype=float)
 
-        iou_matrix = _pairwise_iou_matrix(self.roi_masks, other.roi_masks)
-        iou_cost = -np.log(np.clip(iou_matrix, similarity_epsilon, 1.0))
-
-        mask_cosine_similarity = _pairwise_mask_cosine_similarity(
-            self.roi_masks,
-            other.roi_masks,
-            similarity_epsilon=similarity_epsilon,
+        needs_centroid_cost = (
+            centroid_weight > 0.0
+            or max_centroid_distance is not None
+            or return_components
         )
-        mask_cosine_cost = 1.0 - np.clip(mask_cosine_similarity, 0.0, 1.0)
-
-        areas_self = self.roi_areas(weighted=False)
-        areas_other = other.roi_areas(weighted=False)
-        area_ratio_cost = np.abs(
-            np.log(
-                np.maximum(areas_self[:, None], similarity_epsilon)
-                / np.maximum(areas_other[None, :], similarity_epsilon)
+        if needs_centroid_cost:
+            centroid_distances = self.pairwise_centroid_distances(
+                other,
+                order=order,
+                weighted=weighted_centroids,
             )
-        )
+            centroid_scale = _estimate_default_centroid_scale(
+                self,
+                other,
+                centroid_scale=centroid_scale,
+            )
+            centroid_cost = (centroid_distances / centroid_scale) ** 2
+            if centroid_weight > 0.0:
+                total_cost += centroid_weight * centroid_cost
+        else:
+            centroid_distances = zero_cost
+            centroid_cost = zero_cost
 
-        roi_feature_cost = _pairwise_roi_feature_distance(
-            self,
-            other,
-            feature_names=feature_names,
-        )
+        if iou_weight > 0.0 or return_components:
+            iou_matrix = _pairwise_iou_matrix(self.roi_masks, other.roi_masks)
+            iou_cost = -np.log(np.clip(iou_matrix, similarity_epsilon, 1.0))
+            if iou_weight > 0.0:
+                total_cost += iou_weight * iou_cost
+        else:
+            iou_matrix = zero_cost
+            iou_cost = zero_cost
 
-        if self.cell_probabilities is not None and other.cell_probabilities is not None:
+        if mask_cosine_weight > 0.0 or return_components:
+            mask_cosine_similarity = _pairwise_mask_cosine_similarity(
+                self.roi_masks,
+                other.roi_masks,
+                similarity_epsilon=similarity_epsilon,
+            )
+            mask_cosine_cost = 1.0 - np.clip(mask_cosine_similarity, 0.0, 1.0)
+            if mask_cosine_weight > 0.0:
+                total_cost += mask_cosine_weight * mask_cosine_cost
+        else:
+            mask_cosine_similarity = zero_cost
+            mask_cosine_cost = zero_cost
+
+        if area_weight > 0.0 or return_components:
+            areas_self = self.roi_areas(weighted=False)
+            areas_other = other.roi_areas(weighted=False)
+            area_ratio_cost = np.abs(
+                np.log(
+                    np.maximum(areas_self[:, None], similarity_epsilon)
+                    / np.maximum(areas_other[None, :], similarity_epsilon)
+                )
+            )
+            if area_weight > 0.0:
+                total_cost += area_weight * area_ratio_cost
+        else:
+            area_ratio_cost = zero_cost
+
+        if roi_feature_weight > 0.0 or return_components:
+            roi_feature_cost = _pairwise_roi_feature_distance(
+                self,
+                other,
+                feature_names=feature_names,
+            )
+            if roi_feature_weight > 0.0:
+                total_cost += roi_feature_weight * roi_feature_cost
+        else:
+            roi_feature_cost = zero_cost
+
+        if (
+            (cell_probability_weight > 0.0 or return_components)
+            and self.cell_probabilities is not None
+            and other.cell_probabilities is not None
+        ):
             probabilities_self = np.clip(
                 self.cell_probabilities, similarity_epsilon, 1.0
             )
@@ -317,17 +358,10 @@ class CalciumPlaneData:
                 np.log(probabilities_self[:, None])
                 + np.log(probabilities_other[None, :])
             )
+            if cell_probability_weight > 0.0:
+                total_cost += cell_probability_weight * cell_probability_cost
         else:
-            cell_probability_cost = np.zeros((self.n_rois, other.n_rois), dtype=float)
-
-        total_cost = (
-            centroid_weight * centroid_cost
-            + iou_weight * iou_cost
-            + mask_cosine_weight * mask_cosine_cost
-            + area_weight * area_ratio_cost
-            + roi_feature_weight * roi_feature_cost
-            + cell_probability_weight * cell_probability_cost
-        )
+            cell_probability_cost = zero_cost
 
         if max_centroid_distance is not None:
             if max_centroid_distance <= 0.0:
@@ -739,6 +773,8 @@ def load_suite2p_plane(
             )
 
     roi_mask_array = _stack_or_empty_masks(roi_masks, image_shape, weighted_masks)
+    if fov is None and roi_masks:
+        fov = np.asarray(roi_mask_array, dtype=float).sum(axis=0)
     selected_indices_array = np.asarray(selected_indices, dtype=int)
     probability_array = (
         np.asarray(cell_probabilities, dtype=float)
@@ -1258,27 +1294,178 @@ def _estimate_default_centroid_scale(
 def _pairwise_iou_matrix(
     reference_masks: np.ndarray, measurement_masks: np.ndarray
 ) -> np.ndarray:
-    reference_support = (
-        np.asarray(reference_masks).reshape(reference_masks.shape[0], -1) > 0
+    intersections = _pairwise_sparse_mask_dot(
+        reference_masks, measurement_masks, binary=True
     )
-    measurement_support = (
-        np.asarray(measurement_masks).reshape(measurement_masks.shape[0], -1) > 0
-    )
-    if reference_support.shape[0] == 0 or measurement_support.shape[0] == 0:
-        return np.zeros(
-            (reference_support.shape[0], measurement_support.shape[0]), dtype=float
-        )
-
-    intersections = (
-        reference_support.astype(float) @ measurement_support.astype(float).T
-    )
-    areas_reference = np.sum(reference_support, axis=1, dtype=float)
-    areas_measurement = np.sum(measurement_support, axis=1, dtype=float)
+    areas_reference = _mask_support_areas(reference_masks)
+    areas_measurement = _mask_support_areas(measurement_masks)
     unions = areas_reference[:, None] + areas_measurement[None, :] - intersections
     iou = np.zeros_like(intersections, dtype=float)
     valid = unions > 0.0
     iou[valid] = intersections[valid] / unions[valid]
     return iou
+
+
+def _pairwise_sparse_mask_dot(
+    reference_masks: np.ndarray, measurement_masks: np.ndarray, *, binary: bool
+) -> np.ndarray:
+    reference_array = np.asarray(reference_masks)
+    measurement_array = np.asarray(measurement_masks)
+    if reference_array.shape[1:] != measurement_array.shape[1:]:
+        raise ValueError("Mask stacks must have matching spatial shapes")
+
+    n_reference = int(reference_array.shape[0])
+    n_measurement = int(measurement_array.shape[0])
+    result = np.zeros((n_reference, n_measurement), dtype=float)
+    if n_reference == 0 or n_measurement == 0:
+        return result
+
+    reference_flat = reference_array.reshape(n_reference, -1)
+    measurement_flat = measurement_array.reshape(n_measurement, -1)
+    if binary:
+        reference_roi, reference_pixel = np.nonzero(reference_flat > 0)
+        measurement_roi, measurement_pixel = np.nonzero(measurement_flat > 0)
+        reference_values = np.ones(reference_roi.shape[0], dtype=float)
+        measurement_values = np.ones(measurement_roi.shape[0], dtype=float)
+    else:
+        reference_roi, reference_pixel = np.nonzero(reference_flat)
+        measurement_roi, measurement_pixel = np.nonzero(measurement_flat)
+        reference_values = np.asarray(
+            reference_flat[reference_roi, reference_pixel], dtype=float
+        )
+        measurement_values = np.asarray(
+            measurement_flat[measurement_roi, measurement_pixel], dtype=float
+        )
+
+    if reference_pixel.size == 0 or measurement_pixel.size == 0:
+        return result
+
+    unique_pixel_result = _pairwise_unique_pixel_mask_dot(
+        reference_pixel,
+        reference_roi,
+        reference_values,
+        measurement_pixel,
+        measurement_roi,
+        measurement_values,
+        num_pixels=reference_flat.shape[1],
+        num_reference=n_reference,
+        num_measurement=n_measurement,
+    )
+    if unique_pixel_result is not None:
+        return unique_pixel_result
+
+    reference_order = np.argsort(reference_pixel, kind="stable")
+    measurement_order = np.argsort(measurement_pixel, kind="stable")
+    reference_pixel = reference_pixel[reference_order]
+    reference_roi = reference_roi[reference_order]
+    reference_values = reference_values[reference_order]
+    measurement_pixel = measurement_pixel[measurement_order]
+    measurement_roi = measurement_roi[measurement_order]
+    measurement_values = measurement_values[measurement_order]
+
+    reference_index = 0
+    measurement_index = 0
+    while (
+        reference_index < reference_pixel.size
+        and measurement_index < measurement_pixel.size
+    ):
+        reference_current_pixel = reference_pixel[reference_index]
+        measurement_current_pixel = measurement_pixel[measurement_index]
+        if reference_current_pixel < measurement_current_pixel:
+            reference_index = _advance_equal_values(reference_pixel, reference_index)
+            continue
+        if measurement_current_pixel < reference_current_pixel:
+            measurement_index = _advance_equal_values(
+                measurement_pixel, measurement_index
+            )
+            continue
+
+        reference_stop = _advance_equal_values(reference_pixel, reference_index)
+        measurement_stop = _advance_equal_values(measurement_pixel, measurement_index)
+        reference_slice = slice(reference_index, reference_stop)
+        measurement_slice = slice(measurement_index, measurement_stop)
+        result[
+            np.ix_(
+                reference_roi[reference_slice],
+                measurement_roi[measurement_slice],
+            )
+        ] += (
+            reference_values[reference_slice, None]
+            * measurement_values[measurement_slice][None, :]
+        )
+        reference_index = reference_stop
+        measurement_index = measurement_stop
+    return result
+
+
+def _pairwise_unique_pixel_mask_dot(
+    reference_pixel: np.ndarray,
+    reference_roi: np.ndarray,
+    reference_values: np.ndarray,
+    measurement_pixel: np.ndarray,
+    measurement_roi: np.ndarray,
+    measurement_values: np.ndarray,
+    *,
+    num_pixels: int,
+    num_reference: int,
+    num_measurement: int,
+) -> np.ndarray | None:
+    if (
+        np.unique(reference_pixel).size != reference_pixel.size
+        or np.unique(measurement_pixel).size != measurement_pixel.size
+    ):
+        return None
+
+    reference_owner = np.full(num_pixels, -1, dtype=int)
+    measurement_owner = np.full(num_pixels, -1, dtype=int)
+    reference_value_by_pixel = np.zeros(num_pixels, dtype=float)
+    measurement_value_by_pixel = np.zeros(num_pixels, dtype=float)
+
+    reference_owner[reference_pixel] = reference_roi
+    measurement_owner[measurement_pixel] = measurement_roi
+    reference_value_by_pixel[reference_pixel] = reference_values
+    measurement_value_by_pixel[measurement_pixel] = measurement_values
+
+    common_pixels = (reference_owner >= 0) & (measurement_owner >= 0)
+    if not np.any(common_pixels):
+        return np.zeros((num_reference, num_measurement), dtype=float)
+
+    pair_ids = (
+        reference_owner[common_pixels] * num_measurement
+        + measurement_owner[common_pixels]
+    )
+    weights = (
+        reference_value_by_pixel[common_pixels]
+        * measurement_value_by_pixel[common_pixels]
+    )
+    flat_result = np.bincount(
+        pair_ids,
+        weights=weights,
+        minlength=num_reference * num_measurement,
+    )
+    return flat_result.reshape(num_reference, num_measurement).astype(float)
+
+
+def _advance_equal_values(values: np.ndarray, start_index: int) -> int:
+    current_value = values[start_index]
+    stop_index = start_index + 1
+    while stop_index < values.size and values[stop_index] == current_value:
+        stop_index += 1
+    return stop_index
+
+
+def _mask_support_areas(masks: np.ndarray) -> np.ndarray:
+    mask_array = np.asarray(masks)
+    return np.count_nonzero(mask_array > 0, axis=(1, 2)).astype(float)
+
+
+def _mask_l2_norms(masks: np.ndarray) -> np.ndarray:
+    mask_array = np.asarray(masks)
+    norms = np.zeros(mask_array.shape[0], dtype=float)
+    for roi_index, mask in enumerate(mask_array):
+        mask_values = np.asarray(mask, dtype=float)
+        norms[roi_index] = float(np.linalg.norm(mask_values.ravel()))
+    return norms
 
 
 def _pairwise_mask_cosine_similarity(
@@ -1287,20 +1474,11 @@ def _pairwise_mask_cosine_similarity(
     *,
     similarity_epsilon: float,
 ) -> np.ndarray:
-    flat_reference = np.asarray(reference_masks, dtype=float).reshape(
-        reference_masks.shape[0], -1
+    numerator = _pairwise_sparse_mask_dot(
+        reference_masks, measurement_masks, binary=False
     )
-    flat_measurement = np.asarray(measurement_masks, dtype=float).reshape(
-        measurement_masks.shape[0], -1
-    )
-    if flat_reference.shape[0] == 0 or flat_measurement.shape[0] == 0:
-        return np.zeros(
-            (flat_reference.shape[0], flat_measurement.shape[0]), dtype=float
-        )
-
-    numerator = flat_reference @ flat_measurement.T
-    denom_reference = np.linalg.norm(flat_reference, axis=1)
-    denom_measurement = np.linalg.norm(flat_measurement, axis=1)
+    denom_reference = _mask_l2_norms(reference_masks)
+    denom_measurement = _mask_l2_norms(measurement_masks)
     denominator = np.maximum(
         denom_reference[:, None] * denom_measurement[None, :],
         similarity_epsilon,

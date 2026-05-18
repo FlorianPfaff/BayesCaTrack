@@ -24,6 +24,31 @@ def test_estimate_integer_fov_shift_recovers_known_translation():
     assert peak_correlation > 0.9
 
 
+def test_estimate_integer_fov_shift_pads_different_shapes():
+    reference_fov = np.zeros((8, 9), dtype=float)
+    reference_fov[2:5, 3:7] = 1.0
+    measurement_fov = apply_integer_image_translation(
+        reference_fov, np.array([1, 2]), output_shape=(9, 10)
+    )
+
+    shift_yx, peak_correlation = estimate_integer_fov_shift(
+        reference_fov, measurement_fov
+    )
+
+    npt.assert_array_equal(shift_yx, np.array([-1, -2]))
+    assert peak_correlation > 0.1
+
+
+def test_apply_integer_image_translation_crops_to_smaller_output_shape():
+    image = np.arange(12).reshape(3, 4)
+
+    translated = apply_integer_image_translation(
+        image, np.array([1, -1]), output_shape=(2, 3), fill_value=-1
+    )
+
+    npt.assert_array_equal(translated, np.array([[-1, -1, -1], [1, 2, 3]]))
+
+
 def test_register_measurement_plane_by_fov_translation_aligns_masks_and_fov(
     make_track2p_session,
 ):

@@ -25,15 +25,23 @@ from bayescatrack.reference import (  # noqa: E402
 
 
 class _DummyPlaneData:
-    def __init__(self, n_rois: int):
+    def __init__(self, n_rois: int, roi_indices: list[int] | None = None):
         self.n_rois = int(n_rois)
+        if roi_indices is not None:
+            self.roi_indices = np.asarray(roi_indices, dtype=int)
 
 
 class _DummySession:
-    def __init__(self, name: str, session_date: date | None, n_rois: int):
+    def __init__(
+        self,
+        name: str,
+        session_date: date | None,
+        n_rois: int,
+        roi_indices: list[int] | None = None,
+    ):
         self.session_name = name
         self.session_date = session_date
-        self.plane_data = _DummyPlaneData(n_rois)
+        self.plane_data = _DummyPlaneData(n_rois, roi_indices=roi_indices)
 
 
 def test_load_track2p_reference_prefers_suite2p_indices_and_extracts_curation(
@@ -141,6 +149,74 @@ def test_load_aligned_subject_reference_builds_identity_matrix(monkeypatch):
     npt.assert_array_equal(reference.curated_mask, np.array([True, True, True]))
     for labels in reference.to_session_track_labels():
         npt.assert_array_equal(labels, np.array([0, 1, 2]))
+
+
+def test_load_aligned_subject_reference_preserves_original_suite2p_indices(
+    monkeypatch,
+):
+    fake_sessions = [
+        _DummySession(
+            "2024-05-01_a",
+            date(2024, 5, 1),
+            3,
+            roi_indices=[0, 2, 5],
+        ),
+        _DummySession(
+            "2024-05-02_a",
+            date(2024, 5, 2),
+            2,
+            roi_indices=[4, 6],
+        ),
+    ]
+
+    monkeypatch.setattr(
+        "bayescatrack.reference.load_track2p_subject",
+        lambda *args, **kwargs: fake_sessions,
+    )
+
+    reference = load_aligned_subject_reference("subject_dir", plane_name="plane0")
+
+    npt.assert_array_equal(
+        reference.suite2p_indices,
+        np.array(
+            [
+                [0, 4],
+                [2, 6],
+                [5, None],
+            ],
+            dtype=object,
+        ),
+    )
+    npt.assert_array_equal(
+        reference.pairwise_matches(0, 1),
+        np.array([[0, 4], [2, 6]]),
+    )
+
+    labels_a, labels_b = reference.to_session_track_labels()
+    npt.assert_array_equal(labels_a, np.array([0, -1, 1, -1, -1, 2]))
+    npt.assert_array_equal(labels_b, np.array([-1, -1, -1, -1, 0, -1, 1]))
+
+
+@pytest.mark.parametrize("roi_indices", ([7], [-1, 3], [2, 2]))
+def test_load_aligned_subject_reference_validates_roi_indices(
+    monkeypatch,
+    roi_indices,
+):
+    fake_sessions = [
+        _DummySession(
+            "2024-05-01_a",
+            date(2024, 5, 1),
+            2,
+            roi_indices=roi_indices,
+        )
+    ]
+    monkeypatch.setattr(
+        "bayescatrack.reference.load_track2p_subject",
+        lambda *args, **kwargs: fake_sessions,
+    )
+
+    with pytest.raises(ValueError, match="roi_indices"):
+        load_aligned_subject_reference("subject_dir", plane_name="plane0")
 
 
 def test_complete_tracks_and_complete_tracks_score_against_reference():

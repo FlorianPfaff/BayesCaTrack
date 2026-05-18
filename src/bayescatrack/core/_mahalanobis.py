@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from bayescatrack._pyrecest_pairwise_features import pairwise_mahalanobis_distances
 
 _MAHALANOBIS_INSTALLED_ATTR = "_bayescatrack_mahalanobis_installed"
 
@@ -55,26 +56,16 @@ def install_mahalanobis_pairwise_features(calcium_plane_cls: type[Any]) -> None:
             regularization=regularization,
         )
 
-        distances = np.zeros((self.n_rois, other.n_rois), dtype=float)
-        for reference_index in range(self.n_rois):
-            for measurement_index in range(other.n_rois):
-                diff = (
-                    centroids_self[:, reference_index]
-                    - centroids_other[:, measurement_index]
-                )
-                covariance = (
-                    covariances_self[:, :, reference_index]
-                    + covariances_other[:, :, measurement_index]
-                )
-                try:
-                    normalized = np.linalg.solve(covariance, diff)
-                except np.linalg.LinAlgError:
-                    normalized = np.linalg.pinv(covariance) @ diff
-                squared_distance = float(diff @ normalized)
-                distances[reference_index, measurement_index] = np.sqrt(
-                    max(squared_distance, 0.0)
-                )
-        return distances
+        return np.asarray(
+            pairwise_mahalanobis_distances(
+                centroids_self,
+                covariances_self,
+                centroids_other,
+                covariances_other,
+                regularization=0.0,
+            ),
+            dtype=float,
+        )
 
     # pylint: disable=too-many-arguments,too-many-locals
     def build_pairwise_cost_matrix(

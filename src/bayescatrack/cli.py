@@ -51,8 +51,44 @@ def _handle_benchmark(args: list[str]) -> int:
             "track2p", help="Track2p baseline and global-assignment ablations"
         )
         subparsers.add_parser(
+            "track2p-sweep",
+            help="Sweep Track2p global-assignment cost scales and thresholds",
+        )
+        subparsers.add_parser(
+            "track2p-teacher-debug",
+            help="Export Bayes/Track2p/manual-GT disagreement diagnostics",
+        )
+        subparsers.add_parser(
+            "track2p-teacher-diagnostics",
+            help="Alias for track2p-teacher-debug",
+        )
+        subparsers.add_parser(
+            "edge-ranking",
+            help="Rank manual-GT Track2p edges within pairwise cost/feature matrices",
+        )
+        subparsers.add_parser(
+            "registration-qa",
+            help="Report registration quality on manual-GT Track2p links",
+        )
+        subparsers.add_parser(
+            "oracle-affine-qa",
+            help="Compare baseline registration to manual-GT oracle affine geometry",
+        )
+        subparsers.add_parser(
+            "growth-registration-qa",
+            help="Report spatially resolved growth/deformation registration QA",
+        )
+        subparsers.add_parser(
             "validate-track2p-inputs",
             help="Validate manual-GT ROI coverage before Track2p benchmarks",
+        )
+        subparsers.add_parser(
+            "audit-manual-gt-rois",
+            help="Audit manual-GT ROI index spaces before Track2p benchmarks",
+        )
+        subparsers.add_parser(
+            "audit-manual-gt-roi-index-space",
+            help="Alias for audit-manual-gt-rois",
         )
         subparsers.add_parser(
             "compare", help="Aggregate benchmark CSVs into a comparison table"
@@ -67,12 +103,54 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_track2p_benchmark_main(args[1:]))
+    if args[0] == "track2p-sweep":
+        from bayescatrack.experiments.track2p_cost_sweep import (
+            main as _track2p_cost_sweep_main,
+        )
+
+        return int(_track2p_cost_sweep_main(args[1:]))
+    if args[0] in {"track2p-teacher-debug", "track2p-teacher-diagnostics"}:
+        from bayescatrack.experiments.track2p_teacher_debug import (
+            main as _track2p_teacher_debug_main,
+        )
+
+        return int(_track2p_teacher_debug_main(args[1:]))
+    if args[0] == "edge-ranking":
+        from bayescatrack.experiments.track2p_edge_ranking import (
+            main as _track2p_edge_ranking_main,
+        )
+
+        return int(_track2p_edge_ranking_main(args[1:]))
+    if args[0] == "registration-qa":
+        from bayescatrack.experiments.registration_qa_report import (
+            main as _registration_qa_main,
+        )
+
+        return int(_registration_qa_main(args[1:]))
+    if args[0] == "oracle-affine-qa":
+        from bayescatrack.experiments.oracle_affine_registration_qa import (
+            main as _oracle_affine_qa_main,
+        )
+
+        return int(_oracle_affine_qa_main(args[1:]))
+    if args[0] == "growth-registration-qa":
+        from bayescatrack.experiments.growth_registration_qa import (
+            main as _growth_registration_qa_main,
+        )
+
+        return int(_growth_registration_qa_main(args[1:]))
     if args[0] == "validate-track2p-inputs":
         from bayescatrack.experiments.track2p_input_validator import (
             main as _track2p_input_validator_main,
         )
 
         return int(_track2p_input_validator_main(args[1:]))
+    if args[0] in {"audit-manual-gt-rois", "audit-manual-gt-roi-index-space"}:
+        from bayescatrack.experiments.track2p_roi_index_audit import (
+            main as _track2p_roi_index_audit_main,
+        )
+
+        return int(_track2p_roi_index_audit_main(args[1:]))
     if args[0] == "compare":
         from bayescatrack.experiments.benchmark_comparison import (
             main as _benchmark_comparison_main,

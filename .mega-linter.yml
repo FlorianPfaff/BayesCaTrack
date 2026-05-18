@@ -4,13 +4,14 @@ SHOW_ELAPSED_TIME: true
 
 PRE_COMMANDS:
   - command: cat /etc/os-release
-  - command: pip install $GITHUB_WORKSPACE/alpine-wheels/*
+  - command: pip install --upgrade pip && pip install numpy pytest
     venv: pylint
 
 PYTHON_PYLINT_CONFIG_FILE: .pylintrc
 COPYPASTE_JSCPD_CONFIG_FILE: .jscpd.json
 
 DISABLE_LINTERS:
+  - ACTION_ZIZMOR # Fails on GitHub API ref-confusion audit in MegaLinter v9.5; actionlint remains enabled
   - SPELL_CSPELL
   - PYTHON_PYRIGHT
   - REPOSITORY_DEVSKIM

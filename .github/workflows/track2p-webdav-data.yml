@@ -1,11 +1,12 @@
-name: Track2p Zenodo data smoke test
+name: Track2p WebDAV data smoke test
 
 on:
   push:
     branches:
       - main
     paths:
-      - ".github/workflows/track2p-zenodo-data.yml"
+      - ".github/workflows/track2p-webdav-data.yml"
+      - ".github/actions/setup-longitudinaltracking-data/action.yml"
       - "src/**"
       - "tests/**"
       - "pyproject.toml"
@@ -13,7 +14,8 @@ on:
     branches:
       - main
     paths:
-      - ".github/workflows/track2p-zenodo-data.yml"
+      - ".github/workflows/track2p-webdav-data.yml"
+      - ".github/actions/setup-longitudinaltracking-data/action.yml"
       - "src/**"
       - "tests/**"
       - "pyproject.toml"
@@ -26,15 +28,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  ZENODO_DATA_URL: "https://zenodo.org/records/17091226/files/data.zip?download=1"
-  ZENODO_DATA_MD5: "8d12ff6b93a26e28609c5a20b11f3d88"
-  ZENODO_CACHE_KEY: "track2p-zenodo-17091226-data-md5-8d12ff6b93a26e28609c5a20b11f3d88"
-  SEGMENT_DOWNLOAD_TIMEOUT_MINS: "30"
-
 jobs:
-  zenodo-smoke:
-    name: Download cached Zenodo data and run real-data smoke test
+  webdav-smoke:
+    name: Download cached WebDAV data and run real-data smoke test
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 240
 
@@ -50,44 +47,19 @@ jobs:
       - name: Show runner disk before data restore
         run: df -h "$GITHUB_WORKSPACE"
 
-      - name: Restore cached Zenodo archive
-        id: restore-zenodo
-        uses: actions/cache/restore@v5
+      - name: Restore or download longitudinal tracking data
+        uses: ./.github/actions/setup-longitudinaltracking-data
         with:
-          path: data-cache/data.zip
-          key: ${{ env.ZENODO_CACHE_KEY }}
-
-      - name: Download Zenodo archive on cache miss
-        if: steps.restore-zenodo.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p data-cache
-          curl \
-            --fail \
-            --location \
-            --show-error \
-            --retry 5 \
-            --retry-delay 30 \
-            --retry-all-errors \
-            --output data-cache/data.zip \
-            "$ZENODO_DATA_URL"
-
-      - name: Verify Zenodo archive checksum
-        run: |
-          echo "${ZENODO_DATA_MD5}  data-cache/data.zip" | md5sum --check -
-          du -h data-cache/data.zip
-          df -h "$GITHUB_WORKSPACE"
-
-      - name: Save Zenodo archive to cache
-        if: steps.restore-zenodo.outputs.cache-hit != 'true' && hashFiles('data-cache/data.zip') != ''
-        uses: actions/cache/save@v5
-        with:
-          path: data-cache/data.zip
-          key: ${{ env.ZENODO_CACHE_KEY }}
+          data_path: track2p-data
+          cache_key: longitudinaltracking-webdav-track2p-data-v1
+          webdav_url: ${{ secrets.LONGITUDINALTRACKING_WEBDAV_URL }}
+          webdav_user: ${{ secrets.LONGITUDINALTRACKING_DATA_KEY }}
+          webdav_password: ${{ secrets.LONGITUDINALTRACKING_DATA_PASSWORD }}
 
       - name: Install smoke-test runtime dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "numpy<3"
+          python -m pip install -e ".[track2p]" "numpy<3"
 
       - name: Select package module
         id: package-module
@@ -110,10 +82,9 @@ jobs:
           import os
           import re
           import shutil
-          import zipfile
-          from pathlib import Path, PurePosixPath
+          from pathlib import Path
 
-          archive_path = Path("data-cache/data.zip")
+          data_root = Path("track2p-data")
           subset_dir = Path("real-data-subset")
           required_files = {"F.npy", "iscell.npy", "ops.npy", "stat.npy"}
           optional_files = {"Fneu.npy", "spks.npy"}
@@ -126,50 +97,50 @@ jobs:
           subset_dir.mkdir(parents=True)
 
           entries = {}
-          with zipfile.ZipFile(archive_path) as archive:
-              for name in archive.namelist():
-                  if name.endswith("/"):
+          for plane_dir in data_root.rglob("suite2p/plane0"):
+              if not plane_dir.is_dir():
+                  continue
+              parts = plane_dir.parts
+              for index in range(0, max(0, len(parts) - 3)):
+                  if not subject_pattern.fullmatch(parts[index]):
                       continue
-                  parts = PurePosixPath(name).parts
-                  for index in range(0, max(0, len(parts) - 4)):
-                      if not subject_pattern.fullmatch(parts[index]):
-                          continue
-                      if not session_pattern.fullmatch(parts[index + 1]):
-                          continue
-                      if parts[index + 2:index + 4] != ("suite2p", "plane0"):
-                          continue
-                      filename = parts[index + 4]
-                      if filename not in wanted_files:
-                          break
-                      subject = parts[index]
-                      session = parts[index + 1]
-                      relative_parts = parts[index: index + 5]
-                      entries.setdefault((subject, session), {})[filename] = (name, relative_parts)
-                      break
+                  if not session_pattern.fullmatch(parts[index + 1]):
+                      continue
+                  if parts[index + 2:index + 4] != ("suite2p", "plane0"):
+                      continue
+                  subject = parts[index]
+                  session = parts[index + 1]
+                  files = {}
+                  for filename in wanted_files:
+                      source = plane_dir / filename
+                      if source.exists():
+                          relative_parts = parts[index:index + 4] + (filename,)
+                          files[filename] = (source, relative_parts)
+                  entries[(subject, session)] = files
+                  break
 
-              sessions_by_subject = {}
-              for (subject, session), files in entries.items():
-                  if required_files.issubset(files):
-                      sessions_by_subject.setdefault(subject, []).append(session)
+          sessions_by_subject = {}
+          for (subject, session), files in entries.items():
+              if required_files.issubset(files):
+                  sessions_by_subject.setdefault(subject, []).append(session)
 
-              selected_subject = None
-              selected_sessions = None
-              for subject in sorted(sessions_by_subject):
-                  sessions = sorted(set(sessions_by_subject[subject]))
-                  if len(sessions) >= 2:
-                      selected_subject = subject
-                      selected_sessions = sessions[:2]
-                      break
+          selected_subject = None
+          selected_sessions = None
+          for subject in sorted(sessions_by_subject):
+              sessions = sorted(set(sessions_by_subject[subject]))
+              if len(sessions) >= 2:
+                  selected_subject = subject
+                  selected_sessions = sessions[:2]
+                  break
 
-              if selected_subject is None or selected_sessions is None:
-                  raise RuntimeError("Could not find a subject with at least two complete suite2p/plane0 sessions")
+          if selected_subject is None or selected_sessions is None:
+              raise RuntimeError("Could not find a subject with at least two complete suite2p/plane0 sessions")
 
-              for session in selected_sessions:
-                  for filename, (name, relative_parts) in sorted(entries[(selected_subject, session)].items()):
-                      destination = subset_dir.joinpath(*relative_parts)
-                      destination.parent.mkdir(parents=True, exist_ok=True)
-                      with archive.open(name) as source, destination.open("wb") as target:
-                          shutil.copyfileobj(source, target)
+          for session in selected_sessions:
+              for filename, (source, relative_parts) in sorted(entries[(selected_subject, session)].items()):
+                  destination = subset_dir.joinpath(*relative_parts)
+                  destination.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copy2(source, destination)
 
           subject_path = subset_dir / selected_subject
           print(f"Extracted {selected_subject}: {', '.join(selected_sessions)}")

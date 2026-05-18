@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import numpy as np
-
 from bayescatrack.core.bridge import Track2pSession, load_track2p_subject
 from bayescatrack.ground_truth_eval import TrackTable, load_track_table_csv
 

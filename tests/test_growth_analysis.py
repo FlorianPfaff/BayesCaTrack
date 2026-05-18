@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from bayescatrack.analysis.growth import (
     affine_growth_summaries,
     radial_displacement_rows,

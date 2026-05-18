@@ -25,6 +25,13 @@ def _install_fake_point_set_registration(monkeypatch) -> None:
             points = np.asarray(points, dtype=float)
             return (self.matrix @ points.T).T + self.offset
 
+        def inverse(self):
+            inverse_matrix = np.linalg.inv(self.matrix)
+            return AffineTransform(
+                inverse_matrix,
+                -(inverse_matrix @ self.offset),
+            )
+
     # pylint: disable=too-many-instance-attributes
     class RegistrationResult:
         def __init__(self, transform, assignment, transformed_reference_points):

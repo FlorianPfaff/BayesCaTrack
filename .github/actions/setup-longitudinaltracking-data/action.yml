@@ -1,0 +1,205 @@
+name: Setup longitudinal tracking data
+description: Restore, download, cache, and expose the longitudinal tracking dataset.
+
+inputs:
+  data_path:
+    description: Directory where the prepared data tree should be available.
+    required: true
+  cache_key:
+    description: Cache key for the prepared data tree.
+    required: false
+    default: longitudinaltracking-webdav-track2p-data-v1
+  webdav_url:
+    description: WebDAV endpoint URL.
+    required: true
+  webdav_user:
+    description: WebDAV public share key or user name.
+    required: true
+  webdav_password:
+    description: WebDAV public share password.
+    required: true
+  required_file_name:
+    description: File name that must exist in the prepared dataset tree.
+    required: false
+    default: stat.npy
+  rclone_filter_rules:
+    description: Optional newline-separated rclone filter rules for partial downloads.
+    required: false
+    default: ""
+
+outputs:
+  data-path:
+    description: Workflow data path.
+    value: ${{ steps.resolve.outputs.data-path }}
+  cache-data-path:
+    description: Resolved cache data path.
+    value: ${{ steps.resolve.outputs.cache-data-path }}
+  cache-hit:
+    description: Whether the data came from a local or Actions cache hit.
+    value: ${{ steps.resolve.outputs.local-cache-hit == 'true' || steps.restore-data.outputs.cache-hit == 'true' }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve dataset paths
+      id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+        data_path="${{ inputs.data_path }}"
+        cache_data_path="${data_path}"
+        required_file_name="${{ inputs.required_file_name }}"
+        if [ "${RUNNER_ENVIRONMENT:-}" = "self-hosted" ]; then
+          cache_slug="$(printf '%s' "${{ inputs.cache_key }}" | tr -c 'A-Za-z0-9_.-' '_')"
+          cache_data_path="${HOME}/.cache/datasets/${cache_slug}"
+        fi
+        mkdir -p "$(dirname "${data_path}")" "${cache_data_path}"
+        if find "${cache_data_path}" -type f -name "${required_file_name}" -print -quit | grep -q .; then
+          echo "local-cache-hit=true" >> "$GITHUB_OUTPUT"
+          echo "Longitudinal tracking data cache hit at ${cache_data_path}"
+        else
+          echo "local-cache-hit=false" >> "$GITHUB_OUTPUT"
+          echo "Longitudinal tracking data cache miss at ${cache_data_path}"
+        fi
+        echo "data-path=${data_path}" >> "$GITHUB_OUTPUT"
+        echo "cache-data-path=${cache_data_path}" >> "$GITHUB_OUTPUT"
+
+    - name: Restore cached longitudinal tracking data
+      id: restore-data
+      if: ${{ runner.environment != 'self-hosted' && steps.resolve.outputs.local-cache-hit != 'true' }}
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ steps.resolve.outputs.cache-data-path }}
+        key: ${{ inputs.cache_key }}
+
+    - name: Install rclone without sudo
+      if: ${{ steps.resolve.outputs.local-cache-hit != 'true' && (runner.environment == 'self-hosted' || steps.restore-data.outputs.cache-hit != 'true') }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! command -v rclone >/dev/null 2>&1; then
+          mkdir -p "$RUNNER_TEMP/rclone-bin" "$RUNNER_TEMP/rclone-download"
+          curl -fsSL https://downloads.rclone.org/rclone-current-linux-amd64.zip \
+            -o "$RUNNER_TEMP/rclone-download/rclone.zip"
+          python - <<'PY'
+        import os
+        import shutil
+        import zipfile
+        from pathlib import Path
+
+        temp = Path(os.environ["RUNNER_TEMP"])
+        zip_path = temp / "rclone-download" / "rclone.zip"
+        extract_dir = temp / "rclone-download" / "extract"
+        bin_dir = temp / "rclone-bin"
+        with zipfile.ZipFile(zip_path) as archive:
+            archive.extractall(extract_dir)
+        matches = list(extract_dir.glob("rclone-*/rclone"))
+        if not matches:
+            raise SystemExit("Downloaded rclone archive did not contain the rclone binary")
+        target = bin_dir / "rclone"
+        shutil.copy2(matches[0], target)
+        target.chmod(0o755)
+        PY
+          echo "$RUNNER_TEMP/rclone-bin" >> "$GITHUB_PATH"
+          export PATH="$RUNNER_TEMP/rclone-bin:$PATH"
+        fi
+        rclone version
+
+    - name: Download longitudinal tracking data via rclone
+      if: ${{ steps.resolve.outputs.local-cache-hit != 'true' && (runner.environment == 'self-hosted' || steps.restore-data.outputs.cache-hit != 'true') }}
+      shell: bash
+      env:
+        CACHE_DATA_PATH: ${{ steps.resolve.outputs.cache-data-path }}
+        DOWNLOAD_DIR: ${{ runner.temp }}/longitudinaltracking-webdav
+        WEBDAV_URL: ${{ inputs.webdav_url }}
+        WEBDAV_USER: ${{ inputs.webdav_user }}
+        WEBDAV_PASSWORD: ${{ inputs.webdav_password }}
+        RCLONE_FILTER_RULES: ${{ inputs.rclone_filter_rules }}
+        REQUIRED_FILE_NAME: ${{ inputs.required_file_name }}
+      run: |
+        set -euo pipefail
+        if [[ -z "$WEBDAV_URL" || -z "$WEBDAV_USER" || -z "$WEBDAV_PASSWORD" ]]; then
+          echo "Missing WebDAV credentials for longitudinal tracking data." >&2
+          exit 1
+        fi
+
+        rm -rf "$DOWNLOAD_DIR" "$CACHE_DATA_PATH"
+        mkdir -p "$DOWNLOAD_DIR" "$CACHE_DATA_PATH"
+        obscured="$(rclone obscure "$WEBDAV_PASSWORD")"
+        rclone_args=()
+        if [[ -n "$RCLONE_FILTER_RULES" ]]; then
+          filter_file="$RUNNER_TEMP/rclone-filter-rules.txt"
+          printf '%s\n' "$RCLONE_FILTER_RULES" > "$filter_file"
+          rclone_args+=(--filter-from "$filter_file")
+        fi
+        rclone copy ":webdav:" "$DOWNLOAD_DIR" \
+          --webdav-url "$WEBDAV_URL" \
+          --webdav-vendor owncloud \
+          --webdav-user "$WEBDAV_USER" \
+          --webdav-pass "$obscured" \
+          "${rclone_args[@]}" \
+          --progress
+
+        python - <<'PY'
+        import os
+        import shutil
+        import zipfile
+        from pathlib import Path
+
+        source = Path(os.environ["DOWNLOAD_DIR"])
+        target = Path(os.environ["CACHE_DATA_PATH"])
+        required_file_name = os.environ["REQUIRED_FILE_NAME"]
+        children = sorted(source.iterdir(), key=lambda path: path.name)
+        zips = [
+            path for path in children
+            if path.is_file() and path.suffix.lower() == ".zip"
+        ]
+
+        if target.exists():
+            shutil.rmtree(target)
+        target.mkdir(parents=True)
+
+        if len(zips) == 1 and not any(source.rglob("stat.npy")):
+            with zipfile.ZipFile(zips[0]) as archive:
+                archive.extractall(target)
+        else:
+            for item in children:
+                destination = target / item.name
+                if item.is_dir():
+                    shutil.copytree(item, destination)
+                else:
+                    shutil.copy2(item, destination)
+
+        if not any(target.rglob(required_file_name)):
+            raise SystemExit(
+                f"Downloaded data in {target} does not contain any {required_file_name} files"
+            )
+        PY
+
+        du -sh "$CACHE_DATA_PATH" || true
+
+    - name: Expose dataset at workflow data path
+      shell: bash
+      env:
+        DATA_PATH: ${{ steps.resolve.outputs.data-path }}
+        CACHE_DATA_PATH: ${{ steps.resolve.outputs.cache-data-path }}
+      run: |
+        set -euo pipefail
+        if [ "${DATA_PATH}" != "${CACHE_DATA_PATH}" ]; then
+          rm -rf "${DATA_PATH}"
+          mkdir -p "$(dirname "${DATA_PATH}")"
+          ln -s "$(realpath "${CACHE_DATA_PATH}")" "${DATA_PATH}"
+        fi
+        if ! find -L "${DATA_PATH}" -type f -name "${{ inputs.required_file_name }}" -print -quit | grep -q .; then
+          echo "Prepared data path does not contain any ${{ inputs.required_file_name }} files: ${DATA_PATH}" >&2
+          exit 1
+        fi
+        du -shL "${DATA_PATH}" || true
+
+    - name: Save longitudinal tracking data cache
+      if: ${{ runner.environment != 'self-hosted' && steps.resolve.outputs.local-cache-hit != 'true' && steps.restore-data.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v5
+      continue-on-error: true
+      with:
+        path: ${{ steps.resolve.outputs.cache-data-path }}
+        key: ${{ inputs.cache_key }}

@@ -1,0 +1,128 @@
+name: Track2p Oracle benchmark
+
+on:
+  # checkov:skip=CKV_GHA_7: Manual benchmark workflow intentionally exposes bounded dispatch inputs and produces only benchmark artifacts.
+  workflow_dispatch:
+    inputs:
+      raw_data_path:
+        description: "Raw pre-Track2p Suite2p data directory"
+        type: string
+        default: track2p-raw-data-bridge
+        required: true
+      metadata_data_path:
+        description: "Track2p/ground-truth metadata data directory"
+        type: string
+        default: track2p-data
+        required: true
+      exclude_subjects:
+        description: "Comma-separated manual-GT subjects to exclude"
+        type: string
+        default: ""
+        required: false
+      python_version:
+        description: "Python version"
+        type: string
+        default: "3.11"
+        required: true
+      runner:
+        description: "Runner label; self-hosted keeps downloaded data in /home/github-runner/.cache/datasets"
+        type: string
+        default: self-hosted
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  oracle-benchmark:
+    name: Oracle GT link benchmark
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 120
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: pip
+
+      - name: Install BayesCaTrack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<3"
+          python -m pip install -e ".[track2p]"
+
+      - name: Restore or download raw pre-Track2p Suite2p data
+        uses: ./.github/actions/setup-longitudinaltracking-data
+        with:
+          data_path: ${{ inputs.raw_data_path }}
+          cache_key: longitudinaltrackingraw-webdav-${{ inputs.raw_data_path }}-spatial-v3
+          webdav_url: ${{ secrets.LONGITUDINALTRACKINGRAW_WEBDAV_URL }}
+          webdav_user: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_KEY }}
+          webdav_password: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_PASSWORD }}
+          required_file_name: stat.npy
+          rclone_filter_rules: |
+            + **/suite2p/plane0/stat.npy
+            + **/suite2p/plane0/iscell.npy
+            + **/suite2p/plane0/ops.npy
+            + **/track2p/track_ops.npy
+            + **/track2p/plane0_suite2p_indices.npy
+            - **
+
+      - name: Restore or download Track2p metadata data
+        uses: ./.github/actions/setup-longitudinaltracking-data
+        with:
+          data_path: ${{ inputs.metadata_data_path }}
+          cache_key: longitudinaltracking-webdav-${{ inputs.metadata_data_path }}-metadata-v2
+          webdav_url: ${{ secrets.LONGITUDINALTRACKING_WEBDAV_URL }}
+          webdav_user: ${{ secrets.LONGITUDINALTRACKING_DATA_KEY }}
+          webdav_password: ${{ secrets.LONGITUDINALTRACKING_DATA_PASSWORD }}
+          required_file_name: ground_truth.csv
+          rclone_filter_rules: |
+            + **/ground_truth.csv
+            - **
+
+      - name: Prepare raw Suite2p benchmark tree
+        id: prep
+        env:
+          RAW_DATA_PATH: ${{ inputs.raw_data_path }}
+          METADATA_DATA_PATH: ${{ inputs.metadata_data_path }}
+          EXCLUDE_SUBJECTS: ${{ inputs.exclude_subjects }}
+        run: |
+          mkdir -p benchmark-results
+          python -m bayescatrack.experiments.track2p_raw_benchmark_data \
+            --raw-root "$RAW_DATA_PATH" \
+            --metadata-root "$METADATA_DATA_PATH" \
+            --output benchmark-raw-suite2p-subjects \
+            --diagnostics-dir benchmark-results \
+            --exclude-subjects "$EXCLUDE_SUBJECTS" \
+            --min-subjects 1
+
+      - name: Add raw-data diagnostics to job summary
+        run: cat benchmark-results/raw_suite2p_roi_diagnostics.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run oracle GT link benchmark
+        env:
+          TRACK2P_DATA_PATH: ${{ steps.prep.outputs.data_root }}
+          TRACK2P_REFERENCE_PATH: ${{ steps.prep.outputs.reference_root }}
+          TRACK2P_REFERENCE_KIND: ${{ steps.prep.outputs.reference_kind }}
+          TRACK2P_PLANE: plane0
+          TRACK2P_INPUT_FORMAT: suite2p
+          TRACK2P_INCLUDE_NON_CELLS: "true"
+          TRACK2P_INCLUDE_BEHAVIOR: "false"
+          TRACK2P_SEED_SESSION: "0"
+          TRACK2P_RESTRICT_TO_REFERENCE_SEED_ROIS: "true"
+        run: python .github/scripts/run_track2p_oracle_benchmark.py
+
+      - name: Upload oracle benchmark results
+        if: always() && hashFiles('benchmark-results/**') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: track2p-oracle-benchmark-results
+          path: benchmark-results/
+          if-no-files-found: error

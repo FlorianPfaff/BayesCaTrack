@@ -29,6 +29,9 @@ except ImportError:  # pragma: no cover - defensive fallback only
     linear_sum_assignment = None
 
 
+DEFAULT_ASSIGNMENT_MAX_COST = 6.0
+
+
 @dataclass(frozen=True)
 class SessionMatchResult:
     """Linear-assignment solution for one consecutive session pair."""
@@ -98,7 +101,7 @@ class SessionMatchResult:
 def solve_bundle_linear_assignment(
     bundle: Any,
     *,
-    max_cost: float | None = None,
+    max_cost: float | None = DEFAULT_ASSIGNMENT_MAX_COST,
 ) -> SessionMatchResult:
     """Solve a :class:`SessionAssociationBundle` via linear assignment.
 
@@ -108,8 +111,9 @@ def solve_bundle_linear_assignment(
         Any object exposing the attributes used by
         :class:`track2p_pyrecest_bridge.SessionAssociationBundle`.
     max_cost
-        Optional post-assignment gate. Matched pairs with assignment cost larger
-        than this threshold are discarded.
+        Assignment gate. Candidate pairs with assignment cost larger than this
+        threshold are excluded from the linear-assignment objective and discarded
+        from the returned matches. Pass ``None`` to keep every finite assignment.
     """
 
     if linear_sum_assignment is None:
@@ -120,26 +124,32 @@ def solve_bundle_linear_assignment(
     cost_matrix = np.asarray(bundle.pairwise_cost_matrix, dtype=float)
     if cost_matrix.ndim != 2:
         raise ValueError("bundle.pairwise_cost_matrix must be two-dimensional")
-    if max_cost is not None and max_cost < 0.0:
-        raise ValueError("max_cost must be non-negative")
+    if max_cost is not None:
+        max_cost = float(max_cost)
+        if not np.isfinite(max_cost) or max_cost < 0.0:
+            raise ValueError("max_cost must be a finite non-negative value")
 
     if cost_matrix.shape[0] == 0 or cost_matrix.shape[1] == 0:
-        empty = np.zeros((0,), dtype=int)
-        empty_costs = np.zeros((0,), dtype=float)
-        return SessionMatchResult(
-            reference_session_name=str(bundle.reference_session_name),
-            measurement_session_name=str(bundle.measurement_session_name),
-            reference_positions=empty,
-            measurement_positions=empty,
-            reference_roi_indices=empty,
-            measurement_roi_indices=empty,
-            costs=empty_costs,
+        return _empty_match_result(bundle)
+
+    assignment_cost_matrix = cost_matrix
+    valid_assignment_mask: np.ndarray | None = None
+    if max_cost is not None:
+        valid_assignment_mask = np.isfinite(cost_matrix) & (cost_matrix <= max_cost)
+        if not np.any(valid_assignment_mask):
+            return _empty_match_result(bundle)
+        assignment_cost_matrix = _gate_cost_matrix_for_linear_assignment(
+            cost_matrix,
+            valid_assignment_mask,
+            max_cost=max_cost,
         )
 
-    reference_positions, measurement_positions = linear_sum_assignment(cost_matrix)
+    reference_positions, measurement_positions = linear_sum_assignment(
+        assignment_cost_matrix
+    )
     assignment_costs = cost_matrix[reference_positions, measurement_positions]
-    if max_cost is not None:
-        keep = assignment_costs <= max_cost
+    if valid_assignment_mask is not None:
+        keep = valid_assignment_mask[reference_positions, measurement_positions]
         reference_positions = reference_positions[keep]
         measurement_positions = measurement_positions[keep]
         assignment_costs = assignment_costs[keep]
@@ -168,7 +178,7 @@ def solve_bundle_linear_assignment(
 def solve_consecutive_bundle_linear_assignments(
     bundles: Sequence[Any],
     *,
-    max_cost: float | None = None,
+    max_cost: float | None = DEFAULT_ASSIGNMENT_MAX_COST,
 ) -> list[SessionMatchResult]:
     """Solve a sequence of consecutive bundles into ROI-index matches."""
 
@@ -187,6 +197,7 @@ def build_track_rows_from_matches(
     ],
     *,
     start_roi_indices: Sequence[int] | None = None,
+    start_session_index: int = 0,
     fill_value: int = -1,
 ) -> np.ndarray:
     """Stitch consecutive matches into wide track rows.
@@ -198,8 +209,11 @@ def build_track_rows_from_matches(
     matches
         One match representation per consecutive session pair.
     start_roi_indices
-        ROI indices from the first session from which tracks should be grown.
-        If omitted, the sorted keys of the first match mapping are used.
+        ROI indices from ``start_session_index`` from which tracks should be grown.
+        If omitted, indices are inferred from the adjacent match mapping where
+        possible.
+    start_session_index
+        Session column that contains ``start_roi_indices``.
     fill_value
         Integer used for missing/unmatched entries.
     """
@@ -210,16 +224,28 @@ def build_track_rows_from_matches(
     if len(matches) != max(len(session_names) - 1, 0):
         raise ValueError("matches must have length len(session_names) - 1")
 
+    start_session_index = int(start_session_index)
+    if start_session_index < 0 or start_session_index >= len(session_names):
+        raise IndexError(
+            f"start_session_index {start_session_index} out of bounds "
+            f"for {len(session_names)} sessions"
+        )
+
     normalized_matches = [_normalize_match_mapping(match) for match in matches]
 
     if start_roi_indices is None:
-        if not normalized_matches:
-            raise ValueError(
-                "start_roi_indices must be provided when there are no consecutive matches"
-            )
-        start_roi_indices = sorted(normalized_matches[0])
+        start_roi_indices = _default_start_roi_indices(
+            normalized_matches,
+            start_session_index=start_session_index,
+            n_sessions=len(session_names),
+        )
     else:
         start_roi_indices = [int(index) for index in start_roi_indices]
+
+    reverse_matches = [
+        _invert_match_mapping(normalized_matches[match_index])
+        for match_index in range(start_session_index)
+    ]
 
     track_rows = np.full(
         (len(start_roi_indices), len(session_names)), int(fill_value), dtype=int
@@ -227,26 +253,41 @@ def build_track_rows_from_matches(
     if len(start_roi_indices) == 0:
         return track_rows
 
-    track_rows[:, 0] = np.asarray(start_roi_indices, dtype=int)
+    track_rows[:, start_session_index] = np.asarray(start_roi_indices, dtype=int)
     for row_index, start_roi in enumerate(start_roi_indices):
         current_roi = int(start_roi)
-        for match_index, mapping in enumerate(normalized_matches):
+        for match_index in range(start_session_index, len(normalized_matches)):
+            mapping = normalized_matches[match_index]
             next_roi = int(mapping.get(current_roi, fill_value))
             track_rows[row_index, match_index + 1] = next_roi
             if next_roi == fill_value:
                 break
             current_roi = next_roi
+
+        current_roi = int(start_roi)
+        for match_index in range(start_session_index - 1, -1, -1):
+            previous_roi = int(reverse_matches[match_index].get(current_roi, fill_value))
+            track_rows[row_index, match_index] = previous_roi
+            if previous_roi == fill_value:
+                break
+            current_roi = previous_roi
     return track_rows
 
 
 def build_track_rows_from_bundles(
     bundles: Sequence[Any],
     *,
-    max_cost: float | None = None,
+    max_cost: float | None = DEFAULT_ASSIGNMENT_MAX_COST,
     start_roi_indices: Sequence[int] | None = None,
+    start_session_index: int = 0,
     fill_value: int = -1,
 ) -> tuple[tuple[str, ...], np.ndarray, list[SessionMatchResult]]:
-    """Solve consecutive bundles and stitch them into wide track rows."""
+    """Solve consecutive bundles and stitch them into wide track rows.
+
+    ``max_cost`` is forwarded to :func:`solve_bundle_linear_assignment`.
+    Omitting it keeps the default assignment gate; passing ``None`` explicitly
+    disables cost gating and keeps every finite Hungarian assignment.
+    """
 
     bundles = list(bundles)
     if not bundles:
@@ -258,11 +299,12 @@ def build_track_rows_from_bundles(
     )
     session_names = _session_names_from_bundles(bundles)
     if start_roi_indices is None:
-        start_roi_indices = np.asarray(bundles[0].reference_roi_indices, dtype=int)
+        start_roi_indices = _bundle_roi_indices_for_session(bundles, start_session_index)
     track_rows = build_track_rows_from_matches(
         session_names,
         match_results,
         start_roi_indices=start_roi_indices,
+        start_session_index=start_session_index,
         fill_value=fill_value,
     )
     return session_names, track_rows, match_results
@@ -315,6 +357,51 @@ def _session_names_from_bundles(bundles: Sequence[Any]) -> tuple[str, ...]:
     return tuple(session_names)
 
 
+def _bundle_roi_indices_for_session(
+    bundles: Sequence[Any], session_index: int
+) -> np.ndarray:
+    """Return ROI indices for one session from consecutive association bundles."""
+
+    n_sessions = len(bundles) + 1
+    session_index = int(session_index)
+    if session_index < 0 or session_index >= n_sessions:
+        raise IndexError(
+            f"start_session_index {session_index} out of bounds for {n_sessions} sessions"
+        )
+    if session_index == 0:
+        return np.asarray(bundles[0].reference_roi_indices, dtype=int)
+    if session_index == n_sessions - 1:
+        return np.asarray(bundles[-1].measurement_roi_indices, dtype=int)
+    return np.asarray(bundles[session_index].reference_roi_indices, dtype=int)
+
+
+def _default_start_roi_indices(
+    normalized_matches: Sequence[Mapping[int, int]],
+    *,
+    start_session_index: int,
+    n_sessions: int,
+) -> list[int]:
+    if n_sessions == 1:
+        raise ValueError(
+            "start_roi_indices must be provided when there are no consecutive matches"
+        )
+    if start_session_index < len(normalized_matches):
+        return sorted(normalized_matches[start_session_index])
+    return sorted(_invert_match_mapping(normalized_matches[start_session_index - 1]))
+
+
+def _invert_match_mapping(mapping: Mapping[int, int]) -> dict[int, int]:
+    inverted: dict[int, int] = {}
+    for reference_roi, measurement_roi in mapping.items():
+        measurement_roi = int(measurement_roi)
+        if measurement_roi in inverted:
+            raise ValueError(
+                "match mappings must be one-to-one to stitch tracks backward from a later start session"
+            )
+        inverted[measurement_roi] = int(reference_roi)
+    return inverted
+
+
 def _normalize_match_mapping(
     match: (
         SessionMatchResult
@@ -344,3 +431,53 @@ def _normalize_match_mapping(
             for reference_roi, measurement_roi in match_array.tolist()
         }
     raise TypeError("unsupported match representation")
+
+
+def _empty_match_result(bundle: Any) -> SessionMatchResult:
+    empty = np.zeros((0,), dtype=int)
+    empty_costs = np.zeros((0,), dtype=float)
+    return SessionMatchResult(
+        reference_session_name=str(bundle.reference_session_name),
+        measurement_session_name=str(bundle.measurement_session_name),
+        reference_positions=empty,
+        measurement_positions=empty,
+        reference_roi_indices=empty,
+        measurement_roi_indices=empty,
+        costs=empty_costs,
+    )
+
+
+def _gate_cost_matrix_for_linear_assignment(
+    cost_matrix: np.ndarray,
+    valid_assignment_mask: np.ndarray,
+    *,
+    max_cost: float,
+) -> np.ndarray:
+    """Return a cost matrix where invalid candidate links cannot win cheaply.
+
+    Simply solving the original matrix and discarding over-threshold assignments
+    afterward can lower match cardinality. For example, an assignment containing
+    one over-threshold link plus one very cheap link may have a lower total cost
+    than two valid but moderate-cost links. Replacing invalid entries with a
+    dominating penalty makes the Hungarian objective maximize the number of valid
+    links first, then minimize their total cost.
+    """
+
+    valid_costs = np.asarray(cost_matrix[valid_assignment_mask], dtype=float)
+    if valid_costs.size == 0:
+        raise ValueError("valid_assignment_mask must contain at least one True entry")
+
+    valid_min = float(np.min(valid_costs))
+    valid_max = float(np.max(valid_costs))
+    cost_span = max(valid_max - valid_min, 1.0)
+    cost_scale = max(
+        abs(valid_min),
+        abs(valid_max),
+        abs(float(max_cost)),
+        cost_span,
+        1.0,
+    )
+    max_assignments = min(cost_matrix.shape)
+    invalid_penalty = (max_assignments + 1) * (cost_scale + cost_span + 1.0)
+
+    return np.where(valid_assignment_mask, cost_matrix, invalid_penalty)

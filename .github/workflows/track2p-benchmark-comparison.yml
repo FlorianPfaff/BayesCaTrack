@@ -4,8 +4,13 @@ on:
   # checkov:skip=CKV_GHA_7: Manual benchmark workflow intentionally exposes bounded dispatch inputs and produces only benchmark artifacts.
   workflow_dispatch:
     inputs:
+      publish_to_paper_repo:
+        description: "Dispatch paper-repo build-results workflow to fetch this raw artifact"
+        required: true
+        type: boolean
+        default: false
       data_path:
-        description: "Zenodo extraction directory"
+        description: "Longitudinal tracking data directory"
         type: string
         default: track2p-data
         required: true
@@ -13,6 +18,16 @@ on:
         description: "Maximum session gap"
         type: string
         default: "2"
+        required: true
+      transform_type:
+        description: "Registration transform for BayesCaTrack variants"
+        type: choice
+        options:
+          - affine
+          - rigid
+          - fov-translation
+          - none
+        default: affine
         required: true
       include_non_cells:
         description: "Load all Suite2p stat.npy rows, including ROIs not marked as cells"
@@ -38,11 +53,6 @@ on:
 permissions:
   contents: read
 
-env:
-  ZENODO_URL: https://zenodo.org/records/17091226/files/data.zip?download=1
-  ZENODO_MD5: 8d12ff6b93a26e28609c5a20b11f3d88
-  ZENODO_CACHE_KEY: track2p-zenodo-17091226-data-md5-8d12ff6b93a26e28609c5a20b11f3d88
-
 jobs:
   benchmark:
     runs-on: ubuntu-latest
@@ -61,41 +71,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "numpy<3"
-          python -m pip install -e .
+          python -m pip install -e ".[track2p]"
 
       - name: Show runner disk before data setup
         run: df -h
 
-      - name: Restore cached Zenodo archive
-        id: restore-data
-        uses: actions/cache/restore@v5
+      - name: Restore or download longitudinal tracking data
+        uses: ./.github/actions/setup-longitudinaltracking-data
         with:
-          path: data-cache/data.zip
-          key: ${{ env.ZENODO_CACHE_KEY }}
-
-      - name: Download Zenodo archive on cache miss
-        if: steps.restore-data.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p data-cache
-          curl --fail --location --show-error --retry 5 --retry-delay 30 --retry-all-errors \
-            --output data-cache/data.zip "$ZENODO_URL"
-
-      - name: Verify Zenodo archive checksum
-        run: echo "${ZENODO_MD5}  data-cache/data.zip" | md5sum --check -
-
-      - name: Save Zenodo archive to cache
-        if: steps.restore-data.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: data-cache/data.zip
-          key: ${{ env.ZENODO_CACHE_KEY }}
-
-      - name: Extract Zenodo archive
-        run: |
-          rm -rf "${{ inputs.data_path }}" benchmark-ground-truth-subjects results
-          mkdir -p "${{ inputs.data_path }}"
-          python -m zipfile -e data-cache/data.zip "${{ inputs.data_path }}"
-          du -sh "${{ inputs.data_path }}" || true
+          data_path: ${{ inputs.data_path }}
+          cache_key: longitudinaltracking-webdav-${{ inputs.data_path }}-v1
+          webdav_url: ${{ secrets.LONGITUDINALTRACKING_WEBDAV_URL }}
+          webdav_user: ${{ secrets.LONGITUDINALTRACKING_DATA_KEY }}
+          webdav_password: ${{ secrets.LONGITUDINALTRACKING_DATA_PASSWORD }}
 
       - name: Resolve benchmark paths and validate references
         id: paths
@@ -213,6 +201,7 @@ jobs:
             --reference-kind "${{ steps.paths.outputs.reference_kind }}"
             --method global-assignment
             --cost registered-iou
+            --transform-type "${{ inputs.transform_type }}"
             --max-gap "${{ inputs.max_gap }}"
             --format csv
             --output results/global_registered_iou_gap${{ inputs.max_gap }}.csv
@@ -233,6 +222,7 @@ jobs:
             --reference-kind "${{ steps.paths.outputs.reference_kind }}"
             --method global-assignment
             --cost roi-aware
+            --transform-type "${{ inputs.transform_type }}"
             --max-gap "${{ inputs.max_gap }}"
             --weighted-masks
             --weighted-centroids
@@ -257,6 +247,7 @@ jobs:
             --method global-assignment
             --cost calibrated
             --split leave-one-subject-out
+            --transform-type "${{ inputs.transform_type }}"
             --max-gap "${{ inputs.max_gap }}"
             --format csv
             --output results/global_calibrated_loso_gap${{ inputs.max_gap }}.csv
@@ -291,14 +282,58 @@ jobs:
             echo "Excluded subjects without GT: ${{ steps.paths.outputs.excluded_no_gt }}"
             echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.paths.outputs.excluded_incompatible }}"
             echo "include_non_cells: ${{ inputs.include_non_cells }}"
+            echo "transform_type: ${{ inputs.transform_type }}"
             echo "run_calibrated_loso: ${{ inputs.run_calibrated_loso }}"
             cat results/comparison.md
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark results
         if: always() && hashFiles('results/**') != ''
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: track2p-benchmark-comparison-gap${{ inputs.max_gap }}
           path: results/
           if-no-files-found: error
+
+  dispatch-paper-results:
+    name: Dispatch paper repository build
+    needs: benchmark
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_to_paper_repo == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch paper repository build-results workflow
+        env:
+          PAPER_REPO_TOKEN: ${{ secrets.PAPER_REPO_TOKEN }}
+          PAPER_REPO: FlorianPfaff/BayesCaTrackPaper
+          SOURCE_REPO: IPS-Stuttgart/BayesCaTrack
+          SOURCE_RUN_ID: ${{ github.run_id }}
+          ARTIFACT_NAME: track2p-benchmark-comparison-gap${{ inputs.max_gap }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${PAPER_REPO_TOKEN:-}" ]; then
+            echo "::warning::publish_to_paper_repo=true but PAPER_REPO_TOKEN is not configured; skipping paper workflow dispatch"
+            exit 0
+          fi
+          payload=$(python - <<'PY'
+          import json
+          import os
+
+          print(json.dumps({
+              "ref": "main",
+              "inputs": {
+                  "source_repo": os.environ["SOURCE_REPO"],
+                  "source_run_id": os.environ["SOURCE_RUN_ID"],
+                  "artifact_name": os.environ["ARTIFACT_NAME"],
+              },
+          }))
+          PY
+          )
+
+          curl -fsSL \
+            -X POST \
+            -H "Authorization: Bearer ${PAPER_REPO_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${PAPER_REPO}/actions/workflows/build-results.yml/dispatches" \
+            -d "$payload"

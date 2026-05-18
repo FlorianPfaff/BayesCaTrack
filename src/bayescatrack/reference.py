@@ -282,9 +282,9 @@ def load_aligned_subject_reference(
     suite2p_indices[:] = None
 
     for session_idx, session in enumerate(sessions):
-        n_rois = int(session.plane_data.n_rois)
-        for roi_idx in range(n_rois):
-            suite2p_indices[roi_idx, session_idx] = roi_idx
+        roi_indices = _suite2p_roi_indices_for_plane(session.plane_data)
+        for row_idx, roi_idx in enumerate(roi_indices):
+            suite2p_indices[row_idx, session_idx] = int(roi_idx)
 
     curated_mask = np.ones((n_tracks,), dtype=bool)
     return Track2pReference(
@@ -294,6 +294,24 @@ def load_aligned_subject_reference(
         curated_mask=curated_mask,
         source="aligned_subject_rows",
     )
+
+
+def _suite2p_roi_indices_for_plane(plane_data: Any) -> np.ndarray:
+    """Return original Suite2p ROI indices for the loaded plane rows."""
+
+    n_rois = int(plane_data.n_rois)
+    roi_indices = getattr(plane_data, "roi_indices", None)
+    if roi_indices is None:
+        return np.arange(n_rois, dtype=int)
+
+    roi_indices_array = np.asarray(roi_indices, dtype=int).reshape(-1)
+    if roi_indices_array.shape != (n_rois,):
+        raise ValueError("plane_data.roi_indices must have one entry per loaded ROI")
+    if np.any(roi_indices_array < 0):
+        raise ValueError("plane_data.roi_indices must contain non-negative indices")
+    if len(set(roi_indices_array.tolist())) != n_rois:
+        raise ValueError("plane_data.roi_indices must contain unique indices")
+    return roi_indices_array
 
 
 def pairs_from_label_vectors(

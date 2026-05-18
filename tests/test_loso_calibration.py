@@ -67,11 +67,13 @@ def _install_fake_pyrecest(monkeypatch):
     fake_utils = types.ModuleType("pyrecest.utils")
     fake_models = types.ModuleType("pyrecest.utils.association_models")
     fake_assignment = types.ModuleType("pyrecest.utils.multisession_assignment")
+    fit_models = []
 
     class LogisticPairwiseAssociationModel:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
             self.fit_args = None
+            fit_models.append(self)
 
         def fit(self, features, labels, sample_weight=None):
             self.fit_args = (np.asarray(features), np.asarray(labels), sample_weight)
@@ -96,6 +98,7 @@ def _install_fake_pyrecest(monkeypatch):
         return Result()
 
     fake_models.LogisticPairwiseAssociationModel = LogisticPairwiseAssociationModel
+    fake_models.fit_models = fit_models
     fake_assignment.solve_multisession_assignment = solve_multisession_assignment
     monkeypatch.setitem(sys.modules, "pyrecest", fake_pyrecest)
     monkeypatch.setitem(sys.modules, "pyrecest.utils", fake_utils)
@@ -116,25 +119,54 @@ def _install_registration_passthrough(monkeypatch):
     monkeypatch.setattr(global_assignment, "register_plane_pair", passthrough)
 
 
-def _run_loso_calibration(
-    tmp_path, monkeypatch, subject_writer, *, allow_smoke_reference=False
+def _loso_config(tmp_path, *, allow_smoke_reference=False):
+    return Track2pBenchmarkConfig(
+        data=tmp_path,
+        method="global-assignment",
+        split="leave-one-subject-out",
+        cost="calibrated",
+        max_gap=2,
+        include_behavior=False,
+        allow_track2p_as_reference_for_smoke_test=allow_smoke_reference,
+    )
+
+
+def _prepare_loso_fixture(
+    tmp_path, monkeypatch, subject_writer
 ):
     for subject_name in ("jm001", "jm002"):
         subject_writer(tmp_path / subject_name)
 
     _install_fake_pyrecest(monkeypatch)
     _install_registration_passthrough(monkeypatch)
+
+
+def _run_loso_calibration(
+    tmp_path, monkeypatch, subject_writer, *, allow_smoke_reference=False
+):
+    _prepare_loso_fixture(tmp_path, monkeypatch, subject_writer)
     return run_track2p_benchmark(
-        Track2pBenchmarkConfig(
-            data=tmp_path,
-            method="global-assignment",
-            split="leave-one-subject-out",
-            cost="calibrated",
-            max_gap=2,
-            include_behavior=False,
-            allow_track2p_as_reference_for_smoke_test=allow_smoke_reference,
-        )
+        _loso_config(tmp_path, allow_smoke_reference=allow_smoke_reference)
     )
+
+
+def _run_direct_loso_calibration(
+    tmp_path,
+    monkeypatch,
+    subject_writer,
+    *,
+    allow_smoke_reference=False,
+    sample_weight_strategy="none",
+):
+    _prepare_loso_fixture(tmp_path, monkeypatch, subject_writer)
+    from bayescatrack.experiments.track2p_loso_calibration import (
+        run_track2p_loso_calibration,
+    )
+
+    return run_track2p_loso_calibration(
+        _loso_config(tmp_path, allow_smoke_reference=allow_smoke_reference),
+        sample_weight_strategy=sample_weight_strategy,
+    ).to_benchmark_results()
 
 
 def test_loso_calibration_trains_on_other_subjects(
@@ -162,6 +194,50 @@ def test_loso_calibration_trains_on_other_subjects(
         assert row["calibration_brier_score"] == pytest.approx(0.25)
         assert row["calibration_ece"] == pytest.approx(0.0)
         assert row["calibration_mce"] == pytest.approx(0.0)
+
+
+def test_loso_calibration_avoids_double_balancing_by_default(
+    tmp_path, monkeypatch, write_raw_npy_session
+):
+    results = _run_loso_calibration(
+        tmp_path,
+        monkeypatch,
+        lambda subject_dir: _write_subject(subject_dir, write_raw_npy_session),
+        allow_smoke_reference=True,
+    )
+
+    fake_models = sys.modules["pyrecest.utils.association_models"]
+    assert len(fake_models.fit_models) == 2
+    for model in fake_models.fit_models:
+        assert model.kwargs == {"class_weight": None}
+        assert model.fit_args is not None
+        _features, _labels, sample_weight = model.fit_args
+        assert sample_weight is None
+    for result in results:
+        row = result.to_dict()
+        assert row["calibration_sample_weight_strategy"] == "none"
+        assert row["calibration_class_weight"] == "None"
+
+
+def test_loso_calibration_balanced_strategy_uses_one_explicit_weighting(
+    tmp_path, monkeypatch, write_raw_npy_session
+):
+    _run_direct_loso_calibration(
+        tmp_path,
+        monkeypatch,
+        lambda subject_dir: _write_subject(subject_dir, write_raw_npy_session),
+        allow_smoke_reference=True,
+        sample_weight_strategy="balanced",
+    )
+
+    fake_models = sys.modules["pyrecest.utils.association_models"]
+    assert len(fake_models.fit_models) == 2
+    for model in fake_models.fit_models:
+        assert model.kwargs == {"class_weight": None}
+        assert model.fit_args is not None
+        _features, labels, sample_weight = model.fit_args
+        assert sample_weight is not None
+        assert np.asarray(sample_weight).shape == labels.shape
 
 
 def test_loso_calibration_uses_aligned_rows_when_track2p_reference_is_absent(

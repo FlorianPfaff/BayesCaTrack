@@ -1,0 +1,319 @@
+name: Track2p raw Suite2p benchmark
+
+on:
+  # checkov:skip=CKV_GHA_7: Manual benchmark workflow intentionally exposes bounded dispatch inputs and produces only benchmark artifacts.
+  workflow_dispatch:
+    inputs:
+      raw_data_path:
+        description: "Raw pre-Track2p Suite2p data directory"
+        type: string
+        default: track2p-raw-data
+        required: true
+      metadata_data_path:
+        description: "Track2p/ground-truth metadata data directory"
+        type: string
+        default: track2p-data
+        required: true
+      max_gap:
+        description: "Maximum session gap"
+        type: string
+        default: "2"
+        required: true
+      transform_type:
+        description: "Registration transform for BayesCaTrack variants"
+        type: choice
+        options:
+          - affine
+          - rigid
+          - fov-translation
+          - fov-affine
+          - bspline
+          - tps
+          - thin-plate-spline
+          - local-affine-grid
+          - optical-flow
+          - none
+        default: affine
+        required: true
+      run_calibrated_loso:
+        description: "Run calibrated leave-one-subject-out variant"
+        type: boolean
+        default: true
+        required: true
+      run_fov_affine_soft_iou_only:
+        description: "Run only the FOV-affine registered-IoU soft-overlap sweep"
+        type: boolean
+        default: false
+        required: true
+      soft_iou_radii:
+        description: "Comma-separated soft-IoU radii for FOV-affine sweep"
+        type: string
+        default: "1,2,3"
+        required: true
+      exclude_subjects:
+        description: "Comma-separated manual-GT subjects to exclude"
+        type: string
+        default: ""
+        required: false
+      python_version:
+        description: "Python version"
+        type: string
+        default: "3.11"
+        required: true
+      runner:
+        description: "Runner label; self-hosted keeps downloaded data in /home/github-runner/.cache/datasets"
+        type: string
+        default: self-hosted
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  benchmark:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 480
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: pip
+
+      - name: Install BayesCaTrack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<3"
+          python -m pip install -e ".[track2p]"
+
+      - name: Show runner disk before data setup
+        run: df -h
+
+      - name: Restore or download raw pre-Track2p Suite2p data
+        uses: ./.github/actions/setup-longitudinaltracking-data
+        with:
+          data_path: ${{ inputs.raw_data_path }}
+          cache_key: longitudinaltrackingraw-webdav-${{ inputs.raw_data_path }}-spatial-v3
+          webdav_url: ${{ secrets.LONGITUDINALTRACKINGRAW_WEBDAV_URL }}
+          webdav_user: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_KEY }}
+          webdav_password: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_PASSWORD }}
+          required_file_name: stat.npy
+          rclone_filter_rules: |
+            + **/suite2p/plane0/stat.npy
+            + **/suite2p/plane0/iscell.npy
+            + **/suite2p/plane0/ops.npy
+            + **/track2p/track_ops.npy
+            + **/track2p/plane0_suite2p_indices.npy
+            - **
+
+      - name: Restore or download Track2p metadata data
+        uses: ./.github/actions/setup-longitudinaltracking-data
+        with:
+          data_path: ${{ inputs.metadata_data_path }}
+          cache_key: longitudinaltracking-webdav-${{ inputs.metadata_data_path }}-metadata-v2
+          webdav_url: ${{ secrets.LONGITUDINALTRACKING_WEBDAV_URL }}
+          webdav_user: ${{ secrets.LONGITUDINALTRACKING_DATA_KEY }}
+          webdav_password: ${{ secrets.LONGITUDINALTRACKING_DATA_PASSWORD }}
+          required_file_name: ground_truth.csv
+          rclone_filter_rules: |
+            + **/ground_truth.csv
+            - **
+
+      - name: Prepare raw Suite2p benchmark tree
+        id: prep
+        env:
+          RAW_DATA_PATH: ${{ inputs.raw_data_path }}
+          METADATA_DATA_PATH: ${{ inputs.metadata_data_path }}
+          EXCLUDE_SUBJECTS: ${{ inputs.exclude_subjects }}
+          RUN_CALIBRATED_LOSO: ${{ inputs.run_calibrated_loso }}
+        run: |
+          set -euo pipefail
+          min_subjects=1
+          if [[ "$RUN_CALIBRATED_LOSO" == "true" ]]; then
+            min_subjects=2
+          fi
+          mkdir -p results
+          python -m bayescatrack.experiments.track2p_raw_benchmark_data \
+            --raw-root "$RAW_DATA_PATH" \
+            --metadata-root "$METADATA_DATA_PATH" \
+            --output benchmark-raw-suite2p-subjects \
+            --diagnostics-dir results \
+            --exclude-subjects "$EXCLUDE_SUBJECTS" \
+            --min-subjects "$min_subjects"
+
+      - name: Add raw-data diagnostics to job summary
+        run: cat results/raw_suite2p_roi_diagnostics.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run FOV-affine soft-IoU registered-IoU sweep
+        if: ${{ inputs.run_fov_affine_soft_iou_only }}
+        env:
+          MAX_GAP: ${{ inputs.max_gap }}
+          SOFT_IOU_RADII: ${{ inputs.soft_iou_radii }}
+        run: |
+          set -euo pipefail
+          python -m bayescatrack.experiments.track2p_fov_affine_benchmark \
+            --data benchmark-raw-suite2p-subjects \
+            --reference benchmark-raw-suite2p-subjects \
+            --reference-kind manual-gt \
+            --input-format suite2p \
+            --include-non-cells \
+            --no-include-behavior \
+            --method global-assignment \
+            --cost registered-iou \
+            --max-gap "$MAX_GAP" \
+            --format csv \
+            --output "results/global_registered_iou_fov_affine_gap${MAX_GAP}.csv"
+
+          IFS=',' read -ra radii <<< "$SOFT_IOU_RADII"
+          compare_args=(--input "FOV-affine-r0=results/global_registered_iou_fov_affine_gap${MAX_GAP}.csv")
+          for radius in "${radii[@]}"; do
+            radius="$(echo "$radius" | xargs)"
+            if [[ -z "$radius" ]]; then
+              continue
+            fi
+            output="results/global_registered_iou_fov_affine_soft_iou_r${radius}_gap${MAX_GAP}.csv"
+            python -m bayescatrack.experiments.track2p_fov_affine_benchmark \
+              --data benchmark-raw-suite2p-subjects \
+              --reference benchmark-raw-suite2p-subjects \
+              --reference-kind manual-gt \
+              --input-format suite2p \
+              --include-non-cells \
+              --no-include-behavior \
+              --method global-assignment \
+              --cost registered-iou \
+              --max-gap "$MAX_GAP" \
+              --soft-iou-radius "$radius" \
+              --format csv \
+              --output "$output"
+            compare_args+=(--input "FOV-affine-soft-r${radius}=${output}")
+          done
+          bayescatrack benchmark compare "${compare_args[@]}" --output results/fov_affine_soft_iou_comparison.md
+
+      - name: Run Track2p baseline
+        if: ${{ !inputs.run_fov_affine_soft_iou_only }}
+        run: |
+          bayescatrack benchmark track2p \
+            --data "${{ steps.prep.outputs.data_root }}" \
+            --reference "${{ steps.prep.outputs.reference_root }}" \
+            --reference-kind "${{ steps.prep.outputs.reference_kind }}" \
+            --input-format suite2p \
+            --include-non-cells \
+            --no-include-behavior \
+            --method track2p-baseline \
+            --format csv \
+            --output results/track2p_baseline.csv
+
+      - name: Run registered-IoU global assignment
+        if: ${{ !inputs.run_fov_affine_soft_iou_only }}
+        run: |
+          bayescatrack benchmark track2p \
+            --data "${{ steps.prep.outputs.data_root }}" \
+            --reference "${{ steps.prep.outputs.reference_root }}" \
+            --reference-kind "${{ steps.prep.outputs.reference_kind }}" \
+            --input-format suite2p \
+            --include-non-cells \
+            --no-include-behavior \
+            --method global-assignment \
+            --cost registered-iou \
+            --transform-type "${{ inputs.transform_type }}" \
+            --max-gap "${{ inputs.max_gap }}" \
+            --format csv \
+            --output results/global_registered_iou_gap${{ inputs.max_gap }}.csv
+
+      - name: Run ROI-aware global assignment
+        if: ${{ !inputs.run_fov_affine_soft_iou_only }}
+        run: |
+          bayescatrack benchmark track2p \
+            --data "${{ steps.prep.outputs.data_root }}" \
+            --reference "${{ steps.prep.outputs.reference_root }}" \
+            --reference-kind "${{ steps.prep.outputs.reference_kind }}" \
+            --input-format suite2p \
+            --include-non-cells \
+            --no-include-behavior \
+            --method global-assignment \
+            --cost roi-aware \
+            --transform-type "${{ inputs.transform_type }}" \
+            --max-gap "${{ inputs.max_gap }}" \
+            --weighted-masks \
+            --weighted-centroids \
+            --format csv \
+            --output results/global_roi_aware_gap${{ inputs.max_gap }}.csv
+
+      - name: Run calibrated LOSO global assignment
+        if: ${{ inputs.run_calibrated_loso && !inputs.run_fov_affine_soft_iou_only }}
+        run: |
+          bayescatrack benchmark track2p \
+            --data "${{ steps.prep.outputs.data_root }}" \
+            --reference "${{ steps.prep.outputs.reference_root }}" \
+            --reference-kind "${{ steps.prep.outputs.reference_kind }}" \
+            --input-format suite2p \
+            --include-non-cells \
+            --no-include-behavior \
+            --method global-assignment \
+            --cost calibrated \
+            --split leave-one-subject-out \
+            --transform-type "${{ inputs.transform_type }}" \
+            --max-gap "${{ inputs.max_gap }}" \
+            --format csv \
+            --output results/global_calibrated_loso_gap${{ inputs.max_gap }}.csv
+
+      - name: Aggregate benchmark comparison
+        if: ${{ !inputs.run_fov_affine_soft_iou_only }}
+        env:
+          MAX_GAP: ${{ inputs.max_gap }}
+          RUN_LOSO: ${{ inputs.run_calibrated_loso }}
+        run: |
+          args=(
+            --input "Track2p=results/track2p_baseline.csv"
+            --input "Global-IoU=results/global_registered_iou_gap${MAX_GAP}.csv"
+            --input "ROI-aware=results/global_roi_aware_gap${MAX_GAP}.csv"
+          )
+          if [[ "$RUN_LOSO" == "true" ]]; then
+            args+=(--input "Calibrated-LOSO=results/global_calibrated_loso_gap${MAX_GAP}.csv")
+          fi
+          bayescatrack benchmark compare "${args[@]}" --output results/comparison.md
+          bayescatrack benchmark compare "${args[@]}" --format csv --output results/comparison.csv
+
+      - name: Add FOV-affine soft-IoU comparison to job summary
+        if: always() && hashFiles('results/fov_affine_soft_iou_comparison.md') != ''
+        run: |
+          {
+            echo "## FOV-affine soft-IoU registered-IoU sweep"
+            echo "Included usable manual-GT subjects: ${{ steps.prep.outputs.included }}"
+            echo "Excluded by user: ${{ steps.prep.outputs.excluded_by_user }}"
+            echo "include_non_cells: true"
+            echo "max_gap: ${{ inputs.max_gap }}"
+            echo "soft_iou_radii: ${{ inputs.soft_iou_radii }}"
+            cat results/fov_affine_soft_iou_comparison.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Add comparison to job summary
+        if: always() && hashFiles('results/comparison.md') != ''
+        run: |
+          {
+            echo "## Track2p raw Suite2p benchmark"
+            echo "Included usable manual-GT subjects: ${{ steps.prep.outputs.included }}"
+            echo "Excluded by user: ${{ steps.prep.outputs.excluded_by_user }}"
+            echo "Excluded without raw Suite2p sessions: ${{ steps.prep.outputs.excluded_no_raw_suite2p }}"
+            echo "Excluded without ground_truth.csv: ${{ steps.prep.outputs.excluded_no_ground_truth }}"
+            echo "Excluded without track2p suite2p-index bridge: ${{ steps.prep.outputs.excluded_no_track2p_suite2p_indices }}"
+            echo "Excluded with incompatible ROI indices: ${{ steps.prep.outputs.excluded_incompatible }}"
+            echo "include_non_cells: true"
+            echo "transform_type: ${{ inputs.transform_type }}"
+            echo "run_calibrated_loso: ${{ inputs.run_calibrated_loso }}"
+            cat results/comparison.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark results
+        if: always() && hashFiles('results/**') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: track2p-raw-suite2p-benchmark-gap${{ inputs.max_gap }}
+          path: results/
+          if-no-files-found: error

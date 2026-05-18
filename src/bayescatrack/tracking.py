@@ -22,7 +22,11 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from . import Track2pSession, load_track2p_subject
-from .matching import SessionMatchResult, build_track_rows_from_bundles
+from .matching import (
+    DEFAULT_ASSIGNMENT_MAX_COST,
+    SessionMatchResult,
+    build_track_rows_from_bundles,
+)
 from .registration import (
     RegisteredConsecutiveBundles,
     RegistrationModel,
@@ -160,8 +164,9 @@ def run_registered_subject_tracking(
     binarize_registered_masks: bool = False,
     registered_mask_threshold: float = 0.5,
     # jscpd:ignore-end
-    assignment_max_cost: float | None = None,
+    assignment_max_cost: float | None = DEFAULT_ASSIGNMENT_MAX_COST,
     start_roi_indices: Sequence[int] | None = None,
+    start_session_index: int = 0,
     fill_value: int = -1,
     **suite2p_kwargs: Any,
 ) -> SubjectTrackingResult:
@@ -169,7 +174,9 @@ def run_registered_subject_tracking(
 
     The returned ``track_rows`` matrix has one row per started track and one
     column per session. Entries are Suite2p ROI indices. Missing links are filled
-    with ``fill_value``.
+    with ``fill_value``. ``assignment_max_cost`` defaults to the package-wide
+    pairwise assignment gate; pass ``None`` explicitly to disable assignment-cost
+    gating.
     """
 
     sessions = _load_subject_sessions(
@@ -182,14 +189,24 @@ def run_registered_subject_tracking(
     if not sessions:
         raise ValueError("No sessions were found")
 
+    start_session_index = int(start_session_index)
+    if start_session_index < 0 or start_session_index >= len(sessions):
+        raise IndexError(
+            f"start_session_index {start_session_index} out of bounds "
+            f"for {len(sessions)} sessions"
+        )
+
     session_names = tuple(session.session_name for session in sessions)
     if len(sessions) == 1:
         first_plane = sessions[0].plane_data
-        first_indices = (
-            np.asarray(first_plane.roi_indices, dtype=int)
-            if first_plane.roi_indices is not None
-            else np.arange(first_plane.n_rois, dtype=int)
-        )
+        if start_roi_indices is None:
+            first_indices = (
+                np.asarray(first_plane.roi_indices, dtype=int)
+                if first_plane.roi_indices is not None
+                else np.arange(first_plane.n_rois, dtype=int)
+            )
+        else:
+            first_indices = np.asarray(start_roi_indices, dtype=int)
         track_rows = np.asarray(first_indices, dtype=int).reshape(-1, 1)
         link_costs = np.zeros((track_rows.shape[0], 0), dtype=float)
         return SubjectTrackingResult(
@@ -226,6 +243,7 @@ def run_registered_subject_tracking(
         association_bundles,
         max_cost=assignment_max_cost,
         start_roi_indices=start_roi_indices,
+        start_session_index=start_session_index,
         fill_value=fill_value,
     )
     link_costs = _build_link_cost_matrix(

@@ -93,6 +93,18 @@ paper-facing comparison. For plumbing checks only, pass
 handled by scoring only predicted tracks whose seed-session ROI appears in the
 reference seed set; this avoids counting unlabelled cells as false positives.
 
+Install the optional Track2p/elastix registration backend when running affine
+or rigid registration:
+
+```bash
+python -m pip install ".[track2p]"
+```
+
+Use `--transform-type affine` or `--transform-type rigid` to request Track2p's
+registration stack. For hosted benchmark runs without this optional backend,
+use `--transform-type fov-translation`; that selects BayesCaTrack's integer FOV
+phase-correlation fallback explicitly.
+
 Create a small synthetic Suite2p-style subject for benchmark development:
 
 ```python
@@ -124,6 +136,7 @@ python -m bayescatrack benchmark track2p \
   --cost registered-iou \
   --reference /path/to/manual_ground_truth_root \
   --reference-kind manual-gt \
+  --transform-type fov-translation \
   --max-gap 2
 ```
 
@@ -136,6 +149,7 @@ python -m bayescatrack benchmark track2p \
   --cost roi-aware \
   --reference /path/to/manual_ground_truth_root \
   --reference-kind manual-gt \
+  --transform-type fov-translation \
   --max-gap 2
 ```
 
@@ -149,6 +163,7 @@ python -m bayescatrack benchmark track2p \
   --split leave-one-subject-out \
   --reference /path/to/manual_ground_truth_root \
   --reference-kind manual-gt \
+  --transform-type fov-translation \
   --max-gap 2
 ```
 
@@ -183,7 +198,8 @@ Run a reproducible benchmark suite from one JSON manifest:
     "data": "data/jm039",
     "input_format": "suite2p",
     "include_behavior": false,
-    "include_non_cells": true
+    "include_non_cells": true,
+    "transform_type": "fov-translation"
   },
   "runs": [
     {

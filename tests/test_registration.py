@@ -122,7 +122,8 @@ def test_build_registered_session_pair_association_bundle_recovers_translation(
         np.array([-1.0, 0.0]),
     )
     assert (
-        registered_bundle.plane_registration.pyrecest_registration_result.transform.inverse_calls == 1
+        registered_bundle.plane_registration.pyrecest_registration_result.transform.inverse_calls
+        == 1
     )
     npt.assert_allclose(
         registered_bundle.plane_registration.registered_measurement_plane.centroids(

@@ -9,7 +9,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 from bayescatrack.association.calibrated_costs import CalibratedAssociationModel
@@ -29,6 +29,7 @@ from bayescatrack.evaluation.track2p_metrics import (
     score_track_matrices,
 )
 from bayescatrack.ground_truth_eval import load_track2p_ground_truth_csv
+from bayescatrack.matching import build_track_rows_from_matches
 from bayescatrack.reference import (
     Track2pReference,
     load_aligned_subject_reference,
@@ -36,7 +37,7 @@ from bayescatrack.reference import (
 )
 
 ReferenceKind = Literal["auto", "manual-gt", "track2p-output", "aligned-subject-rows"]
-BenchmarkMethod = Literal["track2p-baseline", "global-assignment"]
+BenchmarkMethod = Literal["track2p-baseline", "global-assignment", "oracle-gt-links"]
 BenchmarkSplit = Literal["subject", "leave-one-subject-out"]
 OutputFormat = Literal["table", "json", "csv"]
 GROUND_TRUTH_CSV_NAME = "ground_truth.csv"
@@ -168,7 +169,9 @@ def run_track2p_benchmark(
             _validate_reference_roi_indices(
                 reference, _load_subject_sessions(subject_dir, config)
             )
-        predicted_matrix, variant = _predict_subject_tracks(subject_dir, config)
+        predicted_matrix, variant = _predict_subject_tracks(
+            subject_dir, config, reference=reference
+        )
         scores = _score_prediction_against_reference(
             predicted_matrix, reference, config=config
         )
@@ -257,7 +260,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--method",
         required=True,
-        choices=("track2p-baseline", "global-assignment"),
+        choices=("track2p-baseline", "global-assignment", "oracle-gt-links"),
         help="Benchmark variant to run",
     )
     parser.add_argument(
@@ -324,7 +327,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "none"),
+        choices=("affine", "rigid", "fov-translation", "none"),
         help="Track2p registration transform type",
     )
     parser.add_argument(
@@ -433,7 +436,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _predict_subject_tracks(
-    subject_dir: Path, config: Track2pBenchmarkConfig
+    subject_dir: Path,
+    config: Track2pBenchmarkConfig,
+    *,
+    reference: Track2pReference | None = None,
 ) -> tuple[np.ndarray, str]:
     if config.method == "track2p-baseline":
         track2p_dir = subject_dir / "track2p"
@@ -452,10 +458,65 @@ def _predict_subject_tracks(
             )
         return normalize_track_matrix(baseline.suite2p_indices), "Track2p default"
 
+    if config.method == "oracle-gt-links":
+        if reference is None:
+            raise ValueError("oracle-gt-links requires a loaded reference")
+        return (
+            oracle_ground_truth_link_tracks(
+                reference,
+                curated_only=config.curated_only,
+                seed_session=config.seed_session,
+            ),
+            "Oracle GT consecutive links",
+        )
+
+    if config.method != "global-assignment":
+        raise ValueError(f"Unsupported benchmark method: {config.method!r}")
+
     sessions = _load_subject_sessions(subject_dir, config)
     assignment = solve_configured_global_assignment(sessions, config)
     predicted = tracks_to_suite2p_index_matrix(assignment.result.tracks, sessions)
     return predicted, _variant_name(config.cost)
+
+
+def oracle_ground_truth_link_tracks(
+    reference: Track2pReference,
+    *,
+    curated_only: bool = False,
+    seed_session: int = 0,
+) -> np.ndarray:
+    """Build an oracle prediction by stitching consecutive GT pairwise links.
+
+    This diagnostic variant does not copy the reference track matrix directly.
+    It converts each consecutive session pair into explicit GT ROI links and
+    then uses the normal BayesCaTrack row-stitching helper. If complete-track F1
+    is poor for this oracle, the failure is in track-row assembly, ROI indexing,
+    or scoring rather than in registration or association costs.
+    """
+
+    reference_matrix = _reference_matrix(reference, curated_only=curated_only)
+    start_roi_indices = sorted(
+        _reference_seed_roi_set(reference_matrix, seed_session=seed_session)
+    )
+
+    if reference.n_sessions == 1:
+        return np.asarray(start_roi_indices, dtype=int).reshape(-1, 1)
+
+    consecutive_matches = [
+        reference.pairwise_matches(
+            session_index,
+            session_index + 1,
+            curated_only=curated_only,
+        )
+        for session_index in range(reference.n_sessions - 1)
+    ]
+    return build_track_rows_from_matches(
+        reference.session_names,
+        consecutive_matches,
+        start_roi_indices=start_roi_indices,
+        start_session_index=seed_session,
+        fill_value=-1,
+    )
 
 
 def solve_configured_global_assignment(
@@ -700,13 +761,20 @@ def _score_prediction_against_reference(
         reference_seed_rois = _reference_seed_roi_set(
             reference_matrix, seed_session=config.seed_session
         )
-        predicted = _filter_tracks_by_reference_seed_rois(
+        predicted = _filter_tracks_by_seed_rois(
             predicted,
+            reference_seed_rois,
+            seed_session=config.seed_session,
+        )
+        reference_matrix = _filter_tracks_by_seed_rois(
             reference_matrix,
+            reference_seed_rois,
             seed_session=config.seed_session,
         )
 
-    scores = score_track_matrices(predicted, reference_matrix)
+    scores = _with_recomputed_f1_scores(
+        score_track_matrices(predicted, reference_matrix)
+    )
     if config.restrict_to_reference_seed_rois:
         scores = {
             **scores,
@@ -720,31 +788,63 @@ def _score_prediction_against_reference(
     return scores
 
 
-def _filter_tracks_by_reference_seed_rois(
+def _with_recomputed_f1_scores(
+    scores: Mapping[str, float | int],
+) -> dict[str, float | int]:
+    repaired_scores = dict(scores)
+    for prefix in ("pairwise", "complete_track"):
+        tp = int(repaired_scores.get(f"{prefix}_true_positives", 0))
+        fp = int(repaired_scores.get(f"{prefix}_false_positives", 0))
+        fn = int(repaired_scores.get(f"{prefix}_false_negatives", 0))
+        repaired_scores[f"{prefix}_f1"] = _f1_from_counts(tp, fp, fn)
+    return repaired_scores
+
+
+def _f1_from_counts(
+    true_positives: int, false_positives: int, false_negatives: int
+) -> float:
+    denominator = 2 * true_positives + false_positives + false_negatives
+    if denominator == 0:
+        return 1.0
+    return float(2 * true_positives / denominator)
+
+
+def _filter_tracks_by_seed_rois(
     predicted_matrix: np.ndarray,
-    reference_matrix: np.ndarray,
+    seed_rois: set[int],
     *,
     seed_session: int,
 ) -> np.ndarray:
-    reference_seed_rois = _reference_seed_roi_set(
-        reference_matrix, seed_session=seed_session
-    )
-    if not reference_seed_rois:
+    if not seed_rois:
         return predicted_matrix[:0]
-    keep = [row[seed_session] in reference_seed_rois for row in predicted_matrix]
+    keep = [
+        _is_valid_roi_index(row[seed_session]) and int(row[seed_session]) in seed_rois
+        for row in predicted_matrix
+    ]
     return predicted_matrix[np.asarray(keep, dtype=bool)]
 
 
-def _reference_seed_roi_set(
-    reference_matrix: np.ndarray, *, seed_session: int
-) -> set[int]:
+def _reference_seed_roi_set(reference_matrix: np.ndarray, *, seed_session: int) -> set[int]:
     if seed_session < 0 or seed_session >= reference_matrix.shape[1]:
         raise IndexError(
             f"seed_session {seed_session} out of bounds for {reference_matrix.shape[1]} sessions"
         )
     return {
-        int(value) for value in reference_matrix[:, seed_session] if value is not None
+        int(cast(Any, value))
+        for value in reference_matrix[:, seed_session]
+        if _is_valid_roi_index(value)
     }
+
+
+def _is_valid_roi_index(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, (float, np.floating)) and np.isnan(value):
+        return False
+    try:
+        return int(cast(Any, value)) >= 0
+    except (TypeError, ValueError):
+        return False
 
 
 def _load_aligned_reference_for_config(
@@ -797,7 +897,7 @@ def _validate_reference_roi_indices(
         referenced_indices = {
             int(value)
             for value in reference.suite2p_indices[:, session_index]
-            if value is not None
+            if _is_valid_roi_index(value)
         }
         missing_indices = sorted(referenced_indices - available_indices)
         if missing_indices:

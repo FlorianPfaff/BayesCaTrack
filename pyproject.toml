@@ -10,7 +10,12 @@ readme = "README.md"
 requires-python = ">=3.11,<3.15"
 dependencies = [
     "numpy",
-    "pyrecest @ git+https://github.com/FlorianPfaff/PyRecEst.git@main",
+    "pyrecest @ git+https://github.com/FlorianPfaff/PyRecEst.git@c6cc3500242a436e647fd3dc1b3f4ee22bb99e2e",
+]
+
+[project.optional-dependencies]
+track2p = [
+    "track2p==0.6.2",
 ]
 
 [project.scripts]

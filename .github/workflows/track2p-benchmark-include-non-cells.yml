@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       data_path:
-        description: "Zenodo extraction directory"
+        description: "Longitudinal tracking data directory"
         type: string
         default: track2p-data
         required: true
@@ -13,6 +13,16 @@ on:
         description: "Maximum session gap"
         type: string
         default: "2"
+        required: true
+      transform_type:
+        description: "Registration transform for BayesCaTrack variants"
+        type: choice
+        options:
+          - affine
+          - rigid
+          - fov-translation
+          - none
+        default: affine
         required: true
       run_calibrated_loso:
         description: "Run calibrated leave-one-subject-out variant"
@@ -35,9 +45,6 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  ZENODO_URL: https://zenodo.org/records/17091226/files/data.zip?download=1
-  ZENODO_MD5: 8d12ff6b93a26e28609c5a20b11f3d88
-  ZENODO_CACHE_KEY: track2p-zenodo-17091226-data-md5-8d12ff6b93a26e28609c5a20b11f3d88
 
 jobs:
   benchmark:
@@ -55,38 +62,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install "numpy<3"
-          python -m pip install -e .
+          python -m pip install -e ".[track2p]"
 
-      - name: Restore Track2p Zenodo archive
-        id: restore-data
-        uses: actions/cache/restore@v5
+      - name: Restore or download longitudinal tracking data
+        uses: ./.github/actions/setup-longitudinaltracking-data
         with:
-          path: data-cache/data.zip
-          key: ${{ env.ZENODO_CACHE_KEY }}
-
-      - name: Download Track2p Zenodo archive on cache miss
-        if: steps.restore-data.outputs.cache-hit != 'true'
-        run: |
-          mkdir -p data-cache
-          curl --fail --location --show-error --retry 5 --retry-delay 30 --retry-all-errors \
-            --output data-cache/data.zip "$ZENODO_URL"
-
-      - name: Verify archive checksum
-        run: echo "${ZENODO_MD5}  data-cache/data.zip" | md5sum --check -
-
-      - name: Save Track2p Zenodo archive cache
-        if: steps.restore-data.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: data-cache/data.zip
-          key: ${{ env.ZENODO_CACHE_KEY }}
-
-      - name: Extract archive
-        run: |
-          rm -rf "${{ inputs.data_path }}" benchmark-ground-truth-subjects results
-          mkdir -p "${{ inputs.data_path }}"
-          python -m zipfile -e data-cache/data.zip "${{ inputs.data_path }}"
-          du -sh "${{ inputs.data_path }}" || true
+          data_path: ${{ inputs.data_path }}
+          cache_key: longitudinaltracking-webdav-${{ inputs.data_path }}-v1
+          webdav_url: ${{ secrets.LONGITUDINALTRACKING_WEBDAV_URL }}
+          webdav_user: ${{ secrets.LONGITUDINALTRACKING_DATA_KEY }}
+          webdav_password: ${{ secrets.LONGITUDINALTRACKING_DATA_PASSWORD }}
 
       - name: Filter to usable manual-GT subjects
         id: gt
@@ -96,8 +81,15 @@ jobs:
           RUN_CALIBRATED_LOSO: ${{ inputs.run_calibrated_loso }}
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
-          import os, shutil
+          import os, shutil, sys
           from pathlib import Path
+
+          from bayescatrack.experiments.track2p_benchmark import (
+              Track2pBenchmarkConfig,
+              _load_ground_truth_csv_reference,
+              _load_subject_sessions,
+              _loaded_suite2p_index_set,
+          )
 
           root = Path(os.environ["DATA_PATH"])
           out = Path("benchmark-ground-truth-subjects")
@@ -117,6 +109,34 @@ jobs:
                   if child.is_dir()
               )
 
+          def incompatible_reason(subject: Path) -> str | None:
+              config = Track2pBenchmarkConfig(
+                  data=root,
+                  method="track2p-baseline",
+                  reference=root,
+                  reference_kind="manual-gt",
+                  include_behavior=False,
+                  include_non_cells=True,
+              )
+              reference = _load_ground_truth_csv_reference(
+                  subject / "ground_truth.csv", subject_dir=subject
+              )
+              sessions = _load_subject_sessions(subject, config)
+              if len(sessions) != reference.n_sessions:
+                  return f"{len(sessions)} loaded sessions for {reference.n_sessions} GT sessions"
+              for session_index, session in enumerate(sessions):
+                  available = _loaded_suite2p_index_set(session)
+                  referenced = {
+                      int(value)
+                      for value in reference.suite2p_indices[:, session_index]
+                      if value is not None
+                  }
+                  missing = sorted(referenced - available)
+                  if missing:
+                      preview = " ".join(str(value) for value in missing[:5])
+                      return f"{len(missing)} missing ROI indices in {session.session_name}: {preview}"
+              return None
+
           subjects = [p for p in root.rglob("*") if is_subject(p)]
           if subjects:
               parent = min((p.parent for p in subjects), key=lambda p: (len(p.parts), str(p)))
@@ -132,6 +152,10 @@ jobs:
               if subject.name in excluded_by_user:
                   excluded_incompatible.append(subject.name)
                   continue
+              reason = incompatible_reason(subject)
+              if reason is not None:
+                  excluded_incompatible.append(f"{subject.name} ({reason})")
+                  continue
               target = out / subject.name
               target.mkdir()
               for item in subject.iterdir():
@@ -142,10 +166,14 @@ jobs:
               included.append(subject.name)
 
           if len(included) < min_subjects:
-              raise SystemExit(
+              print(
                   f"Need at least {min_subjects} usable manual-GT subject(s) after exclusions; "
-                  f"included={included}, excluded_incompatible={sorted(excluded_incompatible)}"
+                  f"included={included}, excluded_incompatible={sorted(excluded_incompatible)}",
+                  file=sys.stderr,
               )
+              print("has_usable_subjects=false")
+          else:
+              print("has_usable_subjects=true")
           print(f"included={','.join(included)}")
           print(f"excluded_no_gt={','.join(excluded_no_gt)}")
           print(f"excluded_incompatible={','.join(sorted(excluded_incompatible))}")
@@ -247,6 +275,7 @@ jobs:
         run: cat results/manual_gt_roi_diagnostics.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run Track2p baseline
+        if: steps.gt.outputs.has_usable_subjects == 'true'
         run: |
           bayescatrack benchmark track2p \
             --data benchmark-ground-truth-subjects \
@@ -258,6 +287,7 @@ jobs:
             --output results/track2p_baseline.csv
 
       - name: Run registered-IoU global assignment
+        if: steps.gt.outputs.has_usable_subjects == 'true'
         run: |
           bayescatrack benchmark track2p \
             --data benchmark-ground-truth-subjects \
@@ -266,11 +296,13 @@ jobs:
             --include-non-cells \
             --method global-assignment \
             --cost registered-iou \
+            --transform-type "${{ inputs.transform_type }}" \
             --max-gap "${{ inputs.max_gap }}" \
             --format csv \
             --output results/global_registered_iou_gap${{ inputs.max_gap }}.csv
 
       - name: Run ROI-aware global assignment
+        if: steps.gt.outputs.has_usable_subjects == 'true'
         run: |
           bayescatrack benchmark track2p \
             --data benchmark-ground-truth-subjects \
@@ -279,6 +311,7 @@ jobs:
             --include-non-cells \
             --method global-assignment \
             --cost roi-aware \
+            --transform-type "${{ inputs.transform_type }}" \
             --max-gap "${{ inputs.max_gap }}" \
             --weighted-masks \
             --weighted-centroids \
@@ -286,7 +319,7 @@ jobs:
             --output results/global_roi_aware_gap${{ inputs.max_gap }}.csv
 
       - name: Run calibrated LOSO global assignment
-        if: inputs.run_calibrated_loso
+        if: inputs.run_calibrated_loso && steps.gt.outputs.has_usable_subjects == 'true'
         run: |
           bayescatrack benchmark track2p \
             --data benchmark-ground-truth-subjects \
@@ -296,11 +329,13 @@ jobs:
             --method global-assignment \
             --cost calibrated \
             --split leave-one-subject-out \
+            --transform-type "${{ inputs.transform_type }}" \
             --max-gap "${{ inputs.max_gap }}" \
             --format csv \
             --output results/global_calibrated_loso_gap${{ inputs.max_gap }}.csv
 
       - name: Aggregate benchmark comparison
+        if: steps.gt.outputs.has_usable_subjects == 'true'
         env:
           MAX_GAP: ${{ inputs.max_gap }}
           RUN_LOSO: ${{ inputs.run_calibrated_loso }}
@@ -317,6 +352,7 @@ jobs:
           bayescatrack benchmark compare "${args[@]}" --format csv --output results/comparison.csv
 
       - name: Add results to job summary
+        if: steps.gt.outputs.has_usable_subjects == 'true'
         run: |
           {
             echo "## Track2p benchmark with non-cell ROIs"
@@ -324,13 +360,29 @@ jobs:
             echo "Excluded subjects without GT: ${{ steps.gt.outputs.excluded_no_gt }}"
             echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.gt.outputs.excluded_incompatible }}"
             echo "include_non_cells: true"
+            echo "transform_type: ${{ inputs.transform_type }}"
             echo "run_calibrated_loso: ${{ inputs.run_calibrated_loso }}"
             cat results/comparison.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Add diagnostic-only summary
+        if: steps.gt.outputs.has_usable_subjects != 'true'
+        run: |
+          {
+            echo "## Track2p benchmark with non-cell ROIs"
+            echo
+            echo "No compatible public manual-GT subjects were available after ROI-index validation."
+            echo
+            echo "Included usable manual-GT subjects: ${{ steps.gt.outputs.included }}"
+            echo "Excluded subjects without GT: ${{ steps.gt.outputs.excluded_no_gt }}"
+            echo "Excluded GT subjects with incompatible public ROI indices: ${{ steps.gt.outputs.excluded_incompatible }}"
+            echo
+            cat results/manual_gt_roi_diagnostics.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload benchmark results
         if: always() && hashFiles('results/**') != ''
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: track2p-benchmark-include-non-cells-gap${{ inputs.max_gap }}
           path: results/

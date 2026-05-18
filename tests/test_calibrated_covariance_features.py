@@ -3,7 +3,9 @@ import numpy.testing as npt
 import pytest
 from bayescatrack.association.calibrated_costs import (
     DEFAULT_ASSOCIATION_FEATURES,
+    NamedPairwiseFeatureSchema,
     pairwise_components_from_bundle,
+    pairwise_feature_schema,
     pairwise_feature_tensor,
     with_session_gap_component,
 )
@@ -116,6 +118,20 @@ def test_default_calibrated_features_include_session_gap_component():
     assert "session_gap" in DEFAULT_ASSOCIATION_FEATURES
     npt.assert_allclose(components["session_gap"], np.full((1, 2), 2.0))
     npt.assert_allclose(features[:, :, session_gap_index], np.full((1, 2), 2.0))
+
+
+def test_pairwise_feature_schema_uses_named_schema_with_domain_transforms():
+    components = {
+        "iou": np.array([[0.8, 0.25]], dtype=float),
+        "session_gap": np.array([[2.0, 2.0]], dtype=float),
+    }
+    schema = pairwise_feature_schema(("one_minus_iou", "session_gap"))
+    features = np.asarray(schema.build_tensor(components), dtype=float)
+
+    assert isinstance(schema, NamedPairwiseFeatureSchema)
+    assert schema.feature_names == ("one_minus_iou", "session_gap")
+    npt.assert_allclose(features[:, :, 0], np.array([[0.2, 0.75]]))
+    npt.assert_allclose(features[:, :, 1], np.array([[2.0, 2.0]]))
 
 
 def test_session_gap_component_requires_positive_gap():

@@ -5,6 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from bayescatrack._pyrecest_pairwise_features import (
+    pairwise_covariance_shape_components as _pyrecest_pairwise_covariance_shape_components,
+)
+from bayescatrack._pyrecest_pairwise_features import (
+    pairwise_mahalanobis_distances,
+)
 
 from . import calibrated_costs as _calibrated_costs
 
@@ -121,30 +127,70 @@ def _pairwise_mahalanobis_centroid_distances(
     if n_self == 0 or n_other == 0:
         return np.zeros((n_self, n_other), dtype=float)
 
-    covariances_self = 0.5 * (covariances_self + np.swapaxes(covariances_self, 0, 1))
-    covariances_other = 0.5 * (covariances_other + np.swapaxes(covariances_other, 0, 1))
-
-    distances = np.zeros((n_self, n_other), dtype=float)
-    for reference_index in range(n_self):
-        for measurement_index in range(n_other):
-            diff = (
-                centroids_self[:, reference_index]
-                - centroids_other[:, measurement_index]
-            )
-            covariance = (
-                covariances_self[:, :, reference_index]
-                + covariances_other[:, :, measurement_index]
-            )
-            try:
-                normalized = np.linalg.solve(covariance, diff)
-            except np.linalg.LinAlgError:
-                normalized = np.linalg.pinv(covariance) @ diff
-            squared_distance = float(diff @ normalized)
-            distances[reference_index, measurement_index] = np.sqrt(
-                max(squared_distance, 0.0)
-            )
-
-    return np.nan_to_num(distances, nan=0.0, posinf=1.0e6, neginf=0.0)
+    distances = pairwise_mahalanobis_distances(
+        centroids_self,
+        covariances_self,
+        centroids_other,
+        covariances_other,
+        regularization=0.0,
+    )
+    return np.nan_to_num(
+        np.asarray(distances, dtype=float), nan=0.0, posinf=1.0e6, neginf=0.0
+    )
 
 
+def _pairwise_covariance_shape_components(
+    covariances_self: np.ndarray,
+    covariances_other: np.ndarray,
+    *,
+    epsilon: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return covariance-based ROI shape components via PyRecEst."""
+
+    covariances_self = np.asarray(covariances_self, dtype=float)
+    covariances_other = np.asarray(covariances_other, dtype=float)
+    if covariances_self.ndim != 3 or covariances_self.shape[:2] != (2, 2):
+        raise ValueError("covariances_self must have shape (2, 2, n_roi)")
+    if covariances_other.ndim != 3 or covariances_other.shape[:2] != (2, 2):
+        raise ValueError("covariances_other must have shape (2, 2, n_roi)")
+    if epsilon <= 0.0:
+        raise ValueError("epsilon must be strictly positive")
+    n_self = covariances_self.shape[2]
+    n_other = covariances_other.shape[2]
+    if n_self == 0 or n_other == 0:
+        empty = np.zeros((n_self, n_other), dtype=float)
+        return empty, empty.copy(), empty.copy()
+
+    covariance_shape_cost, covariance_logdet_cost, covariance_shape_similarity = (
+        _pyrecest_pairwise_covariance_shape_components(
+            covariances_self,
+            covariances_other,
+            epsilon=epsilon,
+        )
+    )
+    return (
+        np.nan_to_num(
+            np.asarray(covariance_shape_cost, dtype=float),
+            nan=0.0,
+            posinf=1.0e6,
+            neginf=0.0,
+        ),
+        np.nan_to_num(
+            np.asarray(covariance_logdet_cost, dtype=float),
+            nan=0.0,
+            posinf=1.0e6,
+            neginf=0.0,
+        ),
+        np.nan_to_num(
+            np.asarray(covariance_shape_similarity, dtype=float),
+            nan=0.0,
+            posinf=1.0,
+            neginf=0.0,
+        ),
+    )
+
+
+_calibrated_costs._pairwise_covariance_shape_components = (  # pylint: disable=protected-access
+    _pairwise_covariance_shape_components
+)
 _calibrated_costs.pairwise_components_from_bundle = pairwise_components_from_bundle

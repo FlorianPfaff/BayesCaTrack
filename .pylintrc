@@ -5,6 +5,12 @@ fail-under=10
 [FORMAT]
 max-line-length=180
 
+[TYPECHECK]
+ignored-modules=
+    pyrecest,
+    pyrecest.backend,
+    pyrecest.utils.track_evaluation
+
 [MESSAGES CONTROL]
 disable=
     missing-module-docstring,

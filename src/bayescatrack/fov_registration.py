@@ -95,7 +95,12 @@ def estimate_integer_fov_shift(
     if reference.ndim != 2 or measurement.ndim != 2:
         raise ValueError("reference_fov and measurement_fov must both be 2-D arrays")
     if reference.shape != measurement.shape:
-        raise ValueError("reference_fov and measurement_fov must have identical shape")
+        common_shape = (
+            max(int(reference.shape[0]), int(measurement.shape[0])),
+            max(int(reference.shape[1]), int(measurement.shape[1])),
+        )
+        reference = _pad_image_to_shape(reference, common_shape)
+        measurement = _pad_image_to_shape(measurement, common_shape)
     if subtract_mean:
         reference = reference - float(np.mean(reference))
         measurement = measurement - float(np.mean(measurement))
@@ -111,10 +116,23 @@ def estimate_integer_fov_shift(
     return shift_yx, float(correlation[peak_index])
 
 
-def _overlap_slices(size: int, shift: int) -> tuple[slice, slice]:
-    if shift >= 0:
-        return slice(0, size - shift), slice(shift, size)
-    return slice(-shift, size), slice(0, size + shift)
+def _pad_image_to_shape(image: np.ndarray, output_shape: tuple[int, int]) -> np.ndarray:
+    if image.shape == output_shape:
+        return image
+    result = np.zeros(output_shape, dtype=image.dtype)
+    result[: image.shape[0], : image.shape[1]] = image
+    return result
+
+
+def _overlap_slices(
+    source_size: int, output_size: int, shift: int
+) -> tuple[slice, slice]:
+    source_start = max(0, -shift)
+    source_stop = min(source_size, output_size - shift)
+    length = max(0, source_stop - source_start)
+    destination_start = max(0, shift)
+    destination_stop = destination_start + length
+    return slice(source_start, source_stop), slice(destination_start, destination_stop)
 
 
 def apply_integer_image_translation(
@@ -133,8 +151,8 @@ def apply_integer_image_translation(
     if output_shape is None:
         output_shape = image.shape
     result = np.full(output_shape, fill_value, dtype=image.dtype)
-    src_y, dst_y = _overlap_slices(image.shape[0], shift_y)
-    src_x, dst_x = _overlap_slices(image.shape[1], shift_x)
+    src_y, dst_y = _overlap_slices(image.shape[0], output_shape[0], shift_y)
+    src_x, dst_x = _overlap_slices(image.shape[1], output_shape[1], shift_x)
     result[dst_y, dst_x] = image[src_y, src_x]
     return result
 

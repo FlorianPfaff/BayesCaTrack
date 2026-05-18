@@ -1,0 +1,278 @@
+name: Track2p raw Suite2p cost sweep
+
+on:
+  # checkov:skip=CKV_GHA_7: Manual diagnostic workflow intentionally exposes bounded dispatch inputs and produces only benchmark artifacts.
+  workflow_dispatch:
+    inputs:
+      raw_data_path:
+        description: "Raw pre-Track2p Suite2p data directory"
+        type: string
+        default: track2p-raw-data-bridge
+        required: true
+      metadata_data_path:
+        description: "Track2p/ground-truth metadata data directory"
+        type: string
+        default: track2p-data
+        required: true
+      cost:
+        description: "Association cost to sweep"
+        type: choice
+        options:
+          - registered-iou
+          - roi-aware
+        default: registered-iou
+        required: true
+      max_gap:
+        description: "Maximum session gap"
+        type: string
+        default: "2"
+        required: true
+      transform_type:
+        description: "Registration transform for fixed-cost sweeps"
+        type: choice
+        options:
+          - affine
+          - rigid
+          - fov-affine
+          - fov-translation
+          - none
+        default: affine
+        required: true
+      cost_scales:
+        description: "Comma-separated cost scales"
+        type: string
+        default: "0.25,0.5,1"
+        required: true
+      cost_thresholds:
+        description: "Comma-separated thresholds; use none to disable"
+        type: string
+        default: "2,4,6,none"
+        required: true
+      start_costs:
+        description: "Comma-separated track start costs"
+        type: string
+        default: "0.25,1,5"
+        required: true
+      end_costs:
+        description: "Comma-separated track end costs"
+        type: string
+        default: "0.25,1,5"
+        required: true
+      gap_penalties:
+        description: "Comma-separated skip-edge gap penalties"
+        type: string
+        default: "0,1"
+        required: true
+      exclude_subjects:
+        description: "Comma-separated manual-GT subjects to exclude"
+        type: string
+        default: ""
+        required: false
+      python_version:
+        description: "Python version"
+        type: string
+        default: "3.11"
+        required: true
+      runner:
+        description: "Runner label"
+        type: string
+        default: ubuntu-latest
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  cost-sweep:
+    name: Cost Sweep
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 180
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python_version }}
+          cache: pip
+
+      - name: Install BayesCaTrack
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<3"
+          python -m pip install -e ".[track2p]"
+
+      - name: Restore or download raw pre-Track2p Suite2p data
+        uses: ./.github/actions/setup-longitudinaltracking-data
+        with:
+          data_path: ${{ inputs.raw_data_path }}
+          cache_key: longitudinaltrackingraw-webdav-${{ inputs.raw_data_path }}-spatial-v3
+          webdav_url: ${{ secrets.LONGITUDINALTRACKINGRAW_WEBDAV_URL }}
+          webdav_user: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_KEY }}
+          webdav_password: ${{ secrets.LONGITUDINALTRACKINGRAW_DATA_PASSWORD }}
+          required_file_name: stat.npy
+          rclone_filter_rules: |
+            + **/suite2p/plane0/stat.npy
+            + **/suite2p/plane0/iscell.npy
+            + **/suite2p/plane0/ops.npy
+            + **/track2p/track_ops.npy
+            + **/track2p/plane0_suite2p_indices.npy
+            + **/ground_truth.csv
+            - **
+
+      - name: Restore or download Track2p metadata data
+        uses: ./.github/actions/setup-longitudinaltracking-data
+        with:
+          data_path: ${{ inputs.metadata_data_path }}
+          cache_key: longitudinaltracking-webdav-${{ inputs.metadata_data_path }}-metadata-v2
+          webdav_url: ${{ secrets.LONGITUDINALTRACKING_WEBDAV_URL }}
+          webdav_user: ${{ secrets.LONGITUDINALTRACKING_DATA_KEY }}
+          webdav_password: ${{ secrets.LONGITUDINALTRACKING_DATA_PASSWORD }}
+          required_file_name: ground_truth.csv
+          rclone_filter_rules: |
+            + **/ground_truth.csv
+            + **/track2p/plane0_suite2p_indices.npy
+            - **
+
+      - name: Prepare raw Suite2p benchmark tree
+        id: prep
+        env:
+          RAW_DATA_PATH: ${{ inputs.raw_data_path }}
+          METADATA_DATA_PATH: ${{ inputs.metadata_data_path }}
+          EXCLUDE_SUBJECTS: ${{ inputs.exclude_subjects }}
+        run: |
+          mkdir -p results
+          python -m bayescatrack.experiments.track2p_raw_benchmark_data \
+            --raw-root "$RAW_DATA_PATH" \
+            --metadata-root "$METADATA_DATA_PATH" \
+            --output benchmark-raw-suite2p-subjects \
+            --diagnostics-dir results \
+            --exclude-subjects "$EXCLUDE_SUBJECTS" \
+            --no-require-track2p-suite2p-indices \
+            --filter-missing-manual-rois \
+            --min-subjects 1
+
+      - name: Add raw-data diagnostics to job summary
+        run: cat results/raw_suite2p_roi_diagnostics.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Run solver cost sweep
+        env:
+          COST: ${{ inputs.cost }}
+          MAX_GAP: ${{ inputs.max_gap }}
+          COST_SCALES: ${{ inputs.cost_scales }}
+          COST_THRESHOLDS: ${{ inputs.cost_thresholds }}
+          START_COSTS: ${{ inputs.start_costs }}
+          END_COSTS: ${{ inputs.end_costs }}
+          GAP_PENALTIES: ${{ inputs.gap_penalties }}
+        run: |
+          bayescatrack benchmark track2p-sweep \
+            --data "${{ steps.prep.outputs.data_root }}" \
+            --reference "${{ steps.prep.outputs.reference_root }}" \
+            --reference-kind "${{ steps.prep.outputs.reference_kind }}" \
+            --input-format suite2p \
+            --include-non-cells \
+            --no-include-behavior \
+            --cost "$COST" \
+            --transform-type "${{ inputs.transform_type }}" \
+            --max-gap "$MAX_GAP" \
+            --cost-scales "$COST_SCALES" \
+            --cost-thresholds "$COST_THRESHOLDS" \
+            --start-costs "$START_COSTS" \
+            --end-costs "$END_COSTS" \
+            --gap-penalties "$GAP_PENALTIES" \
+            --format csv \
+            --write-incrementally \
+            --output "results/solver_cost_sweep_${COST}_gap${MAX_GAP}.csv"
+
+      - name: Summarize best sweep rows
+        env:
+          COST: ${{ inputs.cost }}
+          MAX_GAP: ${{ inputs.max_gap }}
+        run: |
+          python - <<'PY'
+          import csv
+          from collections import defaultdict
+          from pathlib import Path
+
+          cost = "${{ inputs.cost }}"
+          max_gap = "${{ inputs.max_gap }}"
+          path = Path(f"results/solver_cost_sweep_{cost}_gap{max_gap}.csv")
+          rows = list(csv.DictReader(path.open(newline="", encoding="utf-8")))
+          groups = defaultdict(list)
+          for row in rows:
+              key = (
+                  row["cost_scale"],
+                  row["cost_threshold"],
+                  row["start_cost"],
+                  row["end_cost"],
+                  row["gap_penalty"],
+              )
+              groups[key].append(row)
+
+          summary_rows = []
+          for key, group in groups.items():
+              pairwise = [float(row["pairwise_f1"]) for row in group]
+              complete = [float(row["complete_track_f1"]) for row in group]
+              summary_rows.append(
+                  {
+                      "cost_scale": key[0],
+                      "cost_threshold": key[1],
+                      "start_cost": key[2],
+                      "end_cost": key[3],
+                      "gap_penalty": key[4],
+                      "mean_pairwise_f1": sum(pairwise) / len(pairwise),
+                      "mean_complete_track_f1": sum(complete) / len(complete),
+                  }
+              )
+          summary_rows.sort(
+              key=lambda row: (
+                  row["mean_complete_track_f1"],
+                  row["mean_pairwise_f1"],
+              ),
+              reverse=True,
+          )
+          columns = [
+              "cost_scale",
+              "cost_threshold",
+              "start_cost",
+              "end_cost",
+              "gap_penalty",
+              "mean_pairwise_f1",
+              "mean_complete_track_f1",
+          ]
+          output = Path(f"results/solver_cost_sweep_{cost}_gap{max_gap}_best.md")
+          with output.open("w", encoding="utf-8") as handle:
+              handle.write("| " + " | ".join(columns) + " |\n")
+              handle.write("| " + " | ".join(["---"] + ["---:"] * (len(columns) - 1)) + " |\n")
+              for row in summary_rows[:20]:
+                  values = []
+                  for column in columns:
+                      value = row[column]
+                      if isinstance(value, float):
+                          values.append(f"{value:.4f}")
+                      else:
+                          values.append(str(value))
+                  handle.write("| " + " | ".join(values) + " |\n")
+          PY
+
+      - name: Add sweep summary to job summary
+        if: always()
+        run: |
+          {
+            echo "## Best solver cost sweep rows"
+            echo "transform_type: ${{ inputs.transform_type }}"
+            echo
+            cat "results/solver_cost_sweep_${{ inputs.cost }}_gap${{ inputs.max_gap }}_best.md"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload cost sweep results
+        if: always() && hashFiles('results/**') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: track2p-raw-suite2p-cost-sweep-${{ inputs.cost }}-gap${{ inputs.max_gap }}
+          path: results/
+          if-no-files-found: error

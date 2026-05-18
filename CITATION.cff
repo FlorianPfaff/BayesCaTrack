@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use BayesCaTrack, please cite it using the metadata below."
+title: "BayesCaTrack: Recursive Bayesian cell tracking for calcium-imaging datasets"
+type: software
+authors:
+  - family-names: "Pfaff"
+    given-names: "Florian"
+    affiliation: "Institute of Industrial Automation and Software Engineering (IAS), University of Stuttgart"
+    email: "pfaff@ias.uni-stuttgart.de"
+repository-code: "https://github.com/IPS-Stuttgart/BayesCaTrack"
+url: "https://github.com/IPS-Stuttgart/BayesCaTrack"
+version: "0.0.1"
+license: "MIT"
+abstract: >
+  BayesCaTrack is a recursive Bayesian cell-tracking toolkit for Track2p-style
+  and related calcium-imaging datasets. It supports Track2p and Suite2p data
+  ingestion, ROI representation, registration-aware association costs, reference
+  evaluation, PyRecEst-ready exports, and reproducible benchmark ablations.
+keywords:
+  - calcium imaging
+  - cell tracking
+  - recursive Bayesian estimation
+  - data association
+  - Track2p
+  - Suite2p
+preferred-citation:
+  type: software
+  title: "BayesCaTrack: Recursive Bayesian cell tracking for calcium-imaging datasets"
+  authors:
+    - family-names: "Pfaff"
+      given-names: "Florian"
+  year: 2026
+  url: "https://github.com/IPS-Stuttgart/BayesCaTrack"
+  license: "MIT"
