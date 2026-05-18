@@ -23,7 +23,13 @@ from bayescatrack.core.bridge import (
 )
 from bayescatrack.track2p_registration import register_plane_pair
 
-AssociationCost = Literal["registered-iou", "roi-aware", "calibrated"]
+AssociationCost = Literal[
+    "registered-iou",
+    "registered-soft-iou",
+    "registered-shifted-iou",
+    "roi-aware",
+    "calibrated",
+]
 SessionEdge = tuple[int, int]
 
 
