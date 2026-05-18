@@ -17,6 +17,10 @@ from bayescatrack.association.calibrated_costs import (
     CalibratedAssociationModel,
     calibrated_cost_matrix_from_bundle,
 )
+from bayescatrack.association.higher_order_consistency import (
+    HigherOrderConsistencyConfig,
+    apply_higher_order_consistency,
+)
 from bayescatrack.association.registered_masks import (
     replace_empty_registered_masks,
 )
@@ -198,6 +202,9 @@ def solve_global_assignment_for_sessions(
     activity_tie_breaker_component: str = "activity_tiebreaker_cost",
     activity_trace_source: str = "auto",
     activity_event_threshold: float = 0.0,
+    higher_order_consistency_config: HigherOrderConsistencyConfig
+    | Mapping[str, Any]
+    | None = None,
 ) -> GlobalAssignmentRun:
     """Run PyRecEst's global path-cover assignment on registered BayesCaTrack costs."""
 
@@ -219,6 +226,12 @@ def solve_global_assignment_for_sessions(
         activity_event_threshold=activity_event_threshold,
     )
     session_sizes = tuple(int(session.plane_data.n_rois) for session in sessions)
+    if higher_order_consistency_config is not None:
+        pairwise_costs = apply_higher_order_consistency(
+            pairwise_costs,
+            session_sizes=session_sizes,
+            config=higher_order_consistency_config,
+        )
     session_edges = session_edge_pairs(len(sessions), max_gap=max_gap)
     result = _load_pyrecest_multisession_solver()(
         pairwise_costs,
