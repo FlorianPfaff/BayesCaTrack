@@ -3,95 +3,109 @@ from __future__ import annotations
 import csv
 
 import numpy as np
-
-from bayescatrack.evaluation.track2p_teacher_audit import (
-    audit_track2p_teacher_edges,
-    build_track_edge_index,
-    write_teacher_audit_rows_csv,
-    write_teacher_audit_summary_csv,
+import pytest
+from bayescatrack.experiments.track2p_teacher_audit import (
+    TRACK2P_TEACHER_MISS_CATEGORY,
+    audit_track_matrices,
+    format_teacher_audit_table,
+    teacher_training_rows,
+    write_edge_rows,
 )
 
 
-def test_build_track_edge_index_handles_missing_values_and_max_gap() -> None:
-    matrix = np.asarray(
-        [
-            [1, 2, 3],
-            [4, None, 6],
-            [7, -1, np.nan],
-        ],
-        dtype=object,
+def test_audit_track_matrices_reports_teacher_debug_buckets():
+    result = audit_track_matrices(
+        subject="jm001",
+        session_names=("2024-05-01_a", "2024-05-02_a"),
+        ground_truth_tracks=np.array([[0, 0], [1, 1]], dtype=object),
+        track2p_tracks=np.array([[0, 0], [1, 1], [2, 2]], dtype=object),
+        bayes_tracks=np.array([[0, 0], [1, 2]], dtype=object),
+        restrict_to_reference_seed_rois=False,
     )
 
-    all_edges = build_track_edge_index(matrix)
-    consecutive_edges = build_track_edge_index(matrix, max_gap=1)
+    summary = result.summary_rows[0]
+    assert summary["ground_truth_edges"] == 2
+    assert summary["track2p_edges"] == 3
+    assert summary["bayes_edges"] == 2
+    assert summary["edges_gt_track2p_bayes"] == 1
+    assert summary["edges_gt_track2p_not_bayes"] == 1
+    assert summary["edges_not_gt_track2p_not_bayes"] == 1
+    assert summary["edges_not_gt_not_track2p_bayes"] == 1
+    assert summary["track2p_vs_gt_precision"] == pytest.approx(2.0 / 3.0)
+    assert summary["track2p_vs_gt_recall"] == pytest.approx(1.0)
+    assert summary["bayes_vs_gt_precision"] == pytest.approx(0.5)
+    assert summary["bayes_vs_gt_recall"] == pytest.approx(0.5)
 
-    assert len(all_edges.edges) == 4
-    assert len(consecutive_edges.edges) == 2
-    assert all(edge.gap == 1 for edge in consecutive_edges.edges)
+    teacher_misses = [
+        row
+        for row in result.edge_rows
+        if row["category"] == TRACK2P_TEACHER_MISS_CATEGORY
+    ]
+    assert len(teacher_misses) == 1
+    assert teacher_misses[0]["roi_a"] == 1
+    assert teacher_misses[0]["roi_b"] == 1
+    assert teacher_misses[0]["in_ground_truth"] is True
+    assert teacher_misses[0]["in_track2p"] is True
+    assert teacher_misses[0]["in_bayes"] is False
 
 
-def test_teacher_audit_emits_requested_debug_categories() -> None:
-    manual_gt = np.asarray(
-        [
-            [1, 2, 3],
-            [4, 5, -1],
-        ],
-        dtype=object,
-    )
-    track2p = np.asarray(
-        [
-            [1, 2, 3],
-            [4, 99, -1],
-        ],
-        dtype=object,
-    )
-    bayes = np.asarray(
-        [
-            [1, 9, 3],
-            [4, 5, -1],
-        ],
-        dtype=object,
-    )
-
-    result = audit_track2p_teacher_edges(
-        manual_gt,
-        track2p,
-        bayes,
-        subject="jm_test",
+def test_audit_pair_mode_max_gap_and_seed_filter():
+    result = audit_track_matrices(
+        subject="jm001",
         session_names=("s0", "s1", "s2"),
+        ground_truth_tracks=np.array([[0, 0, 0], [5, 5, 5]], dtype=object),
+        track2p_tracks=np.array([[0, 0, 0], [5, 5, 5], [9, 9, 9]], dtype=object),
+        bayes_tracks=np.array([[0, 0, 0], [9, 9, 9]], dtype=object),
+        pair_mode="max-gap",
         max_gap=1,
+        restrict_to_reference_seed_rois=True,
     )
 
-    counts: dict[str, int] = {}
-    for row in result.rows:
-        counts[row.category] = counts.get(row.category, 0) + 1
-
-    assert counts["GT+Track2p+Bayes-"] == 2
-    assert counts["GT+Track2p-Bayes+"] == 1
-    assert counts["GT-Track2p+Bayes-"] == 1
-    assert counts["GT-Track2p-Bayes+"] == 2
-    assert result.summary["gt_track2p_found_bayes_missed"] == 2
-    assert result.summary["gt_track2p_missed_bayes_found"] == 1
-    assert result.summary["track2p_f1"] == 2 / 3
-    assert result.summary["bayes_f1"] == 1 / 3
-
-    teacher_found_bayes_missed = [row for row in result.rows if row.category == "GT+Track2p+Bayes-"]
-    assert teacher_found_bayes_missed[0].bayes_targets_for_source == (9,)
+    summary = result.summary_rows[0]
+    assert summary["reference_seed_rois"] == 2
+    assert summary["ground_truth_edges"] == 4
+    assert summary["track2p_edges"] == 4
+    assert summary["bayes_edges"] == 2
+    assert all(row["gap"] == 1 for row in result.edge_rows)
+    assert all(row["roi_a"] != 9 for row in result.edge_rows)
 
 
-def test_teacher_audit_csv_writers(tmp_path) -> None:
-    matrix = np.asarray([[1, 2]], dtype=object)
-    result = audit_track2p_teacher_edges(matrix, matrix, matrix, subject="jm_test", session_names=("s0", "s1"))
-    rows_path = tmp_path / "edges.csv"
-    summary_path = tmp_path / "summary.csv"
+def test_teacher_training_rows_and_csv_output(tmp_path):
+    result = audit_track_matrices(
+        subject="jm001",
+        session_names=("s0", "s1"),
+        ground_truth_tracks=[[0, 0]],
+        track2p_tracks=[[0, 0], [1, 1]],
+        bayes_tracks=[[0, 0], [1, 2]],
+        restrict_to_reference_seed_rois=False,
+    )
 
-    write_teacher_audit_rows_csv(result.rows, rows_path)
-    write_teacher_audit_summary_csv([result.summary], summary_path)
+    teacher_rows = teacher_training_rows(result.edge_rows)
+    by_edge = {(row["roi_a"], row["roi_b"]): row for row in teacher_rows}
+    assert by_edge[(0, 0)]["teacher_label"] == 1
+    assert by_edge[(0, 0)]["manual_gt_label"] == 1
+    assert by_edge[(1, 1)]["teacher_label"] == 1
+    assert by_edge[(1, 1)]["manual_gt_label"] == 0
+    assert by_edge[(1, 2)]["teacher_label"] == 0
+    assert by_edge[(1, 2)]["bayes_label"] == 1
 
-    with rows_path.open(newline="", encoding="utf-8") as handle:
+    output_path = tmp_path / "teacher_edges.csv"
+    write_edge_rows(teacher_rows, output_path)
+    with output_path.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
-    with summary_path.open(newline="", encoding="utf-8") as handle:
-        summaries = list(csv.DictReader(handle))
+    assert {row["teacher_label"] for row in rows} == {"0", "1"}
+    assert "teacher_label_source" in rows[0]
 
-    assert rows[0]["category"] == "GT+Track2p+Bayes+"
-    assert summaries[0]["subject"] == "jm_test"
+
+def test_format_teacher_audit_table_contains_key_debug_metric():
+    result = audit_track_matrices(
+        subject="jm001",
+        session_names=("s0", "s1"),
+        ground_truth_tracks=[[0, 0]],
+        track2p_tracks=[[0, 0]],
+        bayes_tracks=[[0, 1]],
+    )
+
+    table = format_teacher_audit_table(result.summary_rows)
+    assert "edges_gt_track2p_not_bayes" in table
+    assert "jm001" in table
