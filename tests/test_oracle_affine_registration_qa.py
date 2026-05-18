@@ -4,6 +4,7 @@ import numpy as np
 
 from bayescatrack.experiments.oracle_affine_registration_qa import (
     _fit_affine_xy,
+    _residual_metrics,
     _warp_masks_by_affine_xy,
 )
 
@@ -23,6 +24,7 @@ def test_fit_affine_xy_recovers_known_mapping():
     fit = _fit_affine_xy(source_xy, target_xy)
 
     np.testing.assert_allclose(fit.matrix_xy, expected, atol=1.0e-12)
+    np.testing.assert_allclose(fit.residual_xy, 0.0, atol=1.0e-12)
     assert fit.rank == 3
     assert fit.rms_residual < 1.0e-12
 
@@ -37,3 +39,19 @@ def test_warp_masks_by_affine_xy_applies_translation():
     expected = np.zeros_like(masks)
     expected[0, 3, 2] = True
     np.testing.assert_array_equal(warped, expected)
+
+
+def test_residual_metrics_reports_signed_radial_and_tangential_components():
+    source_xy = np.asarray([4.0, 2.0])
+    target_xy = np.asarray([5.0, 4.0])
+    center_xy = np.asarray([2.0, 2.0])
+
+    metrics = _residual_metrics(source_xy, target_xy, center_xy)
+
+    assert metrics["x"] == 1.0
+    assert metrics["y"] == 2.0
+    assert metrics["norm"] == np.sqrt(5.0)
+    assert metrics["angle"] == np.arctan2(2.0, 1.0)
+    # Source is right of center, so radial is +x and tangential is +y.
+    assert metrics["radial"] == 1.0
+    assert metrics["tangential"] == 2.0
