@@ -394,6 +394,7 @@ def _pairwise_cost_kwargs_for_config(
     cost: AssociationCost,
     overrides: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
+    kwargs: dict[str, Any]
     if cost == "registered-iou":
         kwargs = registered_iou_cost_kwargs()
     elif cost == "registered-soft-iou":
