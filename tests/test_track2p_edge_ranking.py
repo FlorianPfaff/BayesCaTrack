@@ -61,3 +61,6 @@ def test_track2p_edge_ranking_writes_edge_and_summary_csvs(
     assert len(summaries) == summary_rows
     assert all(float(row["row_hit_at_1"]) == 1.0 for row in summaries)
     assert all(float(row["column_hit_at_1"]) == 1.0 for row in summaries)
+    assert all(float(row["row_rank_p50"]) == 1.0 for row in summaries)
+    assert all(float(row["row_rank_p90"]) == 1.0 for row in summaries)
+    assert all(float(row["column_rank_p95"]) == 1.0 for row in summaries)

@@ -91,3 +91,37 @@ def test_missing_reference_edges_are_counted_in_summary_denominator():
     assert summary[0]["missing_edges"] == 1
     assert summary[0]["row_hit_at_1"] == pytest.approx(0.5)
     assert summary[0]["row_hit_at_1_present"] == pytest.approx(1.0)
+    assert summary[0]["row_rank_p50"] == pytest.approx(1.0)
+    assert summary[0]["column_rank_p90"] == pytest.approx(1.0)
+
+
+def test_summary_reports_configurable_rank_percentiles():
+    rows = [
+        {
+            "subject": "jm_test",
+            "session_a": 0,
+            "session_b": 1,
+            "session_gap": 1,
+            "score_name": "cost",
+            "edge_present": 1,
+            "true_is_finite": 1,
+            "row_rank": row_rank,
+            "column_rank": column_rank,
+        }
+        for row_rank, column_rank in ((1, 8), (2, 4), (4, 2), (8, 1))
+    ]
+
+    summary = summarize_edge_ranking_rows(
+        rows, rank_percentiles=(25, 50, 75, 90, 12.5)
+    )[0]
+
+    assert summary["row_rank_p25"] == pytest.approx(np.percentile([1, 2, 4, 8], 25))
+    assert summary["row_rank_p50"] == pytest.approx(np.percentile([1, 2, 4, 8], 50))
+    assert summary["row_rank_p75"] == pytest.approx(np.percentile([1, 2, 4, 8], 75))
+    assert summary["row_rank_p90"] == pytest.approx(np.percentile([1, 2, 4, 8], 90))
+    assert summary["row_rank_p12_5"] == pytest.approx(
+        np.percentile([1, 2, 4, 8], 12.5)
+    )
+    assert summary["column_rank_p90"] == pytest.approx(
+        np.percentile([8, 4, 2, 1], 90)
+    )

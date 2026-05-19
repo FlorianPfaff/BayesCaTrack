@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from pathlib import Path
 
 import pytest
 from bayescatrack.datasets.track2p import (
@@ -74,6 +75,37 @@ def test_benchmark_manifest_runs_suite_and_comparison(tmp_path):
     assert "Track2p" in (tmp_path / "results" / "comparison.md").read_text(
         encoding="utf-8"
     )
+
+
+def test_default_ablation_manifest_parses_extended_runners(tmp_path):
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "benchmarks"
+        / "track2p_default_ablations.json"
+    )
+
+    manifest = load_benchmark_manifest(manifest_path, output_dir=tmp_path)
+
+    assert [run.name for run in manifest.runs] == [
+        "track2p-default",
+        "registered-iou-gap1",
+        "registered-iou-gap2",
+        "registered-iou-gap2-loso-priors",
+        "roi-aware-gap2-loso-priors",
+        "roi-aware-shifted-gap2-loso-priors",
+        "calibrated-loso-default",
+        "calibrated-loso-default-local-evidence",
+        "monotone-ranker-loso-gap2",
+    ]
+    assert {run.runner for run in manifest.runs} == {
+        "track2p",
+        "track2p-solver-prior-loso",
+        "track2p-monotone-loso",
+    }
+    local_evidence_run = manifest.runs[7]
+    assert local_evidence_run.config.pairwise_cost_kwargs == {
+        "local_evidence_components": True
+    }
 
 
 def test_benchmark_manifest_rejects_unknown_run_keys(tmp_path):

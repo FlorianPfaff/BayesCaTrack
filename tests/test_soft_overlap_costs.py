@@ -1,8 +1,20 @@
 from __future__ import annotations
 
+# pylint: disable=protected-access
+
 import numpy as np
 from bayescatrack import CalciumPlaneData
+from bayescatrack.association.pyrecest_global_assignment import _cost_kwargs_for_method
 from bayescatrack.soft_overlap_costs import registered_soft_iou_cost_kwargs
+
+ADVERTISED_GLOBAL_ASSIGNMENT_COSTS = (
+    "registered-iou",
+    "registered-soft-iou",
+    "registered-shifted-iou",
+    "roi-aware",
+    "roi-aware-shifted",
+    "calibrated",
+)
 
 
 def _single_roi_plane(mask: np.ndarray) -> CalciumPlaneData:
@@ -45,3 +57,23 @@ def test_registered_soft_iou_preset_is_available_to_global_assignment():
     assert kwargs["iou_weight"] == 0.0
     assert kwargs["soft_iou_weight"] > 0.0
     assert kwargs["distance_transform_overlap_weight"] > 0.0
+
+
+def test_registered_soft_iou_preset_is_native_global_assignment_cost():
+    kwargs = _cost_kwargs_for_method("registered-soft-iou")
+
+    assert not getattr(
+        _cost_kwargs_for_method,
+        "_bayescatrack_soft_overlap_patch",
+        False,
+    )
+    assert kwargs["iou_weight"] == 0.0
+    assert kwargs["soft_iou_weight"] > 0.0
+    assert kwargs["distance_transform_overlap_weight"] > 0.0
+
+
+def test_global_assignment_cost_dispatch_accepts_advertised_costs():
+    for cost in ADVERTISED_GLOBAL_ASSIGNMENT_COSTS:
+        kwargs = _cost_kwargs_for_method(cost)
+
+        assert isinstance(kwargs, dict)

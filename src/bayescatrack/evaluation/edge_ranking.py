@@ -11,6 +11,7 @@ import numpy as np
 ScoreDirection = Literal["cost", "similarity"]
 
 DEFAULT_HIT_KS = (1, 3, 5, 10)
+DEFAULT_RANK_PERCENTILES = (25.0, 50.0, 75.0, 90.0, 95.0)
 DEFAULT_GROUP_KEYS = ("subject", "session_a", "session_b", "session_gap", "score_name")
 
 SIMILARITY_SCORE_NAMES = frozenset(
@@ -209,11 +210,13 @@ def summarize_edge_ranking_rows(
     *,
     group_keys: Sequence[str] = DEFAULT_GROUP_KEYS,
     hit_ks: Sequence[int] = DEFAULT_HIT_KS,
+    rank_percentiles: Sequence[float] = DEFAULT_RANK_PERCENTILES,
 ) -> list[dict[str, float | int | str]]:
-    """Aggregate edge-ranking rows into hit-rate and margin summaries.
+    """Aggregate edge-ranking rows into hit-rate, rank-percentile, and margin summaries.
 
     Hit rates use all GT rows in the group as the denominator, including missing
-    candidate edges. ``*_present`` variants use only present, finite true edges.
+    candidate edges. ``*_present`` variants and rank percentiles use only
+    present, finite true edges.
     """
 
     groups: "OrderedDict[tuple[Any, ...], list[Mapping[str, Any]]]" = OrderedDict()
@@ -222,6 +225,9 @@ def summarize_edge_ranking_rows(
         groups.setdefault(key, []).append(row)
 
     hit_ks = tuple(int(value) for value in hit_ks)
+    rank_percentiles = tuple(
+        _validated_percentile(value) for value in rank_percentiles
+    )
     summaries: list[dict[str, float | int | str]] = []
     for key, group_rows in groups.items():
         summary: dict[str, float | int | str] = dict(zip(group_keys, key))
@@ -267,6 +273,15 @@ def summarize_edge_ranking_rows(
                 ),
             }
         )
+        for percentile in rank_percentiles:
+            suffix = _percentile_suffix(percentile)
+            summary[f"row_rank_p{suffix}"] = _percentile_of(
+                finite_rows, "row_rank", percentile
+            )
+            summary[f"column_rank_p{suffix}"] = _percentile_of(
+                finite_rows, "column_rank", percentile
+            )
+
         for k_value in hit_ks:
             summary[f"row_hit_at_{k_value}"] = _rate(
                 group_rows,
@@ -495,6 +510,28 @@ def _mean_of(rows: Sequence[Mapping[str, Any]], field_name: str) -> float:
     return float(np.mean(values))
 
 
+def _percentile_of(
+    rows: Sequence[Mapping[str, Any]], field_name: str, percentile: float
+) -> float:
+    values = _finite_values(rows, field_name)
+    if values.size == 0:
+        return float("nan")
+    return float(np.percentile(values, percentile))
+
+
+def _validated_percentile(value: float) -> float:
+    percentile = float(value)
+    if not np.isfinite(percentile) or percentile < 0.0 or percentile > 100.0:
+        raise ValueError("rank percentiles must be finite values between 0 and 100")
+    return percentile
+
+
+def _percentile_suffix(percentile: float) -> str:
+    if float(percentile).is_integer():
+        return str(int(percentile))
+    return f"{percentile:g}".replace(".", "_")
+
+
 def _rate(rows: Sequence[Mapping[str, Any]], predicate: Any) -> float:
     if not rows:
         return float("nan")
@@ -504,6 +541,7 @@ def _rate(rows: Sequence[Mapping[str, Any]], predicate: Any) -> float:
 __all__ = [
     "DEFAULT_GROUP_KEYS",
     "DEFAULT_HIT_KS",
+    "DEFAULT_RANK_PERCENTILES",
     "SIMILARITY_SCORE_NAMES",
     "ScoreDirection",
     "infer_score_direction",

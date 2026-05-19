@@ -475,25 +475,54 @@ def _as_nullable_int_matrix(array_like: Any) -> np.ndarray:
         array = array.reshape(-1, 1)
     matrix = np.empty(array.shape, dtype=object)
     for index, value in np.ndenumerate(array):
-        matrix[index] = _parse_optional_int(value)
+        matrix[index] = _parse_optional_int(value, context=f"ROI index at {index}")
     return matrix
 
 
-def _parse_optional_int(value: Any) -> int | None:
+def _parse_optional_int(value: Any, *, context: str = "ROI index") -> int | None:
+    """Parse a nullable non-negative integer without hiding malformed data."""
+
     if value is None:
         return None
     if isinstance(value, bytes):
         value = value.decode("utf-8")
     if isinstance(value, str):
-        if value.strip().lower() in _MISSING_STRINGS:
+        text = value.strip()
+        if text.lower() in _MISSING_STRINGS:
             return None
-        value = value.strip()
-    if isinstance(value, (float, np.floating)) and np.isnan(value):
-        return None
-    try:
+        value = text
+
+    if isinstance(value, (bool, np.bool_)):
+        raise ValueError(
+            f"{context} must be integer-like or explicitly missing, got {value!r}"
+        )
+
+    if isinstance(value, (int, np.integer)):
         integer_value = int(value)
-    except (TypeError, ValueError):
-        return None
+    elif isinstance(value, (float, np.floating)):
+        if np.isnan(value):
+            return None
+        numeric_value = float(value)
+        if not np.isfinite(numeric_value) or not numeric_value.is_integer():
+            raise ValueError(
+                f"{context} must be integer-like or explicitly missing, got {value!r}"
+            )
+        integer_value = int(numeric_value)
+    else:
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{context} must be integer-like or explicitly missing, got {value!r}"
+            ) from exc
+        if np.isnan(numeric_value):
+            return None
+        if not np.isfinite(numeric_value) or not numeric_value.is_integer():
+            raise ValueError(
+                f"{context} must be integer-like or explicitly missing, got {value!r}"
+            )
+        integer_value = int(numeric_value)
+
     if integer_value < 0:
         return None
     return integer_value

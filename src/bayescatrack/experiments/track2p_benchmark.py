@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import numpy as np
+from bayescatrack._cli_choices import (
+    ASSOCIATION_COST_CHOICES,
+    ASSOCIATION_COST_HELP,
+    REGISTRATION_TRANSFORM_CHOICES,
+    REGISTRATION_TRANSFORM_HELP,
+)
 from bayescatrack.association.pyrecest_global_assignment import (
     AssociationCost,
     GlobalAssignmentRun,
@@ -65,7 +71,7 @@ class Track2pBenchmarkConfig:
     restrict_to_reference_seed_rois: bool = True
     cost: AssociationCost = "registered-iou"
     max_gap: int = 2
-    transform_type: str = "affine"
+    transform_type: str = "fov-affine"
     start_cost: float = 5.0
     end_cost: float = 5.0
     gap_penalty: float = 1.0
@@ -80,6 +86,8 @@ class Track2pBenchmarkConfig:
     velocity_variance: float = 25.0
     regularization: float = 1.0e-6
     pairwise_cost_kwargs: dict[str, Any] | None = None
+    roi_index_space_report: Path | None = None
+    require_roi_index_space_report: bool = False
     progress: bool = False
 
 
@@ -152,10 +160,15 @@ def run_track2p_benchmark(
             f"No Track2p-style subject directories found under {config.data}"
         )
 
+    if config.require_roi_index_space_report and config.roi_index_space_report is None:
+        raise ValueError(
+            "require_roi_index_space_report=True requires roi_index_space_report to be set"
+        )
     results: list[SubjectBenchmarkResult] = []
     progress = ProgressReporter(
         len(subject_dirs), enabled=config.progress, label="benchmark"
     )
+    roi_index_space_report_rows: list[dict[str, Any]] = []
     for subject_dir in subject_dirs:
         progress.step(f"running {subject_dir.name}")
         reference = _load_reference_for_subject(
@@ -165,15 +178,26 @@ def run_track2p_benchmark(
             reference, subject_dir=subject_dir, config=config
         )
         if reference.source == GROUND_TRUTH_REFERENCE_SOURCE:
-            _validate_reference_roi_indices(
-                reference, _load_subject_sessions(subject_dir, config)
+            sessions_for_validation = _load_subject_sessions(subject_dir, config)
+            subject_report_rows = _build_roi_index_space_report_rows(
+                reference,
+                sessions_for_validation,
+                subject=subject_dir.name,
             )
-        predicted_matrix, variant = _predict_subject_tracks(
+            roi_index_space_report_rows.extend(subject_report_rows)
+            _write_roi_index_space_report_if_requested(
+                config, roi_index_space_report_rows
+            )
+            _validate_reference_roi_indices(reference, sessions_for_validation)
+        predicted_matrix, variant, prediction_metadata = _predict_subject_tracks(
             subject_dir, config, reference=reference
         )
-        scores = _score_prediction_against_reference(
-            predicted_matrix, reference, config=config
-        )
+        scores = {
+            **_score_prediction_against_reference(
+                predicted_matrix, reference, config=config
+            ),
+            **prediction_metadata,
+        }
         results.append(
             SubjectBenchmarkResult(
                 subject=subject_dir.name,
@@ -206,6 +230,8 @@ def format_benchmark_table(rows: Sequence[dict[str, float | int | str]]) -> str:
 
     columns = [
         "variant",
+        "registration_backend",
+        "registration_transform_type",
         "pairwise_f1",
         "complete_track_f1",
         "pairwise_precision",
@@ -290,6 +316,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Declared reference type; manual-gt is required for paper-facing runs",
     )
     parser.add_argument(
+        "--roi-index-space-report",
+        type=Path,
+        default=None,
+        help=(
+            "Write a machine-readable manual-GT ROI index-space report before "
+            "scoring. If omitted with --output and --reference-kind manual-gt, "
+            "the default is roi_index_space_report.json next to the benchmark output."
+        ),
+    )
+    parser.add_argument(
+        "--require-roi-index-space-report",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Require a roi_index_space_report.json artifact for this benchmark run",
+    )
+    parser.add_argument(
         "--allow-track2p-as-reference-for-smoke-test",
         action="store_true",
         help="Permit Track2p/aligned-row references for plumbing smoke tests only",
@@ -314,15 +356,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cost",
         default="registered-iou",
-        choices=(
-            "registered-iou",
-            "registered-soft-iou",
-            "registered-shifted-iou",
-            "roi-aware",
-            "roi-aware-shifted",
-            "calibrated",
-        ),
-        help="Pairwise cost used by global assignment",
+        choices=ASSOCIATION_COST_CHOICES,
+        help=ASSOCIATION_COST_HELP,
     )
     parser.add_argument(
         "--max-gap",
@@ -332,9 +367,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--transform-type",
-        default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
-        help="Track2p registration transform type",
+        default="fov-affine",
+        choices=REGISTRATION_TRANSFORM_CHOICES,
+        help=REGISTRATION_TRANSFORM_HELP,
     )
     parser.add_argument(
         "--start-cost", type=float, default=5.0, help="PyRecEst track start cost"
@@ -446,7 +481,7 @@ def _predict_subject_tracks(
     config: Track2pBenchmarkConfig,
     *,
     reference: Track2pReference | None = None,
-) -> tuple[np.ndarray, str]:
+) -> tuple[np.ndarray, str, dict[str, str]]:
     if config.method == "track2p-baseline":
         track2p_dir = subject_dir / "track2p"
         if track2p_dir.exists():
@@ -462,7 +497,7 @@ def _predict_subject_tracks(
                 weighted_masks=config.weighted_masks,
                 exclude_overlapping_pixels=config.exclude_overlapping_pixels,
             )
-        return normalize_track_matrix(baseline.suite2p_indices), "Track2p default"
+        return normalize_track_matrix(baseline.suite2p_indices), "Track2p default", {}
 
     if config.method == "oracle-gt-links":
         if reference is None:
@@ -474,6 +509,7 @@ def _predict_subject_tracks(
                 seed_session=config.seed_session,
             ),
             "Oracle GT consecutive links",
+            {},
         )
 
     if config.method != "global-assignment":
@@ -482,7 +518,9 @@ def _predict_subject_tracks(
     sessions = _load_subject_sessions(subject_dir, config)
     assignment = solve_configured_global_assignment(sessions, config)
     predicted = tracks_to_suite2p_index_matrix(assignment.result.tracks, sessions)
-    return predicted, _variant_name(config.cost)
+    return predicted, _variant_name(config.cost), _assignment_registration_metadata(
+        assignment
+    )
 
 
 def oracle_ground_truth_link_tracks(
@@ -552,6 +590,33 @@ def solve_configured_global_assignment(
     )
 
 
+def _assignment_registration_metadata(
+    assignment: GlobalAssignmentRun,
+) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    backend = _summarize_edge_metadata(assignment.registration_backends)
+    if backend:
+        metadata["registration_backend"] = backend
+    transform_type = _summarize_edge_metadata(assignment.registration_transform_types)
+    if transform_type:
+        metadata["registration_transform_type"] = transform_type
+    reason = _summarize_edge_metadata(assignment.registration_backend_reasons)
+    if reason:
+        metadata["registration_backend_reason"] = reason
+    return metadata
+
+
+def _summarize_edge_metadata(edge_metadata: Mapping[object, str] | None) -> str:
+    if not edge_metadata:
+        return ""
+    values = sorted({str(value) for value in edge_metadata.values() if str(value)})
+    if not values:
+        return ""
+    if len(values) == 1:
+        return values[0]
+    return ";".join(values)
+
+
 def _variant_name(cost: AssociationCost) -> str:
     if cost == "registered-iou":
         return "Same costs + global assignment"
@@ -576,7 +641,7 @@ def _load_reference_for_subject(
             default_ground_truth_path = subject_dir / GROUND_TRUTH_CSV_NAME
             if default_ground_truth_path.exists():
                 return _load_ground_truth_csv_reference(
-                    default_ground_truth_path, subject_dir=subject_dir
+                    default_ground_truth_path, subject_dir=subject_dir, config=config
                 )
             raise ValueError(
                 f"--reference-kind manual-gt was requested, but {default_ground_truth_path} does not exist"
@@ -594,7 +659,7 @@ def _load_reference_for_subject(
         default_ground_truth_path = subject_dir / GROUND_TRUTH_CSV_NAME
         if default_ground_truth_path.exists():
             return _load_ground_truth_csv_reference(
-                default_ground_truth_path, subject_dir=subject_dir
+                default_ground_truth_path, subject_dir=subject_dir, config=config
             )
         track2p_dir = subject_dir / "track2p"
         if track2p_dir.exists():
@@ -605,7 +670,7 @@ def _load_reference_for_subject(
     if config.reference_kind == "manual-gt":
         if reference_root.is_file():
             return _load_ground_truth_csv_reference(
-                reference_root, subject_dir=subject_dir
+                reference_root, subject_dir=subject_dir, config=config
             )
         ground_truth_path = _resolve_ground_truth_csv_path(
             subject_dir, data_root=data_root, reference_root=reference_root
@@ -616,7 +681,7 @@ def _load_reference_for_subject(
                 f"for subject {subject_dir.name!r} under {reference_root}"
             )
         return _load_ground_truth_csv_reference(
-            ground_truth_path, subject_dir=subject_dir
+            ground_truth_path, subject_dir=subject_dir, config=config
         )
 
     if config.reference_kind == "track2p-output":
@@ -638,7 +703,7 @@ def _load_reference_for_subject(
     )
     if ground_truth_path is not None:
         return _load_ground_truth_csv_reference(
-            ground_truth_path, subject_dir=subject_dir
+            ground_truth_path, subject_dir=subject_dir, config=config
         )
 
     reference_path = _resolve_track2p_reference_path(
@@ -728,14 +793,15 @@ def _resolve_track2p_reference_path(
 
 
 def _load_ground_truth_csv_reference(
-    ground_truth_path: Path, *, subject_dir: Path
+    ground_truth_path: Path, *, subject_dir: Path, config: Track2pBenchmarkConfig
 ) -> Track2pReference:
-    session_names = tuple(
-        session_dir.name for session_dir in find_track2p_session_dirs(subject_dir)
-    )
+    sessions = _load_subject_sessions(subject_dir, config)
+    session_names = tuple(session.session_name for session in sessions)
     if not session_names:
         raise ValueError(
-            f"No Track2p-style sessions were found for ground-truth reference {ground_truth_path}"
+            "No loadable Track2p-style sessions were found for ground-truth "
+            f"reference {ground_truth_path} with plane {config.plane_name!r} "
+            f"and input format {config.input_format!r}"
         )
 
     track_table = load_track2p_ground_truth_csv(ground_truth_path)
@@ -817,7 +883,7 @@ def _f1_from_counts(
 ) -> float:
     denominator = 2 * true_positives + false_positives + false_negatives
     if denominator == 0:
-        return 1.0
+        return float("nan")
     return float(2 * true_positives / denominator)
 
 
@@ -930,6 +996,119 @@ def _validate_reference_roi_indices(
             )
 
 
+def _build_roi_index_space_report_rows(
+    reference: Track2pReference,
+    sessions: Sequence[Track2pSession],
+    *,
+    subject: str,
+) -> list[dict[str, Any]]:
+    """Build JSON-ready manual-GT ROI index-space diagnostics.
+
+    The benchmark consumes Suite2p ROI identifiers.  Manual Track2p ground truth
+    often stores raw ``stat.npy`` row IDs, while benchmark loaders may expose a
+    filtered cell-only subset.  Persisting this report makes that contract
+    explicit before any association or scoring result is interpreted.
+    """
+
+    sessions = tuple(sessions)
+    if len(sessions) != reference.n_sessions:
+        raise ValueError(
+            f"Reference {reference.source!r} has {reference.n_sessions} sessions, "
+            f"but the loaded subject has {len(sessions)} sessions"
+        )
+
+    session_names = tuple(session.session_name for session in sessions)
+    if session_names != reference.session_names:
+        raise ValueError(
+            f"Reference {reference.source!r} session order {reference.session_names!r} "
+            f"does not match loaded sessions {session_names!r}"
+        )
+
+    rows: list[dict[str, Any]] = []
+    for session_index, session in enumerate(sessions):
+        loaded_indices = _loaded_suite2p_index_set(session)
+        referenced_indices = {
+            int(value)
+            for value in reference.suite2p_indices[:, session_index]
+            if _is_valid_roi_index(value)
+        }
+        missing_indices = sorted(referenced_indices - loaded_indices)
+        raw_stat_rows = _raw_suite2p_stat_row_count(session)
+        rows.append(
+            {
+                "subject": subject,
+                "session": session.session_name,
+                "session_index": int(session_index),
+                "reference_source": reference.source,
+                "roi_indices_kind": (
+                    "explicit_suite2p_indices"
+                    if session.plane_data.roi_indices is not None
+                    else "dense_ordinal_indices"
+                ),
+                "n_loaded_rois": int(len(loaded_indices)),
+                "max_loaded_roi_id": max(loaded_indices) if loaded_indices else None,
+                "n_reference_rois": int(len(referenced_indices)),
+                "max_reference_roi_id": (
+                    max(referenced_indices) if referenced_indices else None
+                ),
+                "raw_stat_rows": raw_stat_rows,
+                "reference_fits_loaded_roi_indices": not missing_indices,
+                "reference_fits_raw_stat_row_space": _fits_ordinal_roi_space(
+                    referenced_indices, raw_stat_rows
+                ),
+                "n_missing_reference_rois": int(len(missing_indices)),
+                "missing_reference_roi_examples": missing_indices[:20],
+                "compatible": not missing_indices,
+            }
+        )
+    return rows
+
+
+def _raw_suite2p_stat_row_count(session: Track2pSession) -> int | None:
+    plane_name = session.plane_data.plane_name or "plane0"
+    stat_path = session.session_dir / "suite2p" / plane_name / "stat.npy"
+    if not stat_path.exists():
+        return None
+    return int(np.load(stat_path, allow_pickle=True).shape[0])
+
+
+def _fits_ordinal_roi_space(indices: set[int], size: int | None) -> bool | None:
+    if size is None:
+        return None
+    if not indices:
+        return True
+    return min(indices) >= 0 and max(indices) < size
+
+
+def _write_roi_index_space_report_if_requested(
+    config: Track2pBenchmarkConfig, rows: Sequence[Mapping[str, Any]]
+) -> None:
+    if config.roi_index_space_report is None:
+        return
+    output_path = Path(config.roi_index_space_report)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(_roi_index_space_report_payload(rows), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _roi_index_space_report_payload(
+    rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    subjects = sorted({str(row["subject"]) for row in rows})
+    incompatible_rows = [row for row in rows if not bool(row.get("compatible", False))]
+    return {
+        "schema": "bayescatrack.roi_index_space_report.v1",
+        "compatible": not incompatible_rows,
+        "n_subjects": int(len(subjects)),
+        "subjects": subjects,
+        "n_sessions": int(len(rows)),
+        "n_incompatible_sessions": int(len(incompatible_rows)),
+        "rows": list(rows),
+    }
+
+
 def _loaded_suite2p_index_set(session: Track2pSession) -> set[int]:
     roi_indices = session.plane_data.roi_indices
     if roi_indices is None:
@@ -963,6 +1142,16 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
         if not isinstance(parsed, dict):
             raise ValueError("--pairwise-cost-kwargs-json must decode to a JSON object")
         pairwise_cost_kwargs = parsed
+    roi_index_space_report = args.roi_index_space_report
+    require_roi_index_space_report = bool(args.require_roi_index_space_report)
+    if (
+        roi_index_space_report is None
+        and args.output is not None
+        and (require_roi_index_space_report or args.reference_kind == "manual-gt")
+    ):
+        roi_index_space_report = args.output.parent / "roi_index_space_report.json"
+        require_roi_index_space_report = True
+
     return Track2pBenchmarkConfig(
         data=args.data,
         method=args.method,
@@ -992,6 +1181,8 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
         velocity_variance=args.velocity_variance,
         regularization=args.regularization,
         pairwise_cost_kwargs=pairwise_cost_kwargs,
+        roi_index_space_report=roi_index_space_report,
+        require_roi_index_space_report=require_roi_index_space_report,
         progress=args.progress,
     )
 
@@ -1017,6 +1208,9 @@ def _csv_fieldnames(rows: Sequence[dict[str, float | int | str]]) -> list[str]:
         "method",
         "n_sessions",
         "reference_source",
+        "registration_backend",
+        "registration_transform_type",
+        "registration_backend_reason",
         "pairwise_f1",
         "complete_track_f1",
         "pairwise_precision",

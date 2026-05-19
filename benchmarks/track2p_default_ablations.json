@@ -1,0 +1,134 @@
+{
+  "defaults": {
+    "data": "../data/track2p",
+    "method": "global-assignment",
+    "input_format": "suite2p",
+    "reference_kind": "manual-gt",
+    "plane_name": "plane0",
+    "include_behavior": true,
+    "include_non_cells": true,
+    "weighted_masks": true,
+    "exclude_overlapping_pixels": true,
+    "restrict_to_reference_seed_rois": true,
+    "seed_session": 0,
+    "transform_type": "affine",
+    "order": "xy",
+    "weighted_centroids": true,
+    "start_cost": 5.0,
+    "end_cost": 5.0,
+    "gap_penalty": 1.0,
+    "cost_threshold": 6.0,
+    "progress": true
+  },
+  "runs": [
+    {
+      "name": "track2p-default",
+      "method": "track2p-baseline",
+      "output": "track2p_default.csv"
+    },
+    {
+      "name": "registered-iou-gap1",
+      "cost": "registered-iou",
+      "max_gap": 1,
+      "output": "registered_iou_gap1.csv"
+    },
+    {
+      "name": "registered-iou-gap2",
+      "cost": "registered-iou",
+      "max_gap": 2,
+      "output": "registered_iou_gap2.csv"
+    },
+    {
+      "name": "registered-iou-gap2-loso-priors",
+      "runner": "track2p-solver-prior-loso",
+      "split": "leave-one-subject-out",
+      "cost": "registered-iou",
+      "max_gap": 2,
+      "solver_prior_search": {
+        "start_costs": [0.5, 1.0, 1.5, 2.0],
+        "end_costs": [],
+        "gap_penalties": [0.0, 0.3, 0.6, 0.9, 1.2],
+        "cost_thresholds": [1.5, 2.0, 2.5, null],
+        "objective": "complete_track_f1"
+      },
+      "output": "registered_iou_gap2_loso_priors.csv"
+    },
+    {
+      "name": "roi-aware-gap2-loso-priors",
+      "runner": "track2p-solver-prior-loso",
+      "split": "leave-one-subject-out",
+      "cost": "roi-aware",
+      "max_gap": 2,
+      "solver_prior_search": {
+        "start_costs": [0.5, 1.0, 1.5, 2.0],
+        "end_costs": [],
+        "gap_penalties": [0.0, 0.3, 0.6, 0.9, 1.2],
+        "cost_thresholds": [1.5, 2.0, 2.5, null],
+        "objective": "complete_track_f1"
+      },
+      "output": "roi_aware_gap2_loso_priors.csv"
+    },
+    {
+      "name": "roi-aware-shifted-gap2-loso-priors",
+      "runner": "track2p-solver-prior-loso",
+      "split": "leave-one-subject-out",
+      "cost": "roi-aware-shifted",
+      "max_gap": 2,
+      "solver_prior_search": {
+        "start_costs": [0.5, 1.0, 1.5, 2.0],
+        "end_costs": [],
+        "gap_penalties": [0.0, 0.3, 0.6, 0.9, 1.2],
+        "cost_thresholds": [1.5, 2.0, 2.5, null],
+        "objective": "complete_track_f1"
+      },
+      "output": "roi_aware_shifted_gap2_loso_priors.csv"
+    },
+    {
+      "name": "calibrated-loso-default",
+      "split": "leave-one-subject-out",
+      "cost": "calibrated",
+      "max_gap": 2,
+      "output": "calibrated_loso_default.csv"
+    },
+    {
+      "name": "calibrated-loso-default-local-evidence",
+      "split": "leave-one-subject-out",
+      "cost": "calibrated",
+      "max_gap": 2,
+      "pairwise_cost_kwargs": {
+        "local_evidence_components": true
+      },
+      "output": "calibrated_loso_default_local_evidence.csv"
+    },
+    {
+      "name": "monotone-ranker-loso-gap2",
+      "runner": "track2p-monotone-loso",
+      "split": "leave-one-subject-out",
+      "cost": "calibrated",
+      "max_gap": 2,
+      "monotone_ranker_options": {
+        "max_negatives_per_positive": 16,
+        "binary_loss_weight": 0.05
+      },
+      "output": "monotone_ranker_loso_gap2.csv"
+    }
+  ],
+  "comparisons": [
+    {
+      "name": "track2p-default-ablation-summary",
+      "inputs": {
+        "Track2p default": "track2p-default",
+        "Registered IoU gap1": "registered-iou-gap1",
+        "Registered IoU gap2": "registered-iou-gap2",
+        "Registered IoU gap2 + LOSO priors": "registered-iou-gap2-loso-priors",
+        "ROI-aware gap2 + LOSO priors": "roi-aware-gap2-loso-priors",
+        "Shifted ROI-aware gap2 + LOSO priors": "roi-aware-shifted-gap2-loso-priors",
+        "Calibrated LOSO default": "calibrated-loso-default",
+        "Calibrated LOSO default + local evidence": "calibrated-loso-default-local-evidence",
+        "Monotone ranker LOSO gap2": "monotone-ranker-loso-gap2"
+      },
+      "output": "track2p_default_ablation_summary.md",
+      "highlight_best": true
+    }
+  ]
+}

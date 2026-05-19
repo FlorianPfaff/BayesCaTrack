@@ -694,7 +694,15 @@ def load_suite2p_plane(
         raise ValueError("Suite2p stat.npy must be a one-dimensional object array")
 
     iscell_path = plane_dir / "iscell.npy"
-    iscell = np.load(iscell_path, allow_pickle=True) if iscell_path.exists() else None
+    iscell = (
+        _validate_suite2p_side_array(
+            np.load(iscell_path, allow_pickle=True),
+            filename="iscell.npy",
+            expected_n_rois=int(stat.shape[0]),
+        )
+        if iscell_path.exists()
+        else None
+    )
 
     ops_path = plane_dir / "ops.npy"
     ops = None
@@ -789,18 +797,27 @@ def load_suite2p_plane(
 
     traces = None
     if load_traces and (plane_dir / "F.npy").exists():
-        traces = np.load(plane_dir / "F.npy")
-        traces = traces[selected_indices_array]
+        traces = _load_suite2p_side_array(
+            plane_dir,
+            "F.npy",
+            expected_n_rois=int(stat.shape[0]),
+        )[selected_indices_array]
 
     spike_traces = None
     if load_spike_traces and (plane_dir / "spks.npy").exists():
-        spike_traces = np.load(plane_dir / "spks.npy")
-        spike_traces = spike_traces[selected_indices_array]
+        spike_traces = _load_suite2p_side_array(
+            plane_dir,
+            "spks.npy",
+            expected_n_rois=int(stat.shape[0]),
+        )[selected_indices_array]
 
     neuropil_traces = None
     if load_neuropil_traces and (plane_dir / "Fneu.npy").exists():
-        neuropil_traces = np.load(plane_dir / "Fneu.npy")
-        neuropil_traces = neuropil_traces[selected_indices_array]
+        neuropil_traces = _load_suite2p_side_array(
+            plane_dir,
+            "Fneu.npy",
+            expected_n_rois=int(stat.shape[0]),
+        )[selected_indices_array]
 
     return CalciumPlaneData(
         roi_masks=roi_mask_array,
@@ -844,8 +861,21 @@ def load_raw_npy_plane(plane_dir: str | Path) -> CalciumPlaneData:
     )
 
 
-def find_track2p_session_dirs(subject_dir: str | Path) -> list[Path]:
-    """Return Track2p-style session folders sorted chronologically."""
+def find_track2p_session_dirs(
+    subject_dir: str | Path,
+    *,
+    plane_name: str | None = None,
+    input_format: str = "auto",
+) -> list[Path]:
+    """Return loadable Track2p-style session folders sorted chronologically.
+
+    If ``plane_name`` is provided, only sessions containing actual plane data
+    for that input format are returned.  This prevents date-like bookkeeping
+    folders from entering benchmark/reference session alignment.
+    """
+
+    if input_format not in {"auto", "suite2p", "npy"}:
+        raise ValueError("input_format must be 'auto', 'suite2p', or 'npy'")
 
     subject_dir = Path(subject_dir)
     candidate_dirs = [path for path in subject_dir.iterdir() if path.is_dir()]
@@ -857,14 +887,49 @@ def find_track2p_session_dirs(subject_dir: str | Path) -> list[Path]:
             if match is not None
             else None
         )
-        if session_date is None and not (
-            (candidate / "suite2p").exists() or (candidate / "data_npy").exists()
+        if not _has_track2p_input_container(candidate):
+            continue
+        if plane_name is not None and not _has_track2p_plane_data(
+            candidate,
+            plane_name=plane_name,
+            input_format=input_format,
         ):
             continue
         recognized_dirs.append((session_date, candidate.name, candidate))
 
     recognized_dirs.sort(key=lambda item: (item[0] is None, item[0], item[1]))
     return [path for _, _, path in recognized_dirs]
+
+
+def _has_track2p_input_container(session_dir: Path) -> bool:
+    return (session_dir / "suite2p").exists() or (session_dir / "data_npy").exists()
+
+
+def _has_suite2p_plane_data(session_dir: Path, plane_name: str) -> bool:
+    return (session_dir / "suite2p" / plane_name / "stat.npy").exists()
+
+
+def _has_raw_npy_plane_data(session_dir: Path, plane_name: str) -> bool:
+    plane_dir = session_dir / "data_npy" / plane_name
+    return all(
+        (plane_dir / filename).exists()
+        for filename in ("rois.npy", "F.npy", "fov.npy")
+    )
+
+
+def _has_track2p_plane_data(
+    session_dir: Path,
+    *,
+    plane_name: str,
+    input_format: str,
+) -> bool:
+    return (
+        input_format in {"auto", "suite2p"}
+        and _has_suite2p_plane_data(session_dir, plane_name)
+    ) or (
+        input_format in {"auto", "npy"}
+        and _has_raw_npy_plane_data(session_dir, plane_name)
+    )
 
 
 def load_track2p_subject(
@@ -882,14 +947,22 @@ def load_track2p_subject(
 
     subject_dir = Path(subject_dir)
     sessions: list[Track2pSession] = []
-    for session_dir in find_track2p_session_dirs(subject_dir):
+    for session_dir in find_track2p_session_dirs(
+        subject_dir,
+        plane_name=plane_name,
+        input_format=input_format,
+    ):
         suite2p_plane_dir = session_dir / "suite2p" / plane_name
         npy_plane_dir = session_dir / "data_npy" / plane_name
 
         plane_data: CalciumPlaneData | None = None
-        if input_format in {"auto", "suite2p"} and suite2p_plane_dir.exists():
+        if input_format in {"auto", "suite2p"} and _has_suite2p_plane_data(
+            session_dir, plane_name
+        ):
             plane_data = load_suite2p_plane(suite2p_plane_dir, **suite2p_kwargs)
-        elif input_format in {"auto", "npy"} and npy_plane_dir.exists():
+        elif input_format in {"auto", "npy"} and _has_raw_npy_plane_data(
+            session_dir, plane_name
+        ):
             plane_data = load_raw_npy_plane(npy_plane_dir)
 
         if plane_data is None:
@@ -1230,6 +1303,36 @@ def _stack_or_empty_masks(
         return np.stack(roi_masks, axis=0)
     mask_dtype = float if weighted_masks else bool
     return np.zeros((0, image_shape[0], image_shape[1]), dtype=mask_dtype)
+
+
+def _load_suite2p_side_array(
+    plane_dir: Path,
+    filename: str,
+    *,
+    expected_n_rois: int,
+) -> np.ndarray:
+    return _validate_suite2p_side_array(
+        np.load(plane_dir / filename),
+        filename=filename,
+        expected_n_rois=expected_n_rois,
+    )
+
+
+def _validate_suite2p_side_array(
+    array: np.ndarray,
+    *,
+    filename: str,
+    expected_n_rois: int,
+) -> np.ndarray:
+    array = np.asarray(array)
+    if array.ndim == 0:
+        raise ValueError(f"Suite2p {filename} must have at least one dimension")
+    if array.shape[0] != expected_n_rois:
+        raise ValueError(
+            f"Suite2p {filename} first dimension ({array.shape[0]}) must match "
+            f"stat.npy ({expected_n_rois})"
+        )
+    return array
 
 
 def _infer_image_shape(stat: np.ndarray, ops: dict[str, Any] | None) -> tuple[int, int]:

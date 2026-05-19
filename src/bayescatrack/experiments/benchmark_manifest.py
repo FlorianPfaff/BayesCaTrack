@@ -9,7 +9,7 @@ import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from bayescatrack.experiments.benchmark_comparison import (
     ComparisonInput,
@@ -19,14 +19,25 @@ from bayescatrack.experiments.benchmark_comparison import (
 )
 from bayescatrack.experiments.track2p_benchmark import (
     OutputFormat,
+    SubjectBenchmarkResult,
     Track2pBenchmarkConfig,
     run_track2p_benchmark,
     write_results,
 )
 
 ManifestObject = Mapping[str, Any]
+BenchmarkRunner = Literal[
+    "track2p", "track2p-solver-prior-loso", "track2p-monotone-loso"
+]
 TRACK2P_CONFIG_FIELDS = {field.name for field in fields(Track2pBenchmarkConfig)}
-RUN_METADATA_FIELDS = {"name", "output", "format"}
+RUN_METADATA_FIELDS = {
+    "name",
+    "output",
+    "format",
+    "runner",
+    "solver_prior_search",
+    "monotone_ranker_options",
+}
 COMPARISON_FIELDS = {"name", "inputs", "output", "format", "highlight_best"}
 
 
@@ -38,6 +49,9 @@ class BenchmarkRunSpec:
     config: Track2pBenchmarkConfig
     output: Path
     output_format: OutputFormat = "csv"
+    runner: BenchmarkRunner = "track2p"
+    solver_prior_search: Any | None = None
+    monotone_ranker_options: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -145,7 +159,7 @@ def run_benchmark_manifest(manifest: BenchmarkManifest) -> BenchmarkManifestResu
     run_summaries: list[BenchmarkOutputSummary] = []
     run_outputs: dict[str, Path] = {}
     for run_spec in manifest.runs:
-        results = run_track2p_benchmark(run_spec.config)
+        results = _run_benchmark_spec(run_spec)
         rows = [result.to_dict() for result in results]
         write_results(rows, run_spec.output, run_spec.output_format)
         run_summaries.append(
@@ -180,6 +194,30 @@ def run_benchmark_manifest(manifest: BenchmarkManifest) -> BenchmarkManifestResu
     return BenchmarkManifestResult(
         runs=tuple(run_summaries), comparisons=tuple(comparison_summaries)
     )
+
+
+def _run_benchmark_spec(run_spec: BenchmarkRunSpec) -> list[SubjectBenchmarkResult]:
+    """Execute one manifest run with the selected benchmark runner."""
+
+    if run_spec.runner == "track2p":
+        return run_track2p_benchmark(run_spec.config)
+    if run_spec.runner == "track2p-solver-prior-loso":
+        from bayescatrack.experiments.solver_prior_tuning import (
+            run_track2p_loso_solver_priors,
+        )
+
+        return run_track2p_loso_solver_priors(
+            run_spec.config, search=run_spec.solver_prior_search
+        ).to_benchmark_results()
+    if run_spec.runner == "track2p-monotone-loso":
+        from bayescatrack.experiments.track2p_monotone_loso_calibration import (
+            run_track2p_monotone_loso_calibration,
+        )
+
+        return run_track2p_monotone_loso_calibration(
+            run_spec.config, monotone_options=run_spec.monotone_ranker_options
+        ).to_benchmark_results()
+    raise ValueError(f"Unsupported benchmark runner: {run_spec.runner!r}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -242,6 +280,7 @@ def _parse_run_spec(
     )
 
     run_data = {**defaults, **raw_run}
+    runner = _benchmark_runner(run_data.get("runner", "track2p"))
     name = str(run_data.get("name", _default_run_name(run_data)))
     output_format = _output_format(run_data.get("format", "csv"))
     output = _resolve_output_path(
@@ -251,10 +290,22 @@ def _parse_run_spec(
     )
     config_kwargs = _track2p_config_kwargs(run_data, base_dir=base_dir)
     config = Track2pBenchmarkConfig(**config_kwargs)
+    solver_prior_search = _parse_solver_prior_search(
+        run_data.get("solver_prior_search"), runner=runner
+    )
+    monotone_ranker_options = _parse_monotone_ranker_options(
+        run_data.get("monotone_ranker_options"), runner=runner
+    )
     if progress is not None:
         config = replace(config, progress=progress)
     return BenchmarkRunSpec(
-        name=name, config=config, output=output, output_format=output_format
+        name=name,
+        config=config,
+        output=output,
+        output_format=output_format,
+        runner=runner,
+        solver_prior_search=solver_prior_search,
+        monotone_ranker_options=monotone_ranker_options,
     )
 
 
@@ -394,6 +445,53 @@ def _output_format(value: Any) -> OutputFormat:
     if output_format not in {"table", "json", "csv"}:
         raise ValueError("Manifest run format must be 'table', 'json', or 'csv'")
     return cast(OutputFormat, output_format)
+
+
+def _benchmark_runner(value: Any) -> BenchmarkRunner:
+    runner = str(value)
+    allowed = {"track2p", "track2p-solver-prior-loso", "track2p-monotone-loso"}
+    if runner not in allowed:
+        raise ValueError(
+            "Manifest run runner must be 'track2p', 'track2p-solver-prior-loso', "
+            "or 'track2p-monotone-loso'"
+        )
+    return cast(BenchmarkRunner, runner)
+
+
+def _parse_solver_prior_search(value: Any, *, runner: BenchmarkRunner) -> Any | None:
+    if value is None:
+        return None
+    if runner != "track2p-solver-prior-loso":
+        raise ValueError(
+            "Manifest run 'solver_prior_search' is only valid with "
+            "runner='track2p-solver-prior-loso'"
+        )
+    if not isinstance(value, Mapping):
+        raise ValueError("Manifest run 'solver_prior_search' must be a JSON object")
+    from bayescatrack.experiments.solver_prior_tuning import SolverPriorSearchConfig
+
+    allowed = {field.name for field in fields(SolverPriorSearchConfig)}
+    _reject_unknown_keys(value, allowed, location="solver_prior_search")
+    return SolverPriorSearchConfig(**dict(value))
+
+
+def _parse_monotone_ranker_options(
+    value: Any, *, runner: BenchmarkRunner
+) -> Any | None:
+    if value is None:
+        return None
+    if runner != "track2p-monotone-loso":
+        raise ValueError(
+            "Manifest run 'monotone_ranker_options' is only valid with "
+            "runner='track2p-monotone-loso'"
+        )
+    if not isinstance(value, Mapping):
+        raise ValueError("Manifest run 'monotone_ranker_options' must be a JSON object")
+    from bayescatrack.association.monotone_ranker import MonotoneRankerOptions
+
+    allowed = {field.name for field in fields(MonotoneRankerOptions)}
+    _reject_unknown_keys(value, allowed, location="monotone_ranker_options")
+    return MonotoneRankerOptions(**dict(value))
 
 
 def _benchmark_output_suffix(output_format: OutputFormat) -> str:

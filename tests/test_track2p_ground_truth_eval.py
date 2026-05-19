@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from bayescatrack.ground_truth_eval import (
     TrackTable,
     evaluate_track_table_prediction,
@@ -21,6 +22,38 @@ def test_evaluate_track_table_prediction_scores_exact_tracks():
     assert evaluation.n_exact_full_track_matches == 1
     assert evaluation.complete_tracks == 0.5
     assert evaluation.proportion_correct_by_horizon[2] == 0.5
+
+
+def test_complete_tracks_score_ignores_incomplete_rows_in_denominator():
+    ground_truth = TrackTable(
+        session_names=("s1", "s2", "s3"),
+        tracks=np.array([[1, 2, 3], [4, -1, 6]], dtype=int),
+    )
+    prediction = TrackTable(
+        session_names=("s1", "s2", "s3"),
+        tracks=np.array([[1, 2, 3], [7, -1, 9]], dtype=int),
+    )
+
+    evaluation = evaluate_track_table_prediction(ground_truth, prediction)
+
+    assert evaluation.complete_tracks == 1.0
+    assert evaluation.n_exact_full_track_matches == 1
+
+
+def test_exact_full_track_matches_do_not_count_matching_incomplete_rows():
+    ground_truth = TrackTable(
+        session_names=("s1", "s2", "s3"),
+        tracks=np.array([[1, 2, 3], [4, -1, 6]], dtype=int),
+    )
+    prediction = TrackTable(
+        session_names=("s1", "s2", "s3"),
+        tracks=np.array([[1, 2, 3], [4, -1, 6]], dtype=int),
+    )
+
+    evaluation = evaluate_track_table_prediction(ground_truth, prediction)
+
+    assert evaluation.n_exact_full_track_matches == 1
+    assert evaluation.complete_tracks == 1.0
 
 
 def test_load_track2p_ground_truth_csv_supports_semicolon_encoded_rows(tmp_path):
@@ -99,3 +132,34 @@ def test_load_track2p_ground_truth_csv_infers_subject_session_dirs(tmp_path):
         table.tracks,
         np.array([[67, 38, 15, 169], [11, -1, 13, 14]], dtype=int),
     )
+
+
+def test_load_track2p_ground_truth_csv_rejects_duplicate_long_entries(tmp_path):
+    ground_truth_path = tmp_path / "ground_truth.csv"
+    ground_truth_path.write_text(
+        "track_id,session,roi\n"
+        "cell_0,s1,7\n"
+        "cell_0,s1,8\n"
+        "cell_0,s2,9\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate entries"):
+        load_track2p_ground_truth_csv(
+            ground_truth_path,
+            session_names=("s1", "s2"),
+        )
+
+
+def test_load_track2p_ground_truth_csv_rejects_malformed_roi_tokens(tmp_path):
+    ground_truth_path = tmp_path / "ground_truth.csv"
+    ground_truth_path.write_text(
+        "track_id,s1,s2\n0,67,38\n1,11,typo\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_track2p_ground_truth_csv(
+            ground_truth_path,
+            session_names=("s1", "s2"),
+        )

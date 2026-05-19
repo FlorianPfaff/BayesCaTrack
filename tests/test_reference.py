@@ -14,6 +14,7 @@ sys.path.insert(0, str(SRC_PATH))
 
 from bayescatrack.reference import (  # noqa: E402
     Track2pReference,
+    _as_nullable_int_matrix,
     load_aligned_subject_reference,
     load_track2p_reference,
     pairs_from_label_vectors,
@@ -353,3 +354,24 @@ def test_score_label_vectors_against_reference_and_duplicate_detection():
 
     with pytest.raises(ValueError, match="same track id"):
         pairs_from_label_vectors(np.array([7, 7]), np.array([7, -1]))
+
+
+def test_reference_normalization_rejects_malformed_roi_tokens():
+    with pytest.raises(ValueError, match="integer-like or explicitly missing"):
+        _as_nullable_int_matrix(np.array([[0, "typo"]], dtype=object))
+
+
+def test_reference_normalization_rejects_fractional_roi_tokens():
+    with pytest.raises(ValueError, match="integer-like or explicitly missing"):
+        _as_nullable_int_matrix(np.array([[0, "1.5"]], dtype=object))
+
+
+def test_reference_normalization_preserves_explicit_missing_markers():
+    normalized = _as_nullable_int_matrix(np.array([[0, -1, None, "nan"]], dtype=object))
+
+    npt.assert_array_equal(normalized, np.array([[0, None, None, None]], dtype=object))
+
+
+def test_label_vector_conversion_rejects_malformed_track_labels():
+    with pytest.raises(ValueError, match="integer-like or explicitly missing"):
+        pairs_from_label_vectors(np.array(["not-a-track"]), np.array([0]))

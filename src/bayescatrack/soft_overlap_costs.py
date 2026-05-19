@@ -200,6 +200,21 @@ def _install_global_assignment_preset() -> None:
         )
         return
 
+    try:
+        native_kwargs = original("registered-soft-iou")
+    except ValueError:
+        native_kwargs = None
+    if (
+        native_kwargs is not None
+        and float(native_kwargs.get("soft_iou_weight", 0.0)) > 0.0
+    ):
+        setattr(
+            global_assignment,
+            "registered_soft_iou_cost_kwargs",
+            registered_soft_iou_cost_kwargs,
+        )
+        return
+
     def _cost_kwargs_for_method_with_soft_overlap(cost: str) -> dict[str, Any]:
         if cost == "registered-soft-iou":
             return dict(registered_soft_iou_cost_kwargs())

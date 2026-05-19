@@ -19,7 +19,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -76,14 +76,10 @@ class SessionMatchResult:
     def as_roi_index_mapping(self) -> dict[int, int]:
         """Return matches as ``reference_roi_index -> measurement_roi_index``."""
 
-        return {
-            int(reference_roi): int(measurement_roi)
-            for reference_roi, measurement_roi in zip(
-                self.reference_roi_indices,
-                self.measurement_roi_indices,
-                strict=True,
-            )
-        }
+        return _validated_match_mapping(
+            self.reference_roi_indices,
+            self.measurement_roi_indices,
+        )
 
     def as_pair_array(self) -> np.ndarray:
         """Return matches as a ``(n_matches, 2)`` integer array."""
@@ -394,6 +390,42 @@ def _default_start_roi_indices(
     return sorted(_invert_match_mapping(normalized_matches[start_session_index - 1]))
 
 
+def _validated_match_mapping(
+    reference_roi_indices: Iterable[Any],
+    measurement_roi_indices: Iterable[Any],
+) -> dict[int, int]:
+    """Return a validated one-to-one ROI match mapping.
+
+    All accepted match representations describe one-to-one associations between
+    reference-session and measurement-session ROI indices. Building a dict
+    directly would silently keep the last duplicate reference key, and duplicate
+    measurement IDs can collapse distinct tracks during forward stitching.
+    """
+
+    mapping: dict[int, int] = {}
+    used_measurement_rois: set[int] = set()
+    for reference_roi_raw, measurement_roi_raw in zip(
+        reference_roi_indices,
+        measurement_roi_indices,
+        strict=True,
+    ):
+        reference_roi = int(reference_roi_raw)
+        measurement_roi = int(measurement_roi_raw)
+        if reference_roi in mapping:
+            raise ValueError(
+                "match mappings must be one-to-one; "
+                f"duplicate reference ROI index {reference_roi}"
+            )
+        if measurement_roi in used_measurement_rois:
+            raise ValueError(
+                "match mappings must be one-to-one; "
+                f"duplicate measurement ROI index {measurement_roi}"
+            )
+        mapping[reference_roi] = measurement_roi
+        used_measurement_rois.add(measurement_roi)
+    return mapping
+
+
 def _invert_match_mapping(mapping: Mapping[int, int]) -> dict[int, int]:
     inverted: dict[int, int] = {}
     for reference_roi, measurement_roi in mapping.items():
@@ -417,23 +449,20 @@ def _normalize_match_mapping(
     if isinstance(match, SessionMatchResult):
         return match.as_roi_index_mapping()
     if isinstance(match, Mapping):
-        return {
-            int(reference_roi): int(measurement_roi)
-            for reference_roi, measurement_roi in match.items()
-        }
+        return _validated_match_mapping(match.keys(), match.values())
     if isinstance(match, tuple) and len(match) == 2:
         reference_roi_indices = [int(value) for value in match[0]]
         measurement_roi_indices = [int(value) for value in match[1]]
         if len(reference_roi_indices) != len(measurement_roi_indices):
             raise ValueError("tuple-based matches must have equal lengths")
-        return dict(zip(reference_roi_indices, measurement_roi_indices, strict=True))
+        return _validated_match_mapping(
+            reference_roi_indices,
+            measurement_roi_indices,
+        )
 
     match_array = np.asarray(match)
     if match_array.ndim == 2 and match_array.shape[1] == 2:
-        return {
-            int(reference_roi): int(measurement_roi)
-            for reference_roi, measurement_roi in match_array.tolist()
-        }
+        return _validated_match_mapping(match_array[:, 0], match_array[:, 1])
     raise TypeError("unsupported match representation")
 
 

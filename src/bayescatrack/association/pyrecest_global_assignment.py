@@ -47,6 +47,16 @@ SessionEdge = tuple[int, int]
 
 
 @dataclass(frozen=True)
+class RegisteredPairwiseCosts:
+    """Registered pairwise costs plus registration provenance per session edge."""
+
+    pairwise_costs: dict[SessionEdge, np.ndarray]
+    registration_backends: dict[SessionEdge, str]
+    registration_transform_types: dict[SessionEdge, str]
+    registration_backend_reasons: dict[SessionEdge, str]
+
+
+@dataclass(frozen=True)
 class GlobalAssignmentRun:
     """Global assignment result plus the pairwise evidence used to build it."""
 
@@ -54,6 +64,9 @@ class GlobalAssignmentRun:
     pairwise_costs: dict[SessionEdge, np.ndarray]
     session_sizes: tuple[int, ...]
     session_edges: tuple[SessionEdge, ...]
+    registration_backends: dict[SessionEdge, str] | None = None
+    registration_transform_types: dict[SessionEdge, str] | None = None
+    registration_backend_reasons: dict[SessionEdge, str] | None = None
 
 
 def registered_iou_cost_kwargs(
@@ -142,6 +155,37 @@ def roi_aware_shifted_cost_kwargs(
     return kwargs
 
 
+def registered_soft_iou_cost_kwargs(
+    *,
+    similarity_epsilon: float = 1.0e-6,
+    soft_iou_radius: int = 2,
+    distance_transform_overlap_radius: int = 3,
+    distance_transform_overlap_weight: float = 0.35,
+    distance_transform_overlap_scale: float | None = None,
+) -> dict[str, Any]:
+    """Return cost kwargs for the registered soft-IoU ablation.
+
+    The soft-overlap implementation lives in :mod:`bayescatrack.soft_overlap_costs`.
+    This wrapper keeps the global-assignment cost preset self-contained so that
+    every cost advertised by the benchmark CLI resolves through the same preset
+    switch.
+    """
+
+    from bayescatrack.soft_overlap_costs import (
+        registered_soft_iou_cost_kwargs as _registered_soft_iou_cost_kwargs,
+    )
+
+    return dict(
+        _registered_soft_iou_cost_kwargs(
+            similarity_epsilon=similarity_epsilon,
+            soft_iou_radius=soft_iou_radius,
+            distance_transform_overlap_radius=distance_transform_overlap_radius,
+            distance_transform_overlap_weight=distance_transform_overlap_weight,
+            distance_transform_overlap_scale=distance_transform_overlap_scale,
+        )
+    )
+
+
 def session_edge_pairs(
     num_sessions: int, *, max_gap: int = 2
 ) -> tuple[SessionEdge, ...]:
@@ -165,7 +209,7 @@ def build_registered_pairwise_costs(
     max_gap: int = 2,
     cost: AssociationCost = "registered-iou",
     calibrated_model: CalibratedAssociationModel | None = None,
-    transform_type: str = "affine",
+    transform_type: str = "fov-affine",
     order: str = "xy",
     weighted_centroids: bool = False,
     velocity_variance: float = 25.0,
@@ -179,6 +223,46 @@ def build_registered_pairwise_costs(
 ) -> dict[SessionEdge, np.ndarray]:
     """Build registered pairwise cost matrices for consecutive and skip-session edges."""
 
+    return build_registered_pairwise_costs_with_metadata(
+        sessions,
+        max_gap=max_gap,
+        cost=cost,
+        calibrated_model=calibrated_model,
+        transform_type=transform_type,
+        order=order,
+        weighted_centroids=weighted_centroids,
+        velocity_variance=velocity_variance,
+        regularization=regularization,
+        pairwise_cost_kwargs=pairwise_cost_kwargs,
+        return_pairwise_components=return_pairwise_components,
+        activity_tie_breaker_weight=activity_tie_breaker_weight,
+        activity_tie_breaker_component=activity_tie_breaker_component,
+        activity_trace_source=activity_trace_source,
+        activity_event_threshold=activity_event_threshold,
+    ).pairwise_costs
+
+
+# pylint: disable=too-many-arguments,too-many-locals
+def build_registered_pairwise_costs_with_metadata(
+    sessions: Sequence[Track2pSession],
+    *,
+    max_gap: int = 2,
+    cost: AssociationCost = "registered-iou",
+    calibrated_model: CalibratedAssociationModel | None = None,
+    transform_type: str = "fov-affine",
+    order: str = "xy",
+    weighted_centroids: bool = False,
+    velocity_variance: float = 25.0,
+    regularization: float = 1.0e-6,
+    pairwise_cost_kwargs: Mapping[str, Any] | None = None,
+    return_pairwise_components: bool = False,
+    activity_tie_breaker_weight: float = 0.0,
+    activity_tie_breaker_component: str = "activity_tiebreaker_cost",
+    activity_trace_source: str = "auto",
+    activity_event_threshold: float = 0.0,
+) -> RegisteredPairwiseCosts:
+    """Build registered pairwise costs and record the resolved registration backend."""
+
     sessions = list(sessions)
     if cost == "calibrated" and calibrated_model is None:
         raise ValueError("calibrated_model is required when cost='calibrated'")
@@ -191,6 +275,7 @@ def build_registered_pairwise_costs(
         or activity_tie_breaker_weight > 0.0
     )
 
+    _install_optional_cost_extensions(cost)
     base_cost_kwargs = _cost_kwargs_for_method(cost)
     if pairwise_cost_kwargs is not None:
         base_cost_kwargs.update(dict(pairwise_cost_kwargs))
@@ -200,14 +285,27 @@ def build_registered_pairwise_costs(
         previous_pairwise_cost_method = install_shifted_overlap_cost_patch()
     try:
         pairwise_costs: dict[SessionEdge, np.ndarray] = {}
+        registration_backends: dict[SessionEdge, str] = {}
+        registration_transform_types: dict[SessionEdge, str] = {}
+        registration_backend_reasons: dict[SessionEdge, str] = {}
         for source_session, target_session in session_edge_pairs(
             len(sessions), max_gap=max_gap
         ):
+            edge = (source_session, target_session)
             registered_measurement_plane = register_plane_pair(
                 sessions[source_session].plane_data,
                 sessions[target_session].plane_data,
                 transform_type=transform_type,
             )
+            backend, effective_transform_type, backend_reason = (
+                _registration_metadata_from_plane(
+                    registered_measurement_plane,
+                    requested_transform_type=transform_type,
+                )
+            )
+            registration_backends[edge] = backend
+            registration_transform_types[edge] = effective_transform_type
+            registration_backend_reasons[edge] = backend_reason
             registered_measurement_plane, empty_registered_rois = (
                 replace_empty_registered_masks(registered_measurement_plane)
             )
@@ -247,14 +345,17 @@ def build_registered_pairwise_costs(
                     component_name=activity_tie_breaker_component,
                     weight=activity_tie_breaker_weight,
                 )
-            pairwise_costs[(source_session, target_session)] = (
-                _penalize_empty_registered_roi_columns(
-                    cost_matrix,
-                    empty_registered_rois,
-                    large_cost=float(base_cost_kwargs.get("large_cost", 1.0e6)),
-                )
+            pairwise_costs[edge] = _penalize_empty_registered_roi_columns(
+                cost_matrix,
+                empty_registered_rois,
+                large_cost=float(base_cost_kwargs.get("large_cost", 1.0e6)),
             )
-        return pairwise_costs
+        return RegisteredPairwiseCosts(
+            pairwise_costs=pairwise_costs,
+            registration_backends=registration_backends,
+            registration_transform_types=registration_transform_types,
+            registration_backend_reasons=registration_backend_reasons,
+        )
     finally:
         if previous_pairwise_cost_method is not None:
             CalciumPlaneData.build_pairwise_cost_matrix = (  # type: ignore[method-assign]
@@ -269,7 +370,7 @@ def solve_global_assignment_for_sessions(
     max_gap: int = 2,
     cost: AssociationCost = "registered-iou",
     calibrated_model: CalibratedAssociationModel | None = None,
-    transform_type: str = "affine",
+    transform_type: str = "fov-affine",
     start_cost: float = 5.0,
     end_cost: float = 5.0,
     gap_penalty: float = 1.0,
@@ -290,7 +391,7 @@ def solve_global_assignment_for_sessions(
     """Run PyRecEst's global path-cover assignment on registered BayesCaTrack costs."""
 
     sessions = list(sessions)
-    pairwise_costs = build_registered_pairwise_costs(
+    registered_costs = build_registered_pairwise_costs_with_metadata(
         sessions,
         max_gap=max_gap,
         cost=cost,
@@ -306,6 +407,7 @@ def solve_global_assignment_for_sessions(
         activity_trace_source=activity_trace_source,
         activity_event_threshold=activity_event_threshold,
     )
+    pairwise_costs = registered_costs.pairwise_costs
     session_sizes = tuple(int(session.plane_data.n_rois) for session in sessions)
     if higher_order_consistency_config is not None:
         pairwise_costs = apply_higher_order_consistency(
@@ -314,7 +416,7 @@ def solve_global_assignment_for_sessions(
             config=higher_order_consistency_config,
         )
     session_edges = session_edge_pairs(len(sessions), max_gap=max_gap)
-    return solve_global_assignment_from_pairwise_costs(
+    assignment = solve_global_assignment_from_pairwise_costs(
         pairwise_costs,
         session_sizes=session_sizes,
         session_edges=session_edges,
@@ -322,6 +424,15 @@ def solve_global_assignment_for_sessions(
         end_cost=end_cost,
         gap_penalty=gap_penalty,
         cost_threshold=cost_threshold,
+    )
+    return GlobalAssignmentRun(
+        result=assignment.result,
+        pairwise_costs=assignment.pairwise_costs,
+        session_sizes=assignment.session_sizes,
+        session_edges=assignment.session_edges,
+        registration_backends=registered_costs.registration_backends,
+        registration_transform_types=registered_costs.registration_transform_types,
+        registration_backend_reasons=registered_costs.registration_backend_reasons,
     )
 
 
@@ -399,9 +510,28 @@ def tracks_to_suite2p_index_matrix(
     return matrix
 
 
+def _registration_metadata_from_plane(
+    plane: CalciumPlaneData, *, requested_transform_type: str
+) -> tuple[str, str, str]:
+    ops = {} if plane.ops is None else dict(plane.ops)
+    fallback_backend = "none" if requested_transform_type == "none" else "unknown"
+    fallback_reason = (
+        "registration disabled by transform_type='none'"
+        if requested_transform_type == "none"
+        else "registration backend did not report provenance metadata"
+    )
+    return (
+        str(ops.get("registration_backend", fallback_backend)),
+        str(ops.get("registration_transform_type", requested_transform_type)),
+        str(ops.get("registration_backend_reason", fallback_reason)),
+    )
+
+
 def _cost_kwargs_for_method(cost: AssociationCost) -> dict[str, Any]:
     if cost == "registered-iou":
         return registered_iou_cost_kwargs()
+    if cost == "registered-soft-iou":
+        return registered_soft_iou_cost_kwargs()
     if cost == "registered-shifted-iou":
         return registered_shifted_iou_cost_kwargs()
     if cost == "roi-aware-shifted":
@@ -409,6 +539,16 @@ def _cost_kwargs_for_method(cost: AssociationCost) -> dict[str, Any]:
     if cost in {"roi-aware", "calibrated"}:
         return roi_aware_cost_kwargs()
     raise ValueError(f"Unsupported association cost: {cost}")
+
+
+def _install_optional_cost_extensions(cost: AssociationCost) -> None:
+    """Install optional pairwise-cost extensions required by the chosen preset."""
+
+    if cost != "registered-soft-iou":
+        return
+    from bayescatrack.soft_overlap_costs import install_soft_overlap_costs
+
+    install_soft_overlap_costs()
 
 
 def _penalize_empty_registered_roi_columns(

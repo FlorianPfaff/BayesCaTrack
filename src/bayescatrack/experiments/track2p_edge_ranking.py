@@ -23,6 +23,7 @@ from bayescatrack.association.pyrecest_global_assignment import (
 )
 from bayescatrack.evaluation.edge_ranking import (
     DEFAULT_HIT_KS,
+    DEFAULT_RANK_PERCENTILES,
     ScoreDirection,
     missing_reference_edge_rows,
     rank_labeled_edges,
@@ -126,6 +127,16 @@ SUMMARY_FIELDNAMES = [
     "mutual_top1_rate_present",
     "median_row_rank",
     "median_column_rank",
+    "row_rank_p25",
+    "column_rank_p25",
+    "row_rank_p50",
+    "column_rank_p50",
+    "row_rank_p75",
+    "column_rank_p75",
+    "row_rank_p90",
+    "column_rank_p90",
+    "row_rank_p95",
+    "column_rank_p95",
     "median_row_margin",
     "median_column_margin",
     "mean_row_margin",
@@ -143,6 +154,7 @@ def run_track2p_edge_ranking(
     feature_names: Sequence[str] = DEFAULT_EDGE_RANKING_FEATURES,
     similarity_features: Sequence[str] = DEFAULT_SIMILARITY_FEATURES,
     hit_ks: Sequence[int] = DEFAULT_HIT_KS,
+    rank_percentiles: Sequence[float] = DEFAULT_RANK_PERCENTILES,
 ) -> tuple[int, int]:
     """Export per-edge and per-session-pair edge-ranking diagnostics.
 
@@ -231,7 +243,9 @@ def run_track2p_edge_ranking(
         if summary_output_path is not None
         else _default_summary_output_path(output_path)
     )
-    summary_rows = summarize_edge_ranking_rows(output_rows, hit_ks=hit_ks)
+    summary_rows = summarize_edge_ranking_rows(
+        output_rows, hit_ks=hit_ks, rank_percentiles=rank_percentiles
+    )
     _write_csv(output_rows, output_path, preferred_fieldnames=EDGE_FIELDNAMES)
     _write_csv(summary_rows, summary_path, preferred_fieldnames=SUMMARY_FIELDNAMES)
     return len(output_rows), len(summary_rows)
@@ -334,6 +348,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Declare a ranked feature where larger values are better; repeat as needed",
     )
     parser.add_argument(
+        "--rank-percentile",
+        dest="rank_percentiles",
+        action="append",
+        type=float,
+        default=None,
+        help="Rank percentile to include in the summary CSV; repeat to override the default p25/p50/p75/p90/p95 columns",
+    )
+    parser.add_argument(
         "--progress",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -355,12 +377,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.similarity_features is not None
         else DEFAULT_SIMILARITY_FEATURES
     )
+    rank_percentiles = (
+        tuple(args.rank_percentiles)
+        if args.rank_percentiles is not None
+        else DEFAULT_RANK_PERCENTILES
+    )
     edge_rows, summary_rows = run_track2p_edge_ranking(
         config,
         args.output,
         summary_output_path=args.summary_output,
         feature_names=feature_names,
         similarity_features=similarity_features,
+        rank_percentiles=rank_percentiles,
     )
     summary_path = (
         args.summary_output

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import types
 from pathlib import Path
@@ -10,6 +11,7 @@ from bayescatrack.experiments.track2p_benchmark import (
     Track2pBenchmarkConfig,
     format_benchmark_table,
     run_track2p_benchmark,
+    _with_recomputed_f1_scores,
 )
 
 
@@ -195,6 +197,76 @@ def test_benchmark_uses_ground_truth_csv_reference(tmp_path, write_raw_npy_sessi
     assert result["complete_track_f1"] == pytest.approx(1.0)
 
 
+def test_benchmark_writes_required_roi_index_space_report(tmp_path):
+    subject_dir = tmp_path / "jm008"
+    iscell = np.array([[1.0, 0.95], [0.0, 0.1], [1.0, 0.9]], dtype=float)
+    _write_suite2p_session(subject_dir, "2024-05-01_a", iscell=iscell)
+    _write_suite2p_session(subject_dir, "2024-05-02_a", iscell=iscell)
+    _write_ground_truth_csv(
+        subject_dir, ("2024-05-01_a", "2024-05-02_a"), ((0, 0), (1, 1))
+    )
+
+    report_path = tmp_path / "results" / "roi_index_space_report.json"
+    rows = run_track2p_benchmark(
+        Track2pBenchmarkConfig(
+            data=subject_dir,
+            method="track2p-baseline",
+            input_format="suite2p",
+            include_non_cells=True,
+            roi_index_space_report=report_path,
+            require_roi_index_space_report=True,
+        )
+    )
+
+    assert rows[0].to_dict()["reference_source"] == "ground_truth_csv"
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["schema"] == "bayescatrack.roi_index_space_report.v1"
+    assert payload["compatible"] is True
+    assert payload["n_subjects"] == 1
+    assert payload["subjects"] == ["jm008"]
+    assert payload["n_sessions"] == 2
+    assert payload["n_incompatible_sessions"] == 0
+    first_row = payload["rows"][0]
+    assert first_row["subject"] == "jm008"
+    assert first_row["session"] == "2024-05-01_a"
+    assert first_row["n_loaded_rois"] == 3
+    assert first_row["max_loaded_roi_id"] == 2
+    assert first_row["n_reference_rois"] == 2
+    assert first_row["max_reference_roi_id"] == 1
+    assert first_row["reference_fits_loaded_roi_indices"] is True
+    assert first_row["compatible"] is True
+
+
+def test_benchmark_writes_roi_index_space_report_before_roi_mismatch_error(
+    tmp_path,
+):
+    subject_dir = tmp_path / "jm009"
+    iscell = np.array([[1.0, 0.95], [0.0, 0.1], [1.0, 0.9]], dtype=float)
+    _write_suite2p_session(subject_dir, "2024-05-01_a", iscell=iscell)
+    _write_suite2p_session(subject_dir, "2024-05-02_a", iscell=iscell)
+    _write_ground_truth_csv(
+        subject_dir, ("2024-05-01_a", "2024-05-02_a"), ((0, 0), (1, 1))
+    )
+
+    report_path = tmp_path / "results" / "roi_index_space_report.json"
+    with pytest.raises(ValueError, match="Reference ROI indices are absent"):
+        run_track2p_benchmark(
+            Track2pBenchmarkConfig(
+                data=subject_dir,
+                method="track2p-baseline",
+                input_format="suite2p",
+                roi_index_space_report=report_path,
+                require_roi_index_space_report=True,
+            )
+        )
+
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+    assert payload["compatible"] is False
+    assert payload["n_incompatible_sessions"] == 2
+    assert payload["rows"][0]["missing_reference_roi_examples"] == [1]
+    assert payload["rows"][0]["reference_fits_raw_stat_row_space"] is True
+
+
 def test_oracle_gt_links_reconstructs_complete_tracks(tmp_path, write_raw_npy_session):
     subject_dir = tmp_path / "jm006"
     _write_subject(subject_dir, write_raw_npy_session, write_reference=False)
@@ -302,6 +374,34 @@ def test_benchmark_recomputes_f1_from_counts_when_no_links_match(
     assert result["pairwise_false_negatives"] == 1
     assert result["pairwise_f1"] == pytest.approx(0.0)
     assert result["complete_track_f1"] == pytest.approx(0.0)
+
+
+def test_benchmark_reports_nan_f1_when_no_events_are_evaluable():
+    scores = _with_recomputed_f1_scores(
+        {
+            "pairwise_true_positives": 0,
+            "pairwise_false_positives": 0,
+            "pairwise_false_negatives": 0,
+            "complete_track_true_positives": 0,
+            "complete_track_false_positives": 0,
+            "complete_track_false_negatives": 0,
+        }
+    )
+
+    assert np.isnan(scores["pairwise_f1"])
+    assert np.isnan(scores["complete_track_f1"])
+
+
+def test_benchmark_keeps_zero_f1_for_nonempty_miss_cases():
+    scores = _with_recomputed_f1_scores(
+        {
+            "pairwise_true_positives": 0,
+            "pairwise_false_positives": 1,
+            "pairwise_false_negatives": 1,
+        }
+    )
+
+    assert scores["pairwise_f1"] == pytest.approx(0.0)
 
 
 def test_ground_truth_csv_validation_catches_filtered_stat_rows(tmp_path):
