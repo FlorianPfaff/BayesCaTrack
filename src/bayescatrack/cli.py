@@ -51,6 +51,10 @@ def _handle_benchmark(args: list[str]) -> int:
             "track2p", help="Track2p baseline and global-assignment ablations"
         )
         subparsers.add_parser(
+            "track2p-shifted-iou",
+            help="Track2p global-assignment ablation with residual shifted-IoU costs",
+        )
+        subparsers.add_parser(
             "track2p-sweep",
             help="Sweep Track2p global-assignment cost scales and thresholds",
         )
@@ -61,6 +65,10 @@ def _handle_benchmark(args: list[str]) -> int:
         subparsers.add_parser(
             "track2p-solver-prior-loso",
             help="Tune Track2p global-assignment solver priors inside LOSO folds",
+        )
+        subparsers.add_parser(
+            "track2p-loso-calibration",
+            help="Run configurable hard-negative LOSO calibrated global assignment",
         )
         subparsers.add_parser(
             "track2p-monotone-loso",
@@ -119,6 +127,12 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_track2p_benchmark_main(args[1:]))
+    if args[0] == "track2p-shifted-iou":
+        from bayescatrack.experiments.track2p_shifted_iou_benchmark import (
+            main as _track2p_shifted_iou_benchmark_main,
+        )
+
+        return int(_track2p_shifted_iou_benchmark_main(args[1:]))
     if args[0] == "track2p-sweep":
         from bayescatrack.experiments.track2p_cost_sweep import (
             main as _track2p_cost_sweep_main,
@@ -137,6 +151,12 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_track2p_solver_prior_loso_main(args[1:]))
+    if args[0] == "track2p-loso-calibration":
+        from bayescatrack.experiments.track2p_configurable_loso_calibration import (
+            main as _track2p_loso_calibration_main,
+        )
+
+        return int(_track2p_loso_calibration_main(args[1:]))
     if args[0] == "track2p-monotone-loso":
         from bayescatrack.experiments.track2p_monotone_loso_calibration import (
             main as _track2p_monotone_loso_main,
