@@ -112,6 +112,17 @@ def test_shifted_iou_patch_replaces_registered_iou_cost():
     npt.assert_allclose(cost, np.zeros((1, 1)))
 
 
+def test_shifted_iou_patch_install_is_idempotent():
+    original_method = install_shifted_overlap_cost_patch()
+    try:
+        patched_method = CalciumPlaneData.build_pairwise_cost_matrix
+        nested_previous_method = install_shifted_overlap_cost_patch()
+        assert nested_previous_method is patched_method
+        assert CalciumPlaneData.build_pairwise_cost_matrix is patched_method
+    finally:
+        CalciumPlaneData.build_pairwise_cost_matrix = original_method  # type: ignore[method-assign]
+
+
 def test_shifted_iou_skips_shifted_cosine_when_unused(monkeypatch):
     reference = np.zeros((1, 10, 10), dtype=bool)
     measurement = np.zeros((1, 10, 10), dtype=bool)

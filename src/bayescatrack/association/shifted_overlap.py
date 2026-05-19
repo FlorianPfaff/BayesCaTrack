@@ -458,10 +458,12 @@ def shift_mask_stack(masks: np.ndarray, *, dy: int, dx: int) -> np.ndarray:
 def install_shifted_overlap_cost_patch() -> PairwiseCostMethod:
     """Install shifted-overlap kwargs support on ``CalciumPlaneData``.
 
-    Returns the original method so callers can restore it in a ``finally`` block.
+    Returns the previous method so callers can restore it in a ``finally`` block.
     """
 
     original_method = CalciumPlaneData.build_pairwise_cost_matrix
+    if getattr(original_method, "_bayescatrack_shifted_overlap_patch", False):
+        return original_method
 
     def _patched_pairwise_cost(
         self: CalciumPlaneData,
@@ -475,6 +477,8 @@ def install_shifted_overlap_cost_patch() -> PairwiseCostMethod:
             **kwargs,
         )
 
+    setattr(_patched_pairwise_cost, "_bayescatrack_shifted_overlap_patch", True)
+    setattr(_patched_pairwise_cost, "_bayescatrack_original", original_method)
     CalciumPlaneData.build_pairwise_cost_matrix = _patched_pairwise_cost  # type: ignore[method-assign]
     return original_method
 

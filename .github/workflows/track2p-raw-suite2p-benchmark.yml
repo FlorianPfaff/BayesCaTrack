@@ -308,6 +308,28 @@ jobs:
             --format csv \
             --output results/global_registered_iou_gap${{ inputs.max_gap }}.csv
 
+      - name: Run shifted-IoU global assignment with tuned solver priors
+        if: ${{ !inputs.run_fov_affine_soft_iou_only && !inputs.run_shifted_iou_only }}
+        run: |
+          bayescatrack benchmark track2p \
+            --data "${{ steps.prep.outputs.data_root }}" \
+            --reference "${{ steps.prep.outputs.reference_root }}" \
+            --reference-kind "${{ steps.prep.outputs.reference_kind }}" \
+            --input-format suite2p \
+            --include-non-cells \
+            --no-include-behavior \
+            --method global-assignment \
+            --cost registered-shifted-iou \
+            --transform-type "${{ inputs.transform_type }}" \
+            --max-gap "${{ inputs.max_gap }}" \
+            --pairwise-cost-kwargs-json '{"shifted_iou_radius": 2}' \
+            --start-cost 1 \
+            --end-cost 1 \
+            --gap-penalty 0.6 \
+            --cost-threshold 2 \
+            --format csv \
+            --output results/global_registered_shifted_iou_tuned_gap${{ inputs.max_gap }}.csv
+
       - name: Run ROI-aware global assignment
         if: ${{ !inputs.run_fov_affine_soft_iou_only && !inputs.run_shifted_iou_only }}
         run: |
@@ -415,6 +437,7 @@ jobs:
           args=(
             --input "Track2p=results/track2p_baseline.csv"
             --input "Global-IoU=results/global_registered_iou_gap${MAX_GAP}.csv"
+            --input "Shifted-IoU-tuned=results/global_registered_shifted_iou_tuned_gap${MAX_GAP}.csv"
             --input "ROI-aware=results/global_roi_aware_gap${MAX_GAP}.csv"
           )
           if [[ "$RUN_SOLVER_PRIOR_LOSO" == "true" ]]; then

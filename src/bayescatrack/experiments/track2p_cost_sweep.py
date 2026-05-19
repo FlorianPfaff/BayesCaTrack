@@ -323,7 +323,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=True,
     )
     parser.add_argument(
-        "--cost", default="registered-iou", choices=("registered-iou", "roi-aware")
+        "--cost",
+        default="registered-iou",
+        choices=(
+            "registered-iou",
+            "registered-soft-iou",
+            "registered-shifted-iou",
+            "roi-aware",
+        ),
     )
     parser.add_argument("--max-gap", type=int, default=2)
     parser.add_argument(

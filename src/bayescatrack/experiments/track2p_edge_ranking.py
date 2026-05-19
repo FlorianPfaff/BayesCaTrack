@@ -281,7 +281,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cost",
         default="registered-iou",
-        choices=("registered-iou", "roi-aware"),
+        choices=(
+            "registered-iou",
+            "registered-soft-iou",
+            "registered-shifted-iou",
+            "roi-aware",
+        ),
         help="Raw pairwise cost whose pairwise_cost_matrix should be ranked",
     )
     parser.add_argument(
