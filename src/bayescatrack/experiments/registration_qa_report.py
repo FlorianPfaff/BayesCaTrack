@@ -24,10 +24,15 @@ from bayescatrack.association.calibrated_costs import (
 )
 from bayescatrack.association.pyrecest_global_assignment import (
     registered_iou_cost_kwargs,
+    roi_aware_shifted_cost_kwargs,
     roi_aware_cost_kwargs,
     session_edge_pairs,
 )
 from bayescatrack.association.registered_masks import replace_empty_registered_masks
+from bayescatrack.association.shifted_overlap import (
+    install_shifted_overlap_cost_patch,
+    pairwise_kwargs_use_shifted_overlap,
+)
 from bayescatrack.core.bridge import (
     CalciumPlaneData,
     Track2pSession,
@@ -45,7 +50,9 @@ from bayescatrack.experiments.track2p_benchmark import (
 )
 from bayescatrack.track2p_registration import register_plane_pair
 
-RegistrationQACost = Literal["registered-iou", "roi-aware", "calibrated"]
+RegistrationQACost = Literal[
+    "registered-iou", "roi-aware", "roi-aware-shifted", "calibrated"
+]
 RegistrationQALevel = Literal["summary", "links", "backend-audit"]
 OutputFormat = Literal["table", "json", "csv"]
 
@@ -508,7 +515,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cost",
         default="registered-iou",
-        choices=("registered-iou", "roi-aware", "calibrated"),
+        choices=("registered-iou", "roi-aware", "roi-aware-shifted", "calibrated"),
     )
     parser.add_argument("--cost-threshold", type=float, default=6.0)
     parser.add_argument("--no-cost-threshold", action="store_true")
@@ -1140,17 +1147,27 @@ def _association_bundle(
     target_plane: Any,
     config: RegistrationQAConfig,
 ) -> Any:
-    return build_session_pair_association_bundle(
-        source_session,
-        target_session,
-        measurement_plane_in_reference_frame=target_plane,
-        order=config.order,
-        weighted_centroids=config.weighted_centroids,
-        velocity_variance=config.velocity_variance,
-        regularization=config.regularization,
-        pairwise_cost_kwargs=_cost_kwargs(config),
-        return_pairwise_components=True,
-    )
+    cost_kwargs = _cost_kwargs(config)
+    previous_pairwise_cost_method = None
+    if pairwise_kwargs_use_shifted_overlap(cost_kwargs):
+        previous_pairwise_cost_method = install_shifted_overlap_cost_patch()
+    try:
+        return build_session_pair_association_bundle(
+            source_session,
+            target_session,
+            measurement_plane_in_reference_frame=target_plane,
+            order=config.order,
+            weighted_centroids=config.weighted_centroids,
+            velocity_variance=config.velocity_variance,
+            regularization=config.regularization,
+            pairwise_cost_kwargs=cost_kwargs,
+            return_pairwise_components=True,
+        )
+    finally:
+        if previous_pairwise_cost_method is not None:
+            CalciumPlaneData.build_pairwise_cost_matrix = (  # type: ignore[method-assign]
+                previous_pairwise_cost_method
+            )
 
 
 def _raw_pairwise_components(
@@ -1170,23 +1187,34 @@ def _raw_pairwise_components(
         components["iou"] = np.full(component_shape, np.nan, dtype=float)
         return components
 
-    _, raw_components = reference_plane.build_pairwise_cost_matrix(
-        target_plane,
-        order=config.order,
-        weighted_centroids=config.weighted_centroids,
-        return_components=True,
-        **_cost_kwargs(config),
-    )
+    cost_kwargs = _cost_kwargs(config)
+    previous_pairwise_cost_method = None
+    if pairwise_kwargs_use_shifted_overlap(cost_kwargs):
+        previous_pairwise_cost_method = install_shifted_overlap_cost_patch()
+    try:
+        _, raw_components = reference_plane.build_pairwise_cost_matrix(
+            target_plane,
+            order=config.order,
+            weighted_centroids=config.weighted_centroids,
+            return_components=True,
+            **cost_kwargs,
+        )
+    finally:
+        if previous_pairwise_cost_method is not None:
+            CalciumPlaneData.build_pairwise_cost_matrix = (  # type: ignore[method-assign]
+                previous_pairwise_cost_method
+            )
     components.update(raw_components)
     return components
 
 
 def _cost_kwargs(config: RegistrationQAConfig) -> dict[str, Any]:
-    kwargs = (
-        registered_iou_cost_kwargs()
-        if config.cost == "registered-iou"
-        else roi_aware_cost_kwargs()
-    )
+    if config.cost == "registered-iou":
+        kwargs = registered_iou_cost_kwargs()
+    elif config.cost == "roi-aware-shifted":
+        kwargs = roi_aware_shifted_cost_kwargs()
+    else:
+        kwargs = roi_aware_cost_kwargs()
     kwargs.update(config.pairwise_cost_kwargs or {})
     return kwargs
 

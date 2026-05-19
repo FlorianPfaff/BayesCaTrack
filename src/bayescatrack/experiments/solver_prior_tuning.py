@@ -324,7 +324,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--allow-track2p-as-reference-for-smoke-test", action="store_true"
     )
     parser.add_argument(
-        "--cost", default="registered-iou", choices=("registered-iou", "roi-aware")
+        "--cost",
+        default="registered-iou",
+        choices=(
+            "registered-iou",
+            "registered-soft-iou",
+            "registered-shifted-iou",
+            "roi-aware",
+            "roi-aware-shifted",
+        ),
     )
     parser.add_argument("--max-gap", type=int, default=2)
     parser.add_argument(

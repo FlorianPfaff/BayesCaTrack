@@ -314,7 +314,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cost",
         default="registered-iou",
-        choices=("registered-iou", "roi-aware", "calibrated"),
+        choices=(
+            "registered-iou",
+            "registered-soft-iou",
+            "registered-shifted-iou",
+            "roi-aware",
+            "roi-aware-shifted",
+            "calibrated",
+        ),
         help="Pairwise cost used by global assignment",
     )
     parser.add_argument(
@@ -548,6 +555,12 @@ def solve_configured_global_assignment(
 def _variant_name(cost: AssociationCost) -> str:
     if cost == "registered-iou":
         return "Same costs + global assignment"
+    if cost == "registered-soft-iou":
+        return "Soft-IoU costs + global assignment"
+    if cost == "registered-shifted-iou":
+        return "Shifted-IoU costs + global assignment"
+    if cost == "roi-aware-shifted":
+        return "Shifted ROI-aware costs + global assignment"
     if cost == "calibrated":
         return "Calibrated costs + global assignment"
     return "BayesCaTrack costs + global assignment"

@@ -16,6 +16,8 @@ from bayescatrack.association.calibrated_costs import (
 from bayescatrack.association.pyrecest_global_assignment import (
     AssociationCost,
     registered_iou_cost_kwargs,
+    registered_shifted_iou_cost_kwargs,
+    roi_aware_shifted_cost_kwargs,
     roi_aware_cost_kwargs,
     session_edge_pairs,
 )
@@ -36,6 +38,7 @@ from bayescatrack.experiments.track2p_benchmark import (
     _validate_reference_roi_indices,
     discover_subject_dirs,
 )
+from bayescatrack.soft_overlap_costs import registered_soft_iou_cost_kwargs
 
 DEFAULT_EDGE_RANKING_FEATURES = (
     "pairwise_cost_matrix",
@@ -281,7 +284,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cost",
         default="registered-iou",
-        choices=("registered-iou", "roi-aware"),
+        choices=(
+            "registered-iou",
+            "registered-soft-iou",
+            "registered-shifted-iou",
+            "roi-aware",
+            "roi-aware-shifted",
+        ),
         help="Raw pairwise cost whose pairwise_cost_matrix should be ranked",
     )
     parser.add_argument(
@@ -385,10 +394,17 @@ def _pairwise_cost_kwargs_for_config(
     cost: AssociationCost,
     overrides: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
+    kwargs: dict[str, Any]
     if cost == "registered-iou":
         kwargs = registered_iou_cost_kwargs()
+    elif cost == "registered-soft-iou":
+        kwargs = registered_soft_iou_cost_kwargs()
+    elif cost == "registered-shifted-iou":
+        kwargs = registered_shifted_iou_cost_kwargs()
     elif cost == "roi-aware":
         kwargs = roi_aware_cost_kwargs()
+    elif cost == "roi-aware-shifted":
+        kwargs = roi_aware_shifted_cost_kwargs()
     else:
         raise ValueError(f"Unsupported edge-ranking cost: {cost!r}")
     if overrides is not None:

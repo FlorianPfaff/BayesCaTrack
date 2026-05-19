@@ -24,7 +24,12 @@ from bayescatrack.association.higher_order_consistency import (
 from bayescatrack.association.registered_masks import (
     replace_empty_registered_masks,
 )
+from bayescatrack.association.shifted_overlap import (
+    install_shifted_overlap_cost_patch,
+    pairwise_kwargs_use_shifted_overlap,
+)
 from bayescatrack.core.bridge import (
+    CalciumPlaneData,
     Track2pSession,
     build_session_pair_association_bundle,
 )
@@ -35,6 +40,7 @@ AssociationCost = Literal[
     "registered-soft-iou",
     "registered-shifted-iou",
     "roi-aware",
+    "roi-aware-shifted",
     "calibrated",
 ]
 SessionEdge = tuple[int, int]
@@ -66,10 +72,74 @@ def registered_iou_cost_kwargs(
     }
 
 
+def registered_shifted_iou_cost_kwargs(
+    *,
+    similarity_epsilon: float = 1.0e-6,
+    shifted_iou_radius: int = 2,
+    shifted_iou_shift_penalty_weight: float = 0.0,
+    shifted_iou_shift_penalty_scale: float | None = None,
+) -> dict[str, float | int | bool]:
+    """Return registered-IoU kwargs with local shifted-overlap matching enabled."""
+
+    radius = int(shifted_iou_radius)
+    if radius < 0:
+        raise ValueError("shifted_iou_radius must be non-negative")
+    shift_penalty_weight = float(shifted_iou_shift_penalty_weight)
+    if shift_penalty_weight < 0.0:
+        raise ValueError("shifted_iou_shift_penalty_weight must be non-negative")
+    shift_penalty_scale = (
+        None
+        if shifted_iou_shift_penalty_scale is None
+        else float(shifted_iou_shift_penalty_scale)
+    )
+    if shift_penalty_scale is not None and shift_penalty_scale <= 0.0:
+        raise ValueError("shifted_iou_shift_penalty_scale must be strictly positive")
+    kwargs: dict[str, float | int | bool] = dict(
+        registered_iou_cost_kwargs(similarity_epsilon=similarity_epsilon)
+    )
+    kwargs.update(
+        {
+            "shifted_iou_radius": radius,
+            "use_shifted_iou_for_iou_cost": radius > 0,
+            "shifted_iou_weight": 0.0,
+            "shifted_mask_cosine_weight": 0.0,
+            "shifted_iou_shift_penalty_weight": shift_penalty_weight,
+        }
+    )
+    if shift_penalty_scale is not None:
+        kwargs["shifted_iou_shift_penalty_scale"] = shift_penalty_scale
+    return kwargs
+
+
 def roi_aware_cost_kwargs() -> dict[str, float]:
     """Return the default BayesCaTrack ROI-aware cost configuration."""
 
     return {}
+
+
+def roi_aware_shifted_cost_kwargs(
+    *,
+    shifted_iou_radius: int = 2,
+    shifted_iou_shift_penalty_weight: float = 0.25,
+    shifted_iou_shift_penalty_scale: float | None = None,
+) -> dict[str, float | int | bool]:
+    """Return ROI-aware kwargs that use shifted overlap for residual registration error."""
+
+    kwargs = registered_shifted_iou_cost_kwargs(
+        shifted_iou_radius=shifted_iou_radius,
+        shifted_iou_shift_penalty_weight=shifted_iou_shift_penalty_weight,
+        shifted_iou_shift_penalty_scale=shifted_iou_shift_penalty_scale,
+    )
+    kwargs.pop("iou_weight", None)
+    kwargs.pop("mask_cosine_weight", None)
+    kwargs.pop("centroid_weight", None)
+    kwargs.pop("area_weight", None)
+    kwargs.pop("roi_feature_weight", None)
+    kwargs.pop("cell_probability_weight", None)
+    kwargs["use_shifted_mask_cosine_for_mask_cosine_cost"] = (
+        int(kwargs["shifted_iou_radius"]) > 0
+    )
+    return kwargs
 
 
 def session_edge_pairs(
@@ -125,62 +195,71 @@ def build_registered_pairwise_costs(
     if pairwise_cost_kwargs is not None:
         base_cost_kwargs.update(dict(pairwise_cost_kwargs))
 
-    pairwise_costs: dict[SessionEdge, np.ndarray] = {}
-    for source_session, target_session in session_edge_pairs(
-        len(sessions), max_gap=max_gap
-    ):
-        registered_measurement_plane = register_plane_pair(
-            sessions[source_session].plane_data,
-            sessions[target_session].plane_data,
-            transform_type=transform_type,
-        )
-        registered_measurement_plane, empty_registered_rois = (
-            replace_empty_registered_masks(registered_measurement_plane)
-        )
-        bundle = build_session_pair_association_bundle(
-            sessions[source_session],
-            sessions[target_session],
-            measurement_plane_in_reference_frame=registered_measurement_plane,
-            order=order,
-            weighted_centroids=weighted_centroids,
-            velocity_variance=velocity_variance,
-            regularization=regularization,
-            pairwise_cost_kwargs=base_cost_kwargs,
-            return_pairwise_components=needs_activity_components,
-        )
-        if needs_activity_components:
-            add_activity_similarity_components(
-                bundle.pairwise_components,
+    previous_pairwise_cost_method = None
+    if pairwise_kwargs_use_shifted_overlap(base_cost_kwargs):
+        previous_pairwise_cost_method = install_shifted_overlap_cost_patch()
+    try:
+        pairwise_costs: dict[SessionEdge, np.ndarray] = {}
+        for source_session, target_session in session_edge_pairs(
+            len(sessions), max_gap=max_gap
+        ):
+            registered_measurement_plane = register_plane_pair(
                 sessions[source_session].plane_data,
-                registered_measurement_plane,
-                trace_source=activity_trace_source,
-                event_threshold=activity_event_threshold,
+                sessions[target_session].plane_data,
+                transform_type=transform_type,
             )
-        if cost == "calibrated":
-            assert calibrated_model is not None
-            cost_matrix = calibrated_cost_matrix_from_bundle(
-                bundle,
-                calibrated_model,
-                session_gap=target_session - source_session,
+            registered_measurement_plane, empty_registered_rois = (
+                replace_empty_registered_masks(registered_measurement_plane)
             )
-        else:
-            cost_matrix = np.asarray(bundle.pairwise_cost_matrix, dtype=float)
-        if activity_tie_breaker_weight > 0.0:
-            cost_matrix = np.asarray(
-                cost_matrix, dtype=float
-            ) + activity_tie_breaker_cost_matrix(
-                bundle.pairwise_components,
-                component_name=activity_tie_breaker_component,
-                weight=activity_tie_breaker_weight,
+            bundle = build_session_pair_association_bundle(
+                sessions[source_session],
+                sessions[target_session],
+                measurement_plane_in_reference_frame=registered_measurement_plane,
+                order=order,
+                weighted_centroids=weighted_centroids,
+                velocity_variance=velocity_variance,
+                regularization=regularization,
+                pairwise_cost_kwargs=base_cost_kwargs,
+                return_pairwise_components=needs_activity_components,
             )
-        pairwise_costs[(source_session, target_session)] = (
-            _penalize_empty_registered_roi_columns(
-                cost_matrix,
-                empty_registered_rois,
-                large_cost=float(base_cost_kwargs.get("large_cost", 1.0e6)),
+            if needs_activity_components:
+                add_activity_similarity_components(
+                    bundle.pairwise_components,
+                    sessions[source_session].plane_data,
+                    registered_measurement_plane,
+                    trace_source=activity_trace_source,
+                    event_threshold=activity_event_threshold,
+                )
+            if cost == "calibrated":
+                assert calibrated_model is not None
+                cost_matrix = calibrated_cost_matrix_from_bundle(
+                    bundle,
+                    calibrated_model,
+                    session_gap=target_session - source_session,
+                )
+            else:
+                cost_matrix = np.asarray(bundle.pairwise_cost_matrix, dtype=float)
+            if activity_tie_breaker_weight > 0.0:
+                cost_matrix = np.asarray(
+                    cost_matrix, dtype=float
+                ) + activity_tie_breaker_cost_matrix(
+                    bundle.pairwise_components,
+                    component_name=activity_tie_breaker_component,
+                    weight=activity_tie_breaker_weight,
+                )
+            pairwise_costs[(source_session, target_session)] = (
+                _penalize_empty_registered_roi_columns(
+                    cost_matrix,
+                    empty_registered_rois,
+                    large_cost=float(base_cost_kwargs.get("large_cost", 1.0e6)),
+                )
             )
-        )
-    return pairwise_costs
+        return pairwise_costs
+    finally:
+        if previous_pairwise_cost_method is not None:
+            CalciumPlaneData.build_pairwise_cost_matrix = (  # type: ignore[method-assign]
+                previous_pairwise_cost_method
+            )
 
 
 # pylint: disable=too-many-arguments,too-many-locals
@@ -323,6 +402,10 @@ def tracks_to_suite2p_index_matrix(
 def _cost_kwargs_for_method(cost: AssociationCost) -> dict[str, Any]:
     if cost == "registered-iou":
         return registered_iou_cost_kwargs()
+    if cost == "registered-shifted-iou":
+        return registered_shifted_iou_cost_kwargs()
+    if cost == "roi-aware-shifted":
+        return roi_aware_shifted_cost_kwargs()
     if cost in {"roi-aware", "calibrated"}:
         return roi_aware_cost_kwargs()
     raise ValueError(f"Unsupported association cost: {cost}")
@@ -373,7 +456,7 @@ def _local_tracks_to_index_matrix(
         default=-1,
     )
     n_sessions = max(max_session + 1, len(session_sizes or ()))
-    matrix = np.full((len(tracks), n_sessions), fill_value, dtype=int)
+    matrix: np.ndarray = np.full((len(tracks), n_sessions), fill_value, dtype=int)
     for track_index, track in enumerate(tracks):
         for session_index, detection_index in track.items():
             matrix[track_index, int(session_index)] = int(detection_index)

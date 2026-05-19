@@ -84,9 +84,8 @@ def _patch_dataclass_default(class_object: Any, field_name: str) -> None:
 
 setattr(_calibrated_costs, "SPLIT_ROI_STAT_FEATURES", SPLIT_ROI_STAT_FEATURES)
 setattr(_calibrated_costs, "DEFAULT_ASSOCIATION_FEATURES", DEFAULT_ASSOCIATION_FEATURES)
-_calibrated_costs._feature_transforms_for = (
-    _feature_transforms_for  # pylint: disable=protected-access
-)
+# pylint: disable-next=protected-access
+_calibrated_costs._feature_transforms_for = _feature_transforms_for
 
 _patch_dataclass_default(_calibrated_costs.CalibratedAssociationModel, "feature_names")
 _patch_dataclass_default(_calibrated_costs.ReferenceTrainingOptions, "feature_names")

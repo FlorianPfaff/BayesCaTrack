@@ -37,7 +37,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cost",
         required=True,
-        choices=("registered-iou", "roi-aware", "calibrated"),
+        choices=("registered-iou", "roi-aware", "roi-aware-shifted", "calibrated"),
     )
     parser.add_argument("--max-gap", type=int, default=2)
     parser.add_argument(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import numpy.testing as npt
+import pytest
 from bayescatrack.association import pyrecest_global_assignment as global_assignment
 from bayescatrack.association.registered_masks import replace_empty_registered_masks
 
@@ -35,6 +36,110 @@ def test_registered_pairwise_costs_penalize_empty_registered_masks(
     )
 
     npt.assert_array_equal(pairwise_costs[(0, 1)], np.array([[1.0e6]]))
+
+
+def test_registered_shifted_iou_cost_kwargs_replace_exact_iou_term():
+    kwargs = global_assignment.registered_shifted_iou_cost_kwargs(shifted_iou_radius=3)
+
+    assert kwargs["iou_weight"] == 1.0
+    assert kwargs["shifted_iou_radius"] == 3
+    assert kwargs["use_shifted_iou_for_iou_cost"] is True
+    assert kwargs["shifted_iou_weight"] == 0.0
+    assert kwargs["shifted_mask_cosine_weight"] == 0.0
+    assert kwargs["shifted_iou_shift_penalty_weight"] == 0.0
+
+
+def test_roi_aware_shifted_cost_kwargs_replace_overlap_terms():
+    kwargs = global_assignment.roi_aware_shifted_cost_kwargs(shifted_iou_radius=3)
+
+    assert "iou_weight" not in kwargs
+    assert "mask_cosine_weight" not in kwargs
+    assert kwargs["shifted_iou_radius"] == 3
+    assert kwargs["use_shifted_iou_for_iou_cost"] is True
+    assert kwargs["use_shifted_mask_cosine_for_mask_cosine_cost"] is True
+    assert kwargs["shifted_iou_shift_penalty_weight"] == 0.25
+
+
+def test_registered_shifted_iou_cost_kwargs_reject_negative_radius():
+    with pytest.raises(ValueError, match="shifted_iou_radius"):
+        global_assignment.registered_shifted_iou_cost_kwargs(shifted_iou_radius=-1)
+    with pytest.raises(ValueError, match="shifted_iou_shift_penalty_weight"):
+        global_assignment.registered_shifted_iou_cost_kwargs(
+            shifted_iou_shift_penalty_weight=-1.0
+        )
+    with pytest.raises(ValueError, match="shifted_iou_shift_penalty_scale"):
+        global_assignment.registered_shifted_iou_cost_kwargs(
+            shifted_iou_shift_penalty_scale=0.0
+        )
+
+
+def test_roi_aware_shifted_cost_lowers_near_miss_overlap_penalty(
+    make_track2p_session,
+    monkeypatch,
+):
+    reference_masks = np.zeros((1, 10, 10), dtype=bool)
+    reference_masks[0, 2:4, 2:4] = True
+    measurement_masks = np.zeros_like(reference_masks)
+    measurement_masks[0, 2:4, 4:6] = True
+
+    reference = make_track2p_session("2024-05-01_a", reference_masks)
+    measurement = make_track2p_session("2024-05-02_a", measurement_masks)
+
+    def _fake_register_plane_pair(*_args, **_kwargs):
+        return measurement.plane_data
+
+    monkeypatch.setattr(
+        global_assignment, "register_plane_pair", _fake_register_plane_pair
+    )
+
+    exact_costs = global_assignment.build_registered_pairwise_costs(
+        [reference, measurement],
+        max_gap=1,
+        cost="roi-aware",
+    )
+    shifted_costs = global_assignment.build_registered_pairwise_costs(
+        [reference, measurement],
+        max_gap=1,
+        cost="roi-aware-shifted",
+        pairwise_cost_kwargs={"shifted_iou_shift_penalty_weight": 0.0},
+    )
+
+    assert shifted_costs[(0, 1)][0, 0] < exact_costs[(0, 1)][0, 0]
+
+
+def test_registered_shifted_iou_cost_recovers_local_residual_shift(
+    make_track2p_session,
+    monkeypatch,
+):
+    reference_masks = np.zeros((1, 10, 10), dtype=bool)
+    reference_masks[0, 2:4, 2:4] = True
+    measurement_masks = np.zeros_like(reference_masks)
+    measurement_masks[0, 2:4, 4:6] = True
+
+    reference = make_track2p_session("2024-05-01_a", reference_masks)
+    measurement = make_track2p_session("2024-05-02_a", measurement_masks)
+
+    def _fake_register_plane_pair(*_args, **_kwargs):
+        return measurement.plane_data
+
+    monkeypatch.setattr(
+        global_assignment, "register_plane_pair", _fake_register_plane_pair
+    )
+    previous_pairwise_cost_method = (
+        global_assignment.CalciumPlaneData.build_pairwise_cost_matrix
+    )
+
+    pairwise_costs = global_assignment.build_registered_pairwise_costs(
+        [reference, measurement],
+        max_gap=1,
+        cost="registered-shifted-iou",
+    )
+
+    npt.assert_allclose(pairwise_costs[(0, 1)], np.zeros((1, 1)))
+    assert (
+        global_assignment.CalciumPlaneData.build_pairwise_cost_matrix
+        is previous_pairwise_cost_method
+    )
 
 
 def test_empty_registered_mask_placeholders_use_distinct_pixels(make_track2p_session):

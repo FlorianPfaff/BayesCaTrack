@@ -96,6 +96,5 @@ def _optional_one_minus_component_transform(component_name: str) -> Any:
 _calibrated_costs.LOCAL_EVIDENCE_ASSOCIATION_FEATURES = (
     LOCAL_EVIDENCE_ASSOCIATION_FEATURES
 )
-_calibrated_costs._feature_transforms_for = (
-    _feature_transforms_for  # pylint: disable=protected-access
-)
+# pylint: disable-next=protected-access
+_calibrated_costs._feature_transforms_for = _feature_transforms_for
