@@ -319,6 +319,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "registered-soft-iou",
             "registered-shifted-iou",
             "roi-aware",
+            "roi-aware-shifted",
             "calibrated",
         ),
         help="Pairwise cost used by global assignment",
@@ -558,6 +559,8 @@ def _variant_name(cost: AssociationCost) -> str:
         return "Soft-IoU costs + global assignment"
     if cost == "registered-shifted-iou":
         return "Shifted-IoU costs + global assignment"
+    if cost == "roi-aware-shifted":
+        return "Shifted ROI-aware costs + global assignment"
     if cost == "calibrated":
         return "Calibrated costs + global assignment"
     return "BayesCaTrack costs + global assignment"

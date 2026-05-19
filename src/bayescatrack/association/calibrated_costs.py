@@ -20,7 +20,12 @@ from bayescatrack.association.activity_similarity import (
     add_activity_similarity_components,
 )
 from bayescatrack.association.registered_masks import replace_empty_registered_masks
+from bayescatrack.association.shifted_overlap import (
+    install_shifted_overlap_cost_patch,
+    pairwise_kwargs_use_shifted_overlap,
+)
 from bayescatrack.core.bridge import (
+    CalciumPlaneData,
     SessionAssociationBundle,
     Track2pSession,
     build_session_pair_association_bundle,
@@ -445,17 +450,26 @@ def _build_training_bundle(
     registered_measurement_plane, _ = replace_empty_registered_masks(
         registered_measurement_plane
     )
-    bundle = build_session_pair_association_bundle(
-        sessions[session_a],
-        sessions[session_b],
-        measurement_plane_in_reference_frame=registered_measurement_plane,
-        order=options.order,
-        weighted_centroids=options.weighted_centroids,
-        velocity_variance=options.velocity_variance,
-        regularization=options.regularization,
-        pairwise_cost_kwargs=options.pairwise_cost_kwargs,
-        return_pairwise_components=True,
-    )
+    previous_pairwise_cost_method = None
+    if pairwise_kwargs_use_shifted_overlap(options.pairwise_cost_kwargs):
+        previous_pairwise_cost_method = install_shifted_overlap_cost_patch()
+    try:
+        bundle = build_session_pair_association_bundle(
+            sessions[session_a],
+            sessions[session_b],
+            measurement_plane_in_reference_frame=registered_measurement_plane,
+            order=options.order,
+            weighted_centroids=options.weighted_centroids,
+            velocity_variance=options.velocity_variance,
+            regularization=options.regularization,
+            pairwise_cost_kwargs=options.pairwise_cost_kwargs,
+            return_pairwise_components=True,
+        )
+    finally:
+        if previous_pairwise_cost_method is not None:
+            CalciumPlaneData.build_pairwise_cost_matrix = (  # type: ignore[method-assign]
+                previous_pairwise_cost_method
+            )
     add_activity_similarity_components(
         bundle.pairwise_components,
         sessions[session_a].plane_data,

@@ -8,7 +8,7 @@ whole measurement ROI, so shape selectivity is preserved in crowded fields.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +19,27 @@ from bayescatrack.core.bridge import CalciumPlaneData
 PairwiseCostMethod = Callable[
     ..., np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]
 ]
+SHIFTED_OVERLAP_KWARG_NAMES = frozenset(
+    (
+        "shifted_iou_radius",
+        "use_shifted_iou_for_iou_cost",
+        "shifted_iou_weight",
+        "use_shifted_mask_cosine_for_mask_cosine_cost",
+        "shifted_mask_cosine_weight",
+        "shifted_iou_shift_penalty_weight",
+        "shifted_iou_shift_penalty_scale",
+    )
+)
+
+
+def pairwise_kwargs_use_shifted_overlap(
+    pairwise_cost_kwargs: Mapping[str, Any] | None,
+) -> bool:
+    """Return whether pairwise cost kwargs require shifted-overlap support."""
+
+    if not pairwise_cost_kwargs:
+        return False
+    return any(key in pairwise_cost_kwargs for key in SHIFTED_OVERLAP_KWARG_NAMES)
 
 
 def shifted_iou_pairwise_cost_matrix(

@@ -24,7 +24,10 @@ from bayescatrack.association.higher_order_consistency import (
 from bayescatrack.association.registered_masks import (
     replace_empty_registered_masks,
 )
-from bayescatrack.association.shifted_overlap import install_shifted_overlap_cost_patch
+from bayescatrack.association.shifted_overlap import (
+    install_shifted_overlap_cost_patch,
+    pairwise_kwargs_use_shifted_overlap,
+)
 from bayescatrack.core.bridge import (
     CalciumPlaneData,
     Track2pSession,
@@ -37,6 +40,7 @@ AssociationCost = Literal[
     "registered-soft-iou",
     "registered-shifted-iou",
     "roi-aware",
+    "roi-aware-shifted",
     "calibrated",
 ]
 SessionEdge = tuple[int, int]
@@ -113,6 +117,31 @@ def roi_aware_cost_kwargs() -> dict[str, float]:
     return {}
 
 
+def roi_aware_shifted_cost_kwargs(
+    *,
+    shifted_iou_radius: int = 2,
+    shifted_iou_shift_penalty_weight: float = 0.25,
+    shifted_iou_shift_penalty_scale: float | None = None,
+) -> dict[str, float | int | bool]:
+    """Return ROI-aware kwargs that use shifted overlap for residual registration error."""
+
+    kwargs = registered_shifted_iou_cost_kwargs(
+        shifted_iou_radius=shifted_iou_radius,
+        shifted_iou_shift_penalty_weight=shifted_iou_shift_penalty_weight,
+        shifted_iou_shift_penalty_scale=shifted_iou_shift_penalty_scale,
+    )
+    kwargs.pop("iou_weight", None)
+    kwargs.pop("mask_cosine_weight", None)
+    kwargs.pop("centroid_weight", None)
+    kwargs.pop("area_weight", None)
+    kwargs.pop("roi_feature_weight", None)
+    kwargs.pop("cell_probability_weight", None)
+    kwargs["use_shifted_mask_cosine_for_mask_cosine_cost"] = (
+        int(kwargs["shifted_iou_radius"]) > 0
+    )
+    return kwargs
+
+
 def session_edge_pairs(
     num_sessions: int, *, max_gap: int = 2
 ) -> tuple[SessionEdge, ...]:
@@ -167,7 +196,7 @@ def build_registered_pairwise_costs(
         base_cost_kwargs.update(dict(pairwise_cost_kwargs))
 
     previous_pairwise_cost_method = None
-    if cost == "registered-shifted-iou":
+    if pairwise_kwargs_use_shifted_overlap(base_cost_kwargs):
         previous_pairwise_cost_method = install_shifted_overlap_cost_patch()
     try:
         pairwise_costs: dict[SessionEdge, np.ndarray] = {}
@@ -375,6 +404,8 @@ def _cost_kwargs_for_method(cost: AssociationCost) -> dict[str, Any]:
         return registered_iou_cost_kwargs()
     if cost == "registered-shifted-iou":
         return registered_shifted_iou_cost_kwargs()
+    if cost == "roi-aware-shifted":
+        return roi_aware_shifted_cost_kwargs()
     if cost in {"roi-aware", "calibrated"}:
         return roi_aware_cost_kwargs()
     raise ValueError(f"Unsupported association cost: {cost}")

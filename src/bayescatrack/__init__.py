@@ -29,7 +29,11 @@ def _install_registration_transform_argparse_patch() -> None:
         "local-affine-grid",
         "optical-flow",
     )
-    soft_cost_choices = ("registered-soft-iou", "registered-shifted-iou")
+    soft_cost_choices = (
+        "registered-soft-iou",
+        "registered-shifted-iou",
+        "roi-aware-shifted",
+    )
 
     def _expanded_choices(choices, extra_choices):
         try:
@@ -76,7 +80,8 @@ def _install_registration_transform_argparse_patch() -> None:
             if isinstance(help_text, str) and "registered-soft-iou" not in help_text:
                 kwargs["help"] = (
                     f"{help_text}; supports registered-soft-iou and "
-                    "registered-shifted-iou for near-miss registered ROI overlap"
+                    "registered-shifted-iou/roi-aware-shifted for near-miss "
+                    "registered ROI overlap"
                 )
         return current_add_argument(self, *name_or_flags, **kwargs)
 

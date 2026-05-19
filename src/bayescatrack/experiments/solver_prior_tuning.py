@@ -331,6 +331,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "registered-soft-iou",
             "registered-shifted-iou",
             "roi-aware",
+            "roi-aware-shifted",
         ),
     )
     parser.add_argument("--max-gap", type=int, default=2)
