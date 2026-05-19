@@ -269,6 +269,7 @@ jobs:
               --gap-penalty 0.6 \
               --cost-threshold 2 \
               --shifted-iou-radius "$radius" \
+              --shifted-iou-shift-penalty-weight 0.25 \
               --progress \
               --format csv \
               --output "$output"
@@ -322,7 +323,7 @@ jobs:
             --cost registered-shifted-iou \
             --transform-type "${{ inputs.transform_type }}" \
             --max-gap "${{ inputs.max_gap }}" \
-            --pairwise-cost-kwargs-json '{"shifted_iou_radius": 2}' \
+            --pairwise-cost-kwargs-json '{"shifted_iou_radius": 2, "shifted_iou_shift_penalty_weight": 0.25}' \
             --start-cost 1 \
             --end-cost 1 \
             --gap-penalty 0.6 \

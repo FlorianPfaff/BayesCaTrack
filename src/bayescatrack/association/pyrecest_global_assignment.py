@@ -69,13 +69,27 @@ def registered_iou_cost_kwargs(
 
 
 def registered_shifted_iou_cost_kwargs(
-    *, similarity_epsilon: float = 1.0e-6, shifted_iou_radius: int = 2
+    *,
+    similarity_epsilon: float = 1.0e-6,
+    shifted_iou_radius: int = 2,
+    shifted_iou_shift_penalty_weight: float = 0.0,
+    shifted_iou_shift_penalty_scale: float | None = None,
 ) -> dict[str, float | int | bool]:
     """Return registered-IoU kwargs with local shifted-overlap matching enabled."""
 
     radius = int(shifted_iou_radius)
     if radius < 0:
         raise ValueError("shifted_iou_radius must be non-negative")
+    shift_penalty_weight = float(shifted_iou_shift_penalty_weight)
+    if shift_penalty_weight < 0.0:
+        raise ValueError("shifted_iou_shift_penalty_weight must be non-negative")
+    shift_penalty_scale = (
+        None
+        if shifted_iou_shift_penalty_scale is None
+        else float(shifted_iou_shift_penalty_scale)
+    )
+    if shift_penalty_scale is not None and shift_penalty_scale <= 0.0:
+        raise ValueError("shifted_iou_shift_penalty_scale must be strictly positive")
     kwargs: dict[str, float | int | bool] = dict(
         registered_iou_cost_kwargs(similarity_epsilon=similarity_epsilon)
     )
@@ -85,8 +99,11 @@ def registered_shifted_iou_cost_kwargs(
             "use_shifted_iou_for_iou_cost": radius > 0,
             "shifted_iou_weight": 0.0,
             "shifted_mask_cosine_weight": 0.0,
+            "shifted_iou_shift_penalty_weight": shift_penalty_weight,
         }
     )
+    if shift_penalty_scale is not None:
+        kwargs["shifted_iou_shift_penalty_scale"] = shift_penalty_scale
     return kwargs
 
 

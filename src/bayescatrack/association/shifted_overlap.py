@@ -46,6 +46,10 @@ def shifted_iou_pairwise_cost_matrix(
         Replace the standard mask-cosine term with best local shifted cosine.
     shifted_mask_cosine_weight
         Add an additional shifted-mask-cosine cost term.
+    shifted_iou_shift_penalty_weight
+        Add a penalty proportional to the residual shift needed by the best
+        shifted-IoU match. This keeps shifted IoU from treating large local
+        shifts as equivalent to exact local registration.
     """
 
     shifted_iou_radius = _nonnegative_int(
@@ -54,6 +58,12 @@ def shifted_iou_pairwise_cost_matrix(
     shifted_iou_weight = float(kwargs.pop("shifted_iou_weight", 0.0) or 0.0)
     shifted_mask_cosine_weight = float(
         kwargs.pop("shifted_mask_cosine_weight", 0.0) or 0.0
+    )
+    shifted_iou_shift_penalty_weight = float(
+        kwargs.pop("shifted_iou_shift_penalty_weight", 0.0) or 0.0
+    )
+    shifted_iou_shift_penalty_scale = kwargs.pop(
+        "shifted_iou_shift_penalty_scale", None
     )
     use_shifted_iou_for_iou_cost = bool(
         kwargs.pop("use_shifted_iou_for_iou_cost", False)
@@ -66,12 +76,21 @@ def shifted_iou_pairwise_cost_matrix(
         raise ValueError("shifted_iou_weight must be non-negative")
     if shifted_mask_cosine_weight < 0.0:
         raise ValueError("shifted_mask_cosine_weight must be non-negative")
+    if shifted_iou_shift_penalty_weight < 0.0:
+        raise ValueError("shifted_iou_shift_penalty_weight must be non-negative")
+    if shifted_iou_shift_penalty_scale is not None:
+        shifted_iou_shift_penalty_scale = float(shifted_iou_shift_penalty_scale)
+        if shifted_iou_shift_penalty_scale <= 0.0:
+            raise ValueError(
+                "shifted_iou_shift_penalty_scale must be strictly positive"
+            )
 
     uses_shifted_overlap = shifted_iou_radius > 0 and (
         use_shifted_iou_for_iou_cost
         or shifted_iou_weight > 0.0
         or use_shifted_mask_cosine_for_mask_cosine_cost
         or shifted_mask_cosine_weight > 0.0
+        or shifted_iou_shift_penalty_weight > 0.0
     )
     if not uses_shifted_overlap:
         return original_method(self, other, **kwargs)
@@ -110,7 +129,14 @@ def shifted_iou_pairwise_cost_matrix(
         similarity_epsilon=similarity_epsilon,
     )
     shifted_iou = shifted["shifted_iou"]
+    shifted_iou_shift_norm = shifted["shifted_iou_shift_norm"]
     shifted_iou_cost = -np.log(np.clip(shifted_iou, similarity_epsilon, 1.0))
+    shift_penalty_scale = (
+        float(shifted_iou_shift_penalty_scale)
+        if shifted_iou_shift_penalty_scale is not None
+        else float(max(shifted_iou_radius, 1))
+    )
+    shifted_iou_shift_penalty_cost = shifted_iou_shift_norm / shift_penalty_scale
     if needs_shifted_cosine:
         shifted_cosine = shifted["shifted_mask_cosine_similarity"]
         shifted_cosine_cost = 1.0 - np.clip(shifted_cosine, 0.0, 1.0)
@@ -127,6 +153,8 @@ def shifted_iou_pairwise_cost_matrix(
         total_cost += mask_cosine_weight * shifted_cosine_cost
     if shifted_mask_cosine_weight > 0.0:
         total_cost += shifted_mask_cosine_weight * shifted_cosine_cost
+    if shifted_iou_shift_penalty_weight > 0.0:
+        total_cost += shifted_iou_shift_penalty_weight * shifted_iou_shift_penalty_cost
 
     gated = np.asarray(
         components.get("gated", total_cost >= 0.5 * large_cost), dtype=bool
@@ -163,7 +191,8 @@ def shifted_iou_pairwise_cost_matrix(
             "shifted_iou_cost": shifted_iou_cost,
             "shifted_iou_shift_y": shifted["shifted_iou_shift_y"],
             "shifted_iou_shift_x": shifted["shifted_iou_shift_x"],
-            "shifted_iou_shift_norm": shifted["shifted_iou_shift_norm"],
+            "shifted_iou_shift_norm": shifted_iou_shift_norm,
+            "shifted_iou_shift_penalty_cost": shifted_iou_shift_penalty_cost,
             "shifted_mask_cosine_similarity": shifted_cosine,
             "shifted_mask_cosine_cost": shifted_cosine_cost,
             "shifted_iou_radius": np.full_like(

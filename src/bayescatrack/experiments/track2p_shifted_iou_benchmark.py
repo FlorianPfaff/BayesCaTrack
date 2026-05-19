@@ -46,6 +46,24 @@ def _add_shifted_iou_options(parser: Any) -> None:
         default=0.0,
         help="Optional additive best-shift mask-cosine cost weight.",
     )
+    parser.add_argument(
+        "--shifted-iou-shift-penalty-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Optional cost weight for the residual local shift selected by shifted IoU. "
+            "This regularizes against large local shifts that recover overlap."
+        ),
+    )
+    parser.add_argument(
+        "--shifted-iou-shift-penalty-scale",
+        type=float,
+        default=None,
+        help=(
+            "Positive scale for the shifted-IoU residual-shift penalty. Defaults "
+            "to the shifted-IoU radius."
+        ),
+    )
 
 
 def _write_stdout(rows: list[dict[str, Any]], output_format: str) -> None:
@@ -73,6 +91,13 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("--shifted-iou-additive-weight must be non-negative")
     if args.shifted_mask_cosine_weight < 0.0:
         raise ValueError("--shifted-mask-cosine-weight must be non-negative")
+    if args.shifted_iou_shift_penalty_weight < 0.0:
+        raise ValueError("--shifted-iou-shift-penalty-weight must be non-negative")
+    if (
+        args.shifted_iou_shift_penalty_scale is not None
+        and args.shifted_iou_shift_penalty_scale <= 0.0
+    ):
+        raise ValueError("--shifted-iou-shift-penalty-scale must be strictly positive")
 
     config = _config_from_args(args)
     pairwise_cost_kwargs = dict(config.pairwise_cost_kwargs or {})
@@ -82,8 +107,15 @@ def main(argv: list[str] | None = None) -> int:
             "use_shifted_iou_for_iou_cost": int(args.shifted_iou_radius) > 0,
             "shifted_iou_weight": float(args.shifted_iou_additive_weight),
             "shifted_mask_cosine_weight": float(args.shifted_mask_cosine_weight),
+            "shifted_iou_shift_penalty_weight": float(
+                args.shifted_iou_shift_penalty_weight
+            ),
         }
     )
+    if args.shifted_iou_shift_penalty_scale is not None:
+        pairwise_cost_kwargs["shifted_iou_shift_penalty_scale"] = float(
+            args.shifted_iou_shift_penalty_scale
+        )
     config = replace(config, pairwise_cost_kwargs=pairwise_cost_kwargs)
 
     original_pairwise_cost = install_shifted_overlap_cost_patch()
@@ -97,6 +129,14 @@ def main(argv: list[str] | None = None) -> int:
         row["shifted_iou_radius"] = int(args.shifted_iou_radius)
         row["shifted_iou_additive_weight"] = float(args.shifted_iou_additive_weight)
         row["shifted_mask_cosine_weight"] = float(args.shifted_mask_cosine_weight)
+        row["shifted_iou_shift_penalty_weight"] = float(
+            args.shifted_iou_shift_penalty_weight
+        )
+        row["shifted_iou_shift_penalty_scale"] = (
+            ""
+            if args.shifted_iou_shift_penalty_scale is None
+            else float(args.shifted_iou_shift_penalty_scale)
+        )
     if args.output is not None:
         write_results(rows, Path(args.output), args.format)
     else:

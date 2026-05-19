@@ -46,11 +46,20 @@ def test_registered_shifted_iou_cost_kwargs_replace_exact_iou_term():
     assert kwargs["use_shifted_iou_for_iou_cost"] is True
     assert kwargs["shifted_iou_weight"] == 0.0
     assert kwargs["shifted_mask_cosine_weight"] == 0.0
+    assert kwargs["shifted_iou_shift_penalty_weight"] == 0.0
 
 
 def test_registered_shifted_iou_cost_kwargs_reject_negative_radius():
     with pytest.raises(ValueError, match="shifted_iou_radius"):
         global_assignment.registered_shifted_iou_cost_kwargs(shifted_iou_radius=-1)
+    with pytest.raises(ValueError, match="shifted_iou_shift_penalty_weight"):
+        global_assignment.registered_shifted_iou_cost_kwargs(
+            shifted_iou_shift_penalty_weight=-1.0
+        )
+    with pytest.raises(ValueError, match="shifted_iou_shift_penalty_scale"):
+        global_assignment.registered_shifted_iou_cost_kwargs(
+            shifted_iou_shift_penalty_scale=0.0
+        )
 
 
 def test_registered_shifted_iou_cost_recovers_local_residual_shift(

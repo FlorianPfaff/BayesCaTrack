@@ -2,6 +2,7 @@
 
 import numpy as np
 import numpy.testing as npt
+import pytest
 from bayescatrack import CalciumPlaneData
 from bayescatrack.association.pyrecest_global_assignment import (
     registered_iou_cost_kwargs,
@@ -110,6 +111,71 @@ def test_shifted_iou_patch_replaces_registered_iou_cost():
     assert components["shifted_iou"][0, 0] == 1.0
     assert components["iou_for_cost"][0, 0] == 1.0
     npt.assert_allclose(cost, np.zeros((1, 1)))
+
+
+def test_shifted_iou_shift_penalty_prefers_smaller_residual_shift():
+    reference = np.zeros((1, 10, 10), dtype=bool)
+    measurement = np.zeros((2, 10, 10), dtype=bool)
+    reference[0, 2:4, 2:4] = True
+    measurement[0, 2:4, 3:5] = True
+    measurement[1, 2:4, 4:6] = True
+
+    reference_plane = CalciumPlaneData(reference)
+    measurement_plane = CalciumPlaneData(measurement)
+    kwargs = registered_iou_cost_kwargs()
+    kwargs.update(
+        {
+            "shifted_iou_radius": 2,
+            "use_shifted_iou_for_iou_cost": True,
+            "shifted_iou_shift_penalty_weight": 1.0,
+            "shifted_iou_shift_penalty_scale": 1.0,
+            "return_components": True,
+        }
+    )
+
+    original_method = install_shifted_overlap_cost_patch()
+    try:
+        cost, components = reference_plane.build_pairwise_cost_matrix(
+            measurement_plane,
+            **kwargs,
+        )
+    finally:
+        CalciumPlaneData.build_pairwise_cost_matrix = original_method  # type: ignore[method-assign]
+
+    npt.assert_allclose(components["shifted_iou"], np.ones((1, 2)))
+    npt.assert_allclose(components["shifted_iou_shift_norm"], np.array([[1.0, 2.0]]))
+    npt.assert_allclose(
+        components["shifted_iou_shift_penalty_cost"],
+        np.array([[1.0, 2.0]]),
+    )
+    npt.assert_allclose(cost, np.array([[1.0, 2.0]]))
+
+
+def test_shifted_iou_shift_penalty_validates_weight_and_scale():
+    reference = np.zeros((1, 5, 5), dtype=bool)
+    measurement = np.zeros((1, 5, 5), dtype=bool)
+    reference[0, 1:3, 1:3] = True
+    measurement[0, 1:3, 2:4] = True
+
+    reference_plane = CalciumPlaneData(reference)
+    measurement_plane = CalciumPlaneData(measurement)
+    original_method = install_shifted_overlap_cost_patch()
+    try:
+        with pytest.raises(ValueError, match="shifted_iou_shift_penalty_weight"):
+            reference_plane.build_pairwise_cost_matrix(
+                measurement_plane,
+                shifted_iou_radius=1,
+                shifted_iou_shift_penalty_weight=-1.0,
+            )
+        with pytest.raises(ValueError, match="shifted_iou_shift_penalty_scale"):
+            reference_plane.build_pairwise_cost_matrix(
+                measurement_plane,
+                shifted_iou_radius=1,
+                shifted_iou_shift_penalty_weight=1.0,
+                shifted_iou_shift_penalty_scale=0.0,
+            )
+    finally:
+        CalciumPlaneData.build_pairwise_cost_matrix = original_method  # type: ignore[method-assign]
 
 
 def test_shifted_iou_patch_install_is_idempotent():
