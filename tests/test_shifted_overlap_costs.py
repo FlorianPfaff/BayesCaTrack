@@ -152,6 +152,7 @@ def test_shifted_iou_shift_penalty_prefers_smaller_residual_shift():
 
 
 def test_shifted_iou_shift_penalty_validates_weight_and_scale():
+    # pylint: disable=unexpected-keyword-arg
     reference = np.zeros((1, 5, 5), dtype=bool)
     measurement = np.zeros((1, 5, 5), dtype=bool)
     reference[0, 1:3, 1:3] = True
@@ -162,17 +163,21 @@ def test_shifted_iou_shift_penalty_validates_weight_and_scale():
     original_method = install_shifted_overlap_cost_patch()
     try:
         with pytest.raises(ValueError, match="shifted_iou_shift_penalty_weight"):
+            invalid_weight_kwargs = {
+                "shifted_iou_radius": 1,
+                "shifted_iou_shift_penalty_weight": -1.0,
+            }
             reference_plane.build_pairwise_cost_matrix(
-                measurement_plane,
-                shifted_iou_radius=1,
-                shifted_iou_shift_penalty_weight=-1.0,
+                measurement_plane, **invalid_weight_kwargs
             )
         with pytest.raises(ValueError, match="shifted_iou_shift_penalty_scale"):
+            invalid_scale_kwargs = {
+                "shifted_iou_radius": 1,
+                "shifted_iou_shift_penalty_weight": 1.0,
+                "shifted_iou_shift_penalty_scale": 0.0,
+            }
             reference_plane.build_pairwise_cost_matrix(
-                measurement_plane,
-                shifted_iou_radius=1,
-                shifted_iou_shift_penalty_weight=1.0,
-                shifted_iou_shift_penalty_scale=0.0,
+                measurement_plane, **invalid_scale_kwargs
             )
     finally:
         CalciumPlaneData.build_pairwise_cost_matrix = original_method  # type: ignore[method-assign]
