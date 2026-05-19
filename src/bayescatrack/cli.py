@@ -59,6 +59,10 @@ def _handle_benchmark(args: list[str]) -> int:
             help="Tune Track2p global-assignment solver priors inside LOSO folds",
         )
         subparsers.add_parser(
+            "track2p-loso-calibration",
+            help="Run configurable hard-negative LOSO calibrated global assignment",
+        )
+        subparsers.add_parser(
             "track2p-monotone-loso",
             help="Run LOSO calibrated global assignment with monotone ranking costs",
         )
@@ -127,6 +131,12 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_track2p_solver_prior_loso_main(args[1:]))
+    if args[0] == "track2p-loso-calibration":
+        from bayescatrack.experiments.track2p_loso_calibration import (
+            main as _track2p_loso_calibration_main,
+        )
+
+        return int(_track2p_loso_calibration_main(args[1:]))
     if args[0] == "track2p-monotone-loso":
         from bayescatrack.experiments.track2p_monotone_loso_calibration import (
             main as _track2p_monotone_loso_main,
