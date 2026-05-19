@@ -42,7 +42,12 @@ def test_configurable_loso_parser_builds_hard_negative_options_and_model_kwargs(
 
 def test_sklearn_probability_adapter_preserves_pairwise_tensor_shape():
     class DummyEstimator:
-        def fit(self, features, labels, **kwargs):
+        def __init__(self):
+            self.classes_ = None
+            self.n_fit_examples = 0
+            self.received_sample_weight = None
+
+        def fit(self, features, _labels, **kwargs):
             self.classes_ = np.array([0, 1], dtype=int)
             self.n_fit_examples = int(features.shape[0])
             self.received_sample_weight = kwargs.get("sample_weight")
