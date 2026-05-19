@@ -35,6 +35,7 @@ from bayescatrack.experiments.track2p_benchmark import (
     _load_reference_for_subject,
     _load_subject_sessions,
     _score_prediction_against_reference,
+    _assignment_registration_summary,
     _validate_reference_for_benchmark,
     _validate_reference_roi_indices,
     discover_subject_dirs,
@@ -239,6 +240,7 @@ def run_track2p_loso_calibration(
         base_scores = _score_prediction_against_reference(
             predicted_matrix, held_out.reference, config=config
         )
+        registration_summary = _assignment_registration_summary(assignment)
         positives = int(np.sum(training_labels))
         scores: dict[str, float | int | str] = {
             **base_scores,
@@ -266,6 +268,8 @@ def run_track2p_loso_calibration(
                     scores=scores,
                     n_sessions=held_out.reference.n_sessions,
                     reference_source=held_out.reference.source,
+                    registration_backend=registration_summary["registration_backend"],
+                    registration_transform_type=registration_summary["registration_transform_type"],
                 ),
                 training_examples=int(training_labels.shape[0]),
                 positive_examples=positives,

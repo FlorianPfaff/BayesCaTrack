@@ -23,6 +23,40 @@ def test_evaluate_track_table_prediction_scores_exact_tracks():
     assert evaluation.proportion_correct_by_horizon[2] == 0.5
 
 
+def test_evaluate_track_table_prediction_ignores_incomplete_tracks_for_ct_metrics():
+    ground_truth = TrackTable(
+        session_names=("s1", "s2", "s3"),
+        tracks=np.array([[1, 2, 3], [4, -1, 6]], dtype=int),
+    )
+    prediction = TrackTable(
+        session_names=("s1", "s2", "s3"),
+        tracks=np.array([[1, 2, 3]], dtype=int),
+    )
+
+    evaluation = evaluate_track_table_prediction(ground_truth, prediction)
+
+    assert evaluation.n_exact_full_track_matches == 1
+    assert evaluation.complete_tracks == 1.0
+    assert evaluation.proportion_correct_by_horizon == {2: 1.0, 3: 1.0}
+
+
+def test_evaluate_track_table_prediction_returns_zero_when_no_complete_gt_tracks():
+    ground_truth = TrackTable(
+        session_names=("s1", "s2"),
+        tracks=np.array([[1, -1], [2, -1]], dtype=int),
+    )
+    prediction = TrackTable(
+        session_names=("s1", "s2"),
+        tracks=np.array([[1, 3]], dtype=int),
+    )
+
+    evaluation = evaluate_track_table_prediction(ground_truth, prediction)
+
+    assert evaluation.n_exact_full_track_matches == 0
+    assert evaluation.complete_tracks == 0.0
+    assert evaluation.proportion_correct_by_horizon == {2: 0.0}
+
+
 def test_load_track2p_ground_truth_csv_supports_semicolon_encoded_rows(tmp_path):
     ground_truth_path = tmp_path / "ground_truth.csv"
     ground_truth_path.write_text(

@@ -46,10 +46,18 @@ def registered_soft_iou_cost_kwargs(
     }
 
 
+def install_soft_overlap_cost_patch() -> Any:
+    """Install soft-overlap cost extensions and return the previous method."""
+
+    previous = CalciumPlaneData.build_pairwise_cost_matrix
+    _install_cost_matrix_patch()
+    return previous
+
+
 def install_soft_overlap_costs() -> None:
     """Install soft-overlap cost extensions and cost presets."""
 
-    _install_cost_matrix_patch()
+    install_soft_overlap_cost_patch()
     _install_global_assignment_preset()
     _install_registration_qa_preset()
 
@@ -380,4 +388,8 @@ def _dilate_binary_mask_stack(masks: np.ndarray, radius: int) -> np.ndarray:
     return dilated
 
 
-__all__ = ["install_soft_overlap_costs", "registered_soft_iou_cost_kwargs"]
+__all__ = [
+    "install_soft_overlap_cost_patch",
+    "install_soft_overlap_costs",
+    "registered_soft_iou_cost_kwargs",
+]

@@ -97,7 +97,11 @@ class CalciumPlaneData:
             probabilities = np.asarray(self.cell_probabilities, dtype=float)
             if probabilities.shape != (n_rois,):
                 raise ValueError("cell_probabilities must have shape (n_roi,)")
-            object.__setattr__(self, "cell_probabilities", probabilities)
+            object.__setattr__(
+                self,
+                "cell_probabilities",
+                _sanitize_cell_probabilities(probabilities),
+            )
 
         if self.roi_indices is not None:
             roi_indices = np.asarray(self.roi_indices, dtype=int)
@@ -343,16 +347,26 @@ class CalciumPlaneData:
         else:
             roi_feature_cost = zero_cost
 
+        cell_probabilities_self = _sanitize_cell_probabilities(
+            self.cell_probabilities
+        )
+        cell_probabilities_other = _sanitize_cell_probabilities(
+            other.cell_probabilities
+        )
         if (
             (cell_probability_weight > 0.0 or return_components)
-            and self.cell_probabilities is not None
-            and other.cell_probabilities is not None
+            and cell_probabilities_self is not None
+            and cell_probabilities_other is not None
         ):
             probabilities_self = np.clip(
-                self.cell_probabilities, similarity_epsilon, 1.0
+                cell_probabilities_self,
+                similarity_epsilon,
+                1.0,
             )
             probabilities_other = np.clip(
-                other.cell_probabilities, similarity_epsilon, 1.0
+                cell_probabilities_other,
+                similarity_epsilon,
+                1.0,
             )
             cell_probability_cost = -0.5 * (
                 np.log(probabilities_self[:, None])
@@ -776,11 +790,13 @@ def load_suite2p_plane(
     if fov is None and roi_masks:
         fov = np.asarray(roi_mask_array, dtype=float).sum(axis=0)
     selected_indices_array = np.asarray(selected_indices, dtype=int)
-    probability_array = (
-        np.asarray(cell_probabilities, dtype=float)
-        if roi_masks
-        else np.zeros((0,), dtype=float)
-    )
+    probability_array: np.ndarray | None = None
+    if iscell is not None:
+        probability_array = (
+            np.asarray(cell_probabilities, dtype=float)
+            if roi_masks
+            else np.zeros((0,), dtype=float)
+        )
     feature_arrays = {
         key: np.asarray(value, dtype=float)
         for key, value in collected_features.items()
@@ -1264,6 +1280,29 @@ def _ensure_finite_cost_matrix(
     if np.any(invalid):
         sanitized[invalid] = large_cost
     sanitized[sanitized < 0.0] = 0.0
+    return sanitized
+
+
+def _sanitize_cell_probabilities(
+    probabilities: np.ndarray | None,
+) -> np.ndarray | None:
+    """Return finite Suite2p cell probabilities or ``None`` when unavailable.
+
+    Suite2p's ``iscell.npy`` is optional in some Track2p-style folders.  The
+    loader used to represent missing probabilities as ``NaN`` values, which made
+    the optional cell-probability term contaminate every pairwise association
+    cost.  Missing/non-finite entries are treated as neutral evidence instead:
+    a probability of one contributes zero log-cost for that ROI.
+    """
+
+    if probabilities is None:
+        return None
+    probabilities = np.asarray(probabilities, dtype=float)
+    finite = np.isfinite(probabilities)
+    if not np.any(finite):
+        return None
+    sanitized = np.array(probabilities, dtype=float, copy=True)
+    sanitized[~finite] = 1.0
     return sanitized
 
 

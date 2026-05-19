@@ -480,11 +480,13 @@ def complete_tracks_score(ground_truth: TrackTable, prediction: TrackTable) -> f
     Duplicate predicted tracks therefore still count as false positives.
     """
     prediction = _align_prediction_to_ground_truth(ground_truth, prediction)
-    ground_truth_rows = _row_counter(ground_truth)
-    prediction_rows = _row_counter(prediction)
+    ground_truth_rows = _row_counter(ground_truth, require_complete=True)
+    prediction_rows = _row_counter(prediction, require_complete=True)
     true_positives = _multiset_intersection_size(ground_truth_rows, prediction_rows)
-    false_positives = prediction.n_tracks - true_positives
-    false_negatives = ground_truth.n_tracks - true_positives
+    predicted_complete_tracks = sum(prediction_rows.values())
+    ground_truth_complete_tracks = sum(ground_truth_rows.values())
+    false_positives = predicted_complete_tracks - true_positives
+    false_negatives = ground_truth_complete_tracks - true_positives
     denominator = 2 * true_positives + false_positives + false_negatives
     if denominator == 0:
         return 0.0
@@ -498,12 +500,13 @@ def proportion_correct_by_horizon(
     """Return the fraction of GT tracks reconstructed correctly up to each horizon."""
     prediction = _align_prediction_to_ground_truth(ground_truth, prediction)
     result: dict[int, float] = {}
-    denominator = ground_truth.n_tracks
-    if denominator == 0:
-        return {horizon: 0.0 for horizon in range(2, ground_truth.n_sessions + 1)}
 
     for horizon in range(2, ground_truth.n_sessions + 1):
-        ground_truth_rows = _row_counter(ground_truth, horizon=horizon)
+        ground_truth_rows = _row_counter(
+            ground_truth,
+            horizon=horizon,
+            require_complete=True,
+        )
         prediction_rows = _row_counter(
             prediction,
             horizon=horizon,
@@ -513,6 +516,10 @@ def proportion_correct_by_horizon(
             ground_truth_rows,
             prediction_rows,
         )
+        denominator = sum(ground_truth_rows.values())
+        if denominator == 0:
+            result[horizon] = 0.0
+            continue
         result[horizon] = correctly_reconstructed / denominator
     return result
 
@@ -524,8 +531,8 @@ def evaluate_track_table_prediction(
     """Compute the Track2p benchmark metrics for one prediction."""
     prediction = _align_prediction_to_ground_truth(ground_truth, prediction)
     exact_matches = _multiset_intersection_size(
-        _row_counter(ground_truth),
-        _row_counter(prediction),
+        _row_counter(ground_truth, require_complete=True),
+        _row_counter(prediction, require_complete=True),
     )
     return TrackEvaluation(
         complete_tracks=complete_tracks_score(ground_truth, prediction),

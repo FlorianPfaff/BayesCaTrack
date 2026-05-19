@@ -63,6 +63,57 @@ def test_complete_track_and_pairwise_scoring():
     np.testing.assert_array_equal(track_lengths(predicted), np.array([3, 2, 3]))
 
 
+def test_duplicate_predicted_tracks_are_counted_as_extra_predictions():
+    reference = np.array(
+        [
+            [0, 10, 20],
+            [1, 11, 21],
+        ],
+        dtype=object,
+    )
+    predicted = np.array(
+        [
+            [0, 10, 20],
+            [0, 10, 20],
+            [1, 11, 21],
+            [2, 12, 22],
+        ],
+        dtype=object,
+    )
+
+    complete_scores = score_complete_tracks(predicted, reference)
+    assert complete_scores["complete_track_true_positives"] == 2
+    assert complete_scores["complete_track_false_positives"] == 2
+    assert complete_scores["complete_track_false_negatives"] == 0
+    assert complete_scores["complete_tracks"] == 4
+    assert complete_scores["complete_track_precision"] == pytest.approx(0.5)
+    assert complete_scores["complete_track_recall"] == pytest.approx(1.0)
+    assert complete_scores["complete_track_f1"] == pytest.approx(2 / 3)
+
+    pairwise_scores = score_pairwise_tracks(predicted, reference)
+    assert pairwise_scores["pairwise_true_positives"] == 4
+    assert pairwise_scores["pairwise_false_positives"] == 4
+    assert pairwise_scores["pairwise_false_negatives"] == 0
+    assert pairwise_scores["pairwise_links"] == 8
+    assert pairwise_scores["pairwise_precision"] == pytest.approx(0.5)
+    assert pairwise_scores["pairwise_recall"] == pytest.approx(1.0)
+    assert pairwise_scores["pairwise_f1"] == pytest.approx(2 / 3)
+
+    matrix_scores = score_track_matrices(predicted, reference)
+    assert matrix_scores["complete_track_false_positives"] == 2
+    assert matrix_scores["pairwise_false_positives"] == 4
+
+    benchmark_scores = score_track_matrix_against_reference(
+        predicted,
+        Track2pReference(
+            session_names=("day0", "day1", "day2"),
+            suite2p_indices=reference,
+        ),
+    )
+    assert benchmark_scores["complete_track_false_positives"] == 2
+    assert benchmark_scores["pairwise_false_positives"] == 4
+
+
 def test_fragmentation_scores_reference_identities_split_across_predicted_tracks():
     reference = np.array(
         [

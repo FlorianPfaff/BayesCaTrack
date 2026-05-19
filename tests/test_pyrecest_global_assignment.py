@@ -38,6 +38,52 @@ def test_registered_pairwise_costs_penalize_empty_registered_masks(
     npt.assert_array_equal(pairwise_costs[(0, 1)], np.array([[1.0e6]]))
 
 
+def test_registered_soft_iou_cost_kwargs_replace_exact_iou_term():
+    kwargs = global_assignment._cost_kwargs_for_method(  # pylint: disable=protected-access
+        "registered-soft-iou"
+    )
+
+    assert kwargs["iou_weight"] == 0.0
+    assert kwargs["soft_iou_weight"] == 1.0
+    assert kwargs["distance_transform_overlap_weight"] > 0.0
+    assert kwargs["mask_cosine_weight"] == 0.0
+
+
+def test_registered_soft_iou_cost_installs_and_restores_soft_overlap_patch(
+    make_track2p_session,
+    monkeypatch,
+):
+    reference_masks = np.zeros((1, 10, 10), dtype=bool)
+    reference_masks[0, 2:4, 2:4] = True
+    measurement_masks = np.zeros_like(reference_masks)
+    measurement_masks[0, 2:4, 4:6] = True
+
+    reference = make_track2p_session("2024-05-01_a", reference_masks)
+    measurement = make_track2p_session("2024-05-02_a", measurement_masks)
+
+    def _fake_register_plane_pair(*_args, **_kwargs):
+        return measurement.plane_data
+
+    monkeypatch.setattr(
+        global_assignment, "register_plane_pair", _fake_register_plane_pair
+    )
+    previous_pairwise_cost_method = (
+        global_assignment.CalciumPlaneData.build_pairwise_cost_matrix
+    )
+
+    pairwise_costs = global_assignment.build_registered_pairwise_costs(
+        [reference, measurement],
+        max_gap=1,
+        cost="registered-soft-iou",
+    )
+
+    assert np.isfinite(pairwise_costs[(0, 1)][0, 0])
+    assert (
+        global_assignment.CalciumPlaneData.build_pairwise_cost_matrix
+        is previous_pairwise_cost_method
+    )
+
+
 def test_registered_shifted_iou_cost_kwargs_replace_exact_iou_term():
     kwargs = global_assignment.registered_shifted_iou_cost_kwargs(shifted_iou_radius=3)
 

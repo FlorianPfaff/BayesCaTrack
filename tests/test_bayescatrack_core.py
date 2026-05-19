@@ -2,7 +2,7 @@ import json
 
 import numpy as np
 import numpy.testing as npt
-from bayescatrack import CalciumPlaneData
+from bayescatrack import CalciumPlaneData, load_suite2p_plane
 from bayescatrack.association.calibrated_costs import (
     DEFAULT_ASSOCIATION_FEATURES,
     LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
@@ -110,6 +110,83 @@ def test_local_evidence_calibration_feature_preset_enables_components():
 
     assert default_kwargs is None
     assert local_kwargs == {"patch_radius": 3, "local_evidence_components": True}
+
+
+def test_cell_probability_cost_ignores_non_finite_probabilities():
+    roi_masks: np.ndarray = np.zeros((2, 4, 4), dtype=bool)
+    roi_masks[0, 0:2, 0:2] = True
+    roi_masks[1, 2:4, 2:4] = True
+
+    reference = CalciumPlaneData(
+        roi_masks=roi_masks,
+        cell_probabilities=np.array([np.nan, 0.25], dtype=float),
+    )
+    measurement = CalciumPlaneData(
+        roi_masks=roi_masks.copy(),
+        cell_probabilities=np.array([0.5, np.inf], dtype=float),
+    )
+
+    npt.assert_allclose(reference.cell_probabilities, np.array([1.0, 0.25]))
+    npt.assert_allclose(measurement.cell_probabilities, np.array([0.5, 1.0]))
+
+    cost, components = reference.build_pairwise_cost_matrix(
+        measurement,
+        centroid_weight=0.0,
+        iou_weight=0.0,
+        mask_cosine_weight=0.0,
+        area_weight=0.0,
+        roi_feature_weight=0.0,
+        cell_probability_weight=1.0,
+        return_components=True,
+    )
+
+    assert np.all(np.isfinite(cost))
+    npt.assert_allclose(cost, components["cell_probability_cost"])
+    assert cost[0, 1] == 0.0
+    assert cost[1, 0] > 0.0
+
+
+def test_suite2p_loader_marks_missing_iscell_probabilities_unavailable(tmp_path):
+    plane_dir = tmp_path / "suite2p" / "plane0"
+    plane_dir.mkdir(parents=True)
+
+    stat = np.empty(2, dtype=object)
+    stat[0] = {
+        "ypix": np.array([0, 0, 1], dtype=int),
+        "xpix": np.array([0, 1, 0], dtype=int),
+        "lam": np.ones(3, dtype=float),
+    }
+    stat[1] = {
+        "ypix": np.array([2, 2, 3], dtype=int),
+        "xpix": np.array([2, 3, 2], dtype=int),
+        "lam": np.ones(3, dtype=float),
+    }
+    np.save(plane_dir / "stat.npy", stat)
+    np.save(
+        plane_dir / "ops.npy",
+        {"Ly": 4, "Lx": 4, "meanImg": np.zeros((4, 4), dtype=float)},
+    )
+
+    plane = load_suite2p_plane(
+        plane_dir,
+        load_traces=False,
+        load_spike_traces=False,
+        load_neuropil_traces=False,
+    )
+
+    assert plane.n_rois == 2
+    assert plane.cell_probabilities is None
+
+    cost = plane.build_pairwise_cost_matrix(
+        plane,
+        centroid_weight=0.0,
+        iou_weight=0.0,
+        mask_cosine_weight=0.0,
+        area_weight=0.0,
+        roi_feature_weight=0.0,
+        cell_probability_weight=1.0,
+    )
+    npt.assert_allclose(cost, np.zeros((2, 2), dtype=float))
 
 
 def test_cli_summary_and_export(tmp_path):

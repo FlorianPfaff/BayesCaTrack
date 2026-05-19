@@ -66,6 +66,7 @@ class Track2pBenchmarkConfig:
     cost: AssociationCost = "registered-iou"
     max_gap: int = 2
     transform_type: str = "affine"
+    allow_fov_affine_fallback: bool = False
     start_cost: float = 5.0
     end_cost: float = 5.0
     gap_penalty: float = 1.0
@@ -93,9 +94,11 @@ class SubjectBenchmarkResult:
     scores: Mapping[str, float | int | str]
     n_sessions: int
     reference_source: str
+    registration_backend: str | None = None
+    registration_transform_type: str | None = None
 
     def to_dict(self) -> dict[str, float | int | str]:
-        return {
+        row: dict[str, float | int | str] = {
             "subject": self.subject,
             "variant": self.variant,
             "method": self.method,
@@ -103,6 +106,11 @@ class SubjectBenchmarkResult:
             "reference_source": self.reference_source,
             **dict(self.scores),
         }
+        if self.registration_backend is not None:
+            row["registration_backend"] = self.registration_backend
+        if self.registration_transform_type is not None:
+            row["registration_transform_type"] = self.registration_transform_type
+        return row
 
 
 class ProgressReporter:
@@ -168,7 +176,7 @@ def run_track2p_benchmark(
             _validate_reference_roi_indices(
                 reference, _load_subject_sessions(subject_dir, config)
             )
-        predicted_matrix, variant = _predict_subject_tracks(
+        predicted_matrix, variant, registration_summary = _predict_subject_tracks(
             subject_dir, config, reference=reference
         )
         scores = _score_prediction_against_reference(
@@ -182,6 +190,8 @@ def run_track2p_benchmark(
                 scores=scores,
                 n_sessions=reference.n_sessions,
                 reference_source=reference.source,
+                registration_backend=registration_summary["registration_backend"],
+                registration_transform_type=registration_summary["registration_transform_type"],
             )
         )
     return results
@@ -206,6 +216,7 @@ def format_benchmark_table(rows: Sequence[dict[str, float | int | str]]) -> str:
 
     columns = [
         "variant",
+        "registration_backend",
         "pairwise_f1",
         "complete_track_f1",
         "pairwise_precision",
@@ -333,8 +344,19 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
-        help="Track2p registration transform type",
+        choices=("affine", "rigid", "fov-translation", "fov-affine", "none"),
+        help=(
+            "Registration transform type; 'affine' and 'rigid' require "
+            "Track2p/elastix unless fallback is explicit"
+        ),
+    )
+    parser.add_argument(
+        "--allow-fov-affine-fallback",
+        action="store_true",
+        help=(
+            "Allow transform_type='affine' to fall back to BayesCaTrack's NumPy "
+            "FOV-affine backend when Track2p/elastix is unavailable"
+        ),
     )
     parser.add_argument(
         "--start-cost", type=float, default=5.0, help="PyRecEst track start cost"
@@ -446,7 +468,7 @@ def _predict_subject_tracks(
     config: Track2pBenchmarkConfig,
     *,
     reference: Track2pReference | None = None,
-) -> tuple[np.ndarray, str]:
+) -> tuple[np.ndarray, str, Mapping[str, str]]:
     if config.method == "track2p-baseline":
         track2p_dir = subject_dir / "track2p"
         if track2p_dir.exists():
@@ -462,7 +484,11 @@ def _predict_subject_tracks(
                 weighted_masks=config.weighted_masks,
                 exclude_overlapping_pixels=config.exclude_overlapping_pixels,
             )
-        return normalize_track_matrix(baseline.suite2p_indices), "Track2p default"
+        return (
+            normalize_track_matrix(baseline.suite2p_indices),
+            "Track2p default",
+            _not_applicable_registration_summary(),
+        )
 
     if config.method == "oracle-gt-links":
         if reference is None:
@@ -474,6 +500,7 @@ def _predict_subject_tracks(
                 seed_session=config.seed_session,
             ),
             "Oracle GT consecutive links",
+            _not_applicable_registration_summary(),
         )
 
     if config.method != "global-assignment":
@@ -482,7 +509,7 @@ def _predict_subject_tracks(
     sessions = _load_subject_sessions(subject_dir, config)
     assignment = solve_configured_global_assignment(sessions, config)
     predicted = tracks_to_suite2p_index_matrix(assignment.result.tracks, sessions)
-    return predicted, _variant_name(config.cost)
+    return predicted, _variant_name(config.cost), _assignment_registration_summary(assignment)
 
 
 def oracle_ground_truth_link_tracks(
@@ -540,6 +567,7 @@ def solve_configured_global_assignment(
         cost=config.cost if cost is None else cost,
         calibrated_model=calibrated_model,
         transform_type=config.transform_type,
+        allow_fov_affine_fallback=config.allow_fov_affine_fallback,
         start_cost=config.start_cost,
         end_cost=config.end_cost,
         gap_penalty=config.gap_penalty,
@@ -564,6 +592,29 @@ def _variant_name(cost: AssociationCost) -> str:
     if cost == "calibrated":
         return "Calibrated costs + global assignment"
     return "BayesCaTrack costs + global assignment"
+
+
+def _assignment_registration_summary(assignment: GlobalAssignmentRun) -> dict[str, str]:
+    return {
+        "registration_backend": _summarize_edge_metadata(assignment.registration_backends),
+        "registration_transform_type": _summarize_edge_metadata(
+            assignment.registration_transform_types
+        ),
+    }
+
+
+def _not_applicable_registration_summary() -> dict[str, str]:
+    return {
+        "registration_backend": "not_applicable",
+        "registration_transform_type": "not_applicable",
+    }
+
+
+def _summarize_edge_metadata(values: Mapping[tuple[int, int], str] | None) -> str:
+    if not values:
+        return "not_applicable"
+    unique_values = sorted({str(value) for value in values.values()})
+    return unique_values[0] if len(unique_values) == 1 else "mixed:" + ",".join(unique_values)
 
 
 # pylint: disable=too-many-return-statements,too-many-branches
@@ -978,6 +1029,7 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
         cost=args.cost,
         max_gap=args.max_gap,
         transform_type=args.transform_type,
+        allow_fov_affine_fallback=args.allow_fov_affine_fallback,
         start_cost=args.start_cost,
         end_cost=args.end_cost,
         gap_penalty=args.gap_penalty,
@@ -1017,6 +1069,8 @@ def _csv_fieldnames(rows: Sequence[dict[str, float | int | str]]) -> list[str]:
         "method",
         "n_sessions",
         "reference_source",
+        "registration_backend",
+        "registration_transform_type",
         "pairwise_f1",
         "complete_track_f1",
         "pairwise_precision",
