@@ -40,6 +40,91 @@ def _write_result_csv(path, rows):
         writer.writerows(rows)
 
 
+def _aggregate_summary_row(
+    approach: str,
+    *,
+    pairwise_f1_macro: float,
+    pairwise_f1_micro: float,
+    complete_track_f1_macro: float,
+    complete_track_f1_micro: float,
+    subjects: int = 2,
+    pairwise_f1_sd: float = 0.02,
+    complete_track_f1_sd: float = 0.04,
+) -> dict[str, float | int | str]:
+    return {
+        "approach": approach,
+        "subjects": subjects,
+        "pairwise_f1_macro": pairwise_f1_macro,
+        "pairwise_f1_sd": pairwise_f1_sd,
+        "pairwise_f1_micro": pairwise_f1_micro,
+        "complete_track_f1_macro": complete_track_f1_macro,
+        "complete_track_f1_sd": complete_track_f1_sd,
+        "complete_track_f1_micro": complete_track_f1_micro,
+    }
+
+
+def _subject_result_row(
+    approach: str,
+    subject: str,
+    *,
+    pairwise_f1: str,
+    complete_track_f1: str,
+    pairwise_counts: tuple[int, int, int],
+    complete_track_counts: tuple[int, int, int],
+) -> dict[str, str]:
+    pairwise_tp, pairwise_fp, pairwise_fn = pairwise_counts
+    complete_tp, complete_fp, complete_fn = complete_track_counts
+    return {
+        "approach": approach,
+        "subject": subject,
+        "pairwise_f1": pairwise_f1,
+        "complete_track_f1": complete_track_f1,
+        "pairwise_true_positives": str(pairwise_tp),
+        "pairwise_false_positives": str(pairwise_fp),
+        "pairwise_false_negatives": str(pairwise_fn),
+        "complete_track_true_positives": str(complete_tp),
+        "complete_track_false_positives": str(complete_fp),
+        "complete_track_false_negatives": str(complete_fn),
+    }
+
+
+def _subject_comparison_rows() -> list[dict[str, str]]:
+    return [
+        _subject_result_row(
+            "Track2p",
+            "jm039",
+            pairwise_f1="0.90",
+            complete_track_f1="0.80",
+            pairwise_counts=(9, 1, 1),
+            complete_track_counts=(8, 2, 2),
+        ),
+        _subject_result_row(
+            "BayesCaTrack",
+            "jm039",
+            pairwise_f1="0.60",
+            complete_track_f1="0.50",
+            pairwise_counts=(6, 2, 6),
+            complete_track_counts=(5, 3, 7),
+        ),
+        _subject_result_row(
+            "Track2p",
+            "jm046",
+            pairwise_f1="0.70",
+            complete_track_f1="0.40",
+            pairwise_counts=(7, 3, 3),
+            complete_track_counts=(4, 6, 6),
+        ),
+        _subject_result_row(
+            "BayesCaTrack",
+            "jm046",
+            pairwise_f1="0.75",
+            complete_track_f1="0.30",
+            pairwise_counts=(8, 2, 3),
+            complete_track_counts=(3, 7, 7),
+        ),
+    ]
+
+
 def test_aggregate_rows_reports_macro_and_micro_f1(tmp_path):
     result_path = tmp_path / "approach.csv"
     _write_result_csv(
@@ -85,26 +170,24 @@ def test_aggregate_rows_reports_macro_and_micro_f1(tmp_path):
 
 def test_markdown_table_highlights_best_cells():
     rows: list[dict[str, float | int | str]] = [
-        {
-            "approach": "Base",
-            "subjects": 10,
-            "pairwise_f1_macro": 0.60,
-            "pairwise_f1_sd": 0.01,
-            "pairwise_f1_micro": 0.50,
-            "complete_track_f1_macro": 0.40,
-            "complete_track_f1_sd": 0.03,
-            "complete_track_f1_micro": 0.20,
-        },
-        {
-            "approach": "Bayes",
-            "subjects": 10,
-            "pairwise_f1_macro": 0.80,
-            "pairwise_f1_sd": 0.02,
-            "pairwise_f1_micro": 0.90,
-            "complete_track_f1_macro": 0.70,
-            "complete_track_f1_sd": 0.04,
-            "complete_track_f1_micro": 0.88,
-        },
+        _aggregate_summary_row(
+            "Base",
+            subjects=10,
+            pairwise_f1_macro=0.60,
+            pairwise_f1_sd=0.01,
+            pairwise_f1_micro=0.50,
+            complete_track_f1_macro=0.40,
+            complete_track_f1_sd=0.03,
+            complete_track_f1_micro=0.20,
+        ),
+        _aggregate_summary_row(
+            "Bayes",
+            subjects=10,
+            pairwise_f1_macro=0.80,
+            pairwise_f1_micro=0.90,
+            complete_track_f1_macro=0.70,
+            complete_track_f1_micro=0.88,
+        ),
     ]
 
     table = format_markdown_table(rows, highlight_best=True)
@@ -117,26 +200,22 @@ def test_markdown_table_highlights_best_cells():
 
 def test_best_summary_names_best_approach_for_main_metrics():
     rows: list[dict[str, float | int | str]] = [
-        {
-            "approach": "Base",
-            "subjects": 2,
-            "pairwise_f1_macro": 0.60,
-            "pairwise_f1_sd": 0.01,
-            "pairwise_f1_micro": 0.50,
-            "complete_track_f1_macro": 0.40,
-            "complete_track_f1_sd": 0.03,
-            "complete_track_f1_micro": 0.20,
-        },
-        {
-            "approach": "Tuned",
-            "subjects": 2,
-            "pairwise_f1_macro": 0.80,
-            "pairwise_f1_sd": 0.02,
-            "pairwise_f1_micro": 0.90,
-            "complete_track_f1_macro": 0.70,
-            "complete_track_f1_sd": 0.04,
-            "complete_track_f1_micro": 0.88,
-        },
+        _aggregate_summary_row(
+            "Base",
+            pairwise_f1_macro=0.60,
+            pairwise_f1_sd=0.01,
+            pairwise_f1_micro=0.50,
+            complete_track_f1_macro=0.40,
+            complete_track_f1_sd=0.03,
+            complete_track_f1_micro=0.20,
+        ),
+        _aggregate_summary_row(
+            "Tuned",
+            pairwise_f1_macro=0.80,
+            pairwise_f1_micro=0.90,
+            complete_track_f1_macro=0.70,
+            complete_track_f1_micro=0.88,
+        ),
     ]
 
     summary = format_best_summary(rows)
@@ -148,36 +227,29 @@ def test_best_summary_names_best_approach_for_main_metrics():
 
 def test_reference_gap_summary_reports_best_non_reference_gap():
     rows: list[dict[str, float | int | str]] = [
-        {
-            "approach": "Track2p",
-            "subjects": 2,
-            "pairwise_f1_macro": 0.95,
-            "pairwise_f1_sd": 0.01,
-            "pairwise_f1_micro": 0.96,
-            "complete_track_f1_macro": 0.90,
-            "complete_track_f1_sd": 0.03,
-            "complete_track_f1_micro": 0.91,
-        },
-        {
-            "approach": "Global-IoU",
-            "subjects": 2,
-            "pairwise_f1_macro": 0.55,
-            "pairwise_f1_sd": 0.02,
-            "pairwise_f1_micro": 0.56,
-            "complete_track_f1_macro": 0.20,
-            "complete_track_f1_sd": 0.04,
-            "complete_track_f1_micro": 0.22,
-        },
-        {
-            "approach": "Tuned",
-            "subjects": 2,
-            "pairwise_f1_macro": 0.70,
-            "pairwise_f1_sd": 0.02,
-            "pairwise_f1_micro": 0.72,
-            "complete_track_f1_macro": 0.60,
-            "complete_track_f1_sd": 0.04,
-            "complete_track_f1_micro": 0.62,
-        },
+        _aggregate_summary_row(
+            "Track2p",
+            pairwise_f1_macro=0.95,
+            pairwise_f1_sd=0.01,
+            pairwise_f1_micro=0.96,
+            complete_track_f1_macro=0.90,
+            complete_track_f1_sd=0.03,
+            complete_track_f1_micro=0.91,
+        ),
+        _aggregate_summary_row(
+            "Global-IoU",
+            pairwise_f1_macro=0.55,
+            pairwise_f1_micro=0.56,
+            complete_track_f1_macro=0.20,
+            complete_track_f1_micro=0.22,
+        ),
+        _aggregate_summary_row(
+            "Tuned",
+            pairwise_f1_macro=0.70,
+            pairwise_f1_micro=0.72,
+            complete_track_f1_macro=0.60,
+            complete_track_f1_micro=0.62,
+        ),
     ]
 
     summary = format_reference_gap_summary(rows, reference_approach="Track2p")
@@ -189,26 +261,22 @@ def test_reference_gap_summary_reports_best_non_reference_gap():
 
 def test_reference_gap_csv_is_machine_readable(tmp_path):
     rows: list[dict[str, float | int | str]] = [
-        {
-            "approach": "Track2p",
-            "subjects": 2,
-            "pairwise_f1_macro": 0.95,
-            "pairwise_f1_sd": 0.01,
-            "pairwise_f1_micro": 0.96,
-            "complete_track_f1_macro": 0.90,
-            "complete_track_f1_sd": 0.03,
-            "complete_track_f1_micro": 0.91,
-        },
-        {
-            "approach": "Tuned",
-            "subjects": 2,
-            "pairwise_f1_macro": 0.70,
-            "pairwise_f1_sd": 0.02,
-            "pairwise_f1_micro": 0.72,
-            "complete_track_f1_macro": 0.60,
-            "complete_track_f1_sd": 0.04,
-            "complete_track_f1_micro": 0.62,
-        },
+        _aggregate_summary_row(
+            "Track2p",
+            pairwise_f1_macro=0.95,
+            pairwise_f1_sd=0.01,
+            pairwise_f1_micro=0.96,
+            complete_track_f1_macro=0.90,
+            complete_track_f1_sd=0.03,
+            complete_track_f1_micro=0.91,
+        ),
+        _aggregate_summary_row(
+            "Tuned",
+            pairwise_f1_macro=0.70,
+            pairwise_f1_micro=0.72,
+            complete_track_f1_macro=0.60,
+            complete_track_f1_micro=0.62,
+        ),
     ]
 
     gap_rows = build_reference_gap_rows(rows, reference_approach="Track2p")
@@ -228,36 +296,29 @@ def test_reference_gap_csv_is_machine_readable(tmp_path):
 
 def test_metric_csv_reports_ranks_and_reference_gaps(tmp_path):
     rows: list[dict[str, float | int | str]] = [
-        {
-            "approach": "Track2p",
-            "subjects": 2,
-            "pairwise_f1_macro": 0.95,
-            "pairwise_f1_sd": 0.01,
-            "pairwise_f1_micro": 0.96,
-            "complete_track_f1_macro": 0.90,
-            "complete_track_f1_sd": 0.03,
-            "complete_track_f1_micro": 0.91,
-        },
-        {
-            "approach": "Tuned-A",
-            "subjects": 2,
-            "pairwise_f1_macro": 0.80,
-            "pairwise_f1_sd": 0.02,
-            "pairwise_f1_micro": 0.72,
-            "complete_track_f1_macro": 0.60,
-            "complete_track_f1_sd": 0.04,
-            "complete_track_f1_micro": 0.62,
-        },
-        {
-            "approach": "Tuned-B",
-            "subjects": 2,
-            "pairwise_f1_macro": 0.80,
-            "pairwise_f1_sd": 0.02,
-            "pairwise_f1_micro": 0.70,
-            "complete_track_f1_macro": 0.58,
-            "complete_track_f1_sd": 0.04,
-            "complete_track_f1_micro": 0.60,
-        },
+        _aggregate_summary_row(
+            "Track2p",
+            pairwise_f1_macro=0.95,
+            pairwise_f1_sd=0.01,
+            pairwise_f1_micro=0.96,
+            complete_track_f1_macro=0.90,
+            complete_track_f1_sd=0.03,
+            complete_track_f1_micro=0.91,
+        ),
+        _aggregate_summary_row(
+            "Tuned-A",
+            pairwise_f1_macro=0.80,
+            pairwise_f1_micro=0.72,
+            complete_track_f1_macro=0.60,
+            complete_track_f1_micro=0.62,
+        ),
+        _aggregate_summary_row(
+            "Tuned-B",
+            pairwise_f1_macro=0.80,
+            pairwise_f1_micro=0.70,
+            complete_track_f1_macro=0.58,
+            complete_track_f1_micro=0.60,
+        ),
     ]
 
     metric_rows = build_metric_rows(rows, reference_approach="Track2p")
@@ -284,56 +345,7 @@ def test_metric_csv_reports_ranks_and_reference_gaps(tmp_path):
 
 
 def test_subject_metric_csv_reports_per_subject_reference_gaps(tmp_path):
-    rows = [
-        {
-            "approach": "Track2p",
-            "subject": "jm039",
-            "pairwise_f1": "0.90",
-            "complete_track_f1": "0.80",
-            "pairwise_true_positives": "9",
-            "pairwise_false_positives": "1",
-            "pairwise_false_negatives": "1",
-            "complete_track_true_positives": "8",
-            "complete_track_false_positives": "2",
-            "complete_track_false_negatives": "2",
-        },
-        {
-            "approach": "BayesCaTrack",
-            "subject": "jm039",
-            "pairwise_f1": "0.60",
-            "complete_track_f1": "0.50",
-            "pairwise_true_positives": "6",
-            "pairwise_false_positives": "2",
-            "pairwise_false_negatives": "6",
-            "complete_track_true_positives": "5",
-            "complete_track_false_positives": "3",
-            "complete_track_false_negatives": "7",
-        },
-        {
-            "approach": "Track2p",
-            "subject": "jm046",
-            "pairwise_f1": "0.70",
-            "complete_track_f1": "0.40",
-            "pairwise_true_positives": "7",
-            "pairwise_false_positives": "3",
-            "pairwise_false_negatives": "3",
-            "complete_track_true_positives": "4",
-            "complete_track_false_positives": "6",
-            "complete_track_false_negatives": "6",
-        },
-        {
-            "approach": "BayesCaTrack",
-            "subject": "jm046",
-            "pairwise_f1": "0.75",
-            "complete_track_f1": "0.30",
-            "pairwise_true_positives": "8",
-            "pairwise_false_positives": "2",
-            "pairwise_false_negatives": "3",
-            "complete_track_true_positives": "3",
-            "complete_track_false_positives": "7",
-            "complete_track_false_negatives": "7",
-        },
-    ]
+    rows = _subject_comparison_rows()
 
     subject_rows = build_subject_metric_rows(rows, reference_approach="Track2p")
     output_path = tmp_path / "subject_metrics.csv"
@@ -369,56 +381,7 @@ def test_subject_metric_csv_reports_per_subject_reference_gaps(tmp_path):
 
 
 def test_subject_gap_summary_reports_worst_non_reference_rows(tmp_path):
-    rows = [
-        {
-            "approach": "Track2p",
-            "subject": "jm039",
-            "pairwise_f1": "0.90",
-            "complete_track_f1": "0.80",
-            "pairwise_true_positives": "9",
-            "pairwise_false_positives": "1",
-            "pairwise_false_negatives": "1",
-            "complete_track_true_positives": "8",
-            "complete_track_false_positives": "2",
-            "complete_track_false_negatives": "2",
-        },
-        {
-            "approach": "BayesCaTrack",
-            "subject": "jm039",
-            "pairwise_f1": "0.60",
-            "complete_track_f1": "0.50",
-            "pairwise_true_positives": "6",
-            "pairwise_false_positives": "2",
-            "pairwise_false_negatives": "6",
-            "complete_track_true_positives": "5",
-            "complete_track_false_positives": "3",
-            "complete_track_false_negatives": "7",
-        },
-        {
-            "approach": "Track2p",
-            "subject": "jm046",
-            "pairwise_f1": "0.70",
-            "complete_track_f1": "0.40",
-            "pairwise_true_positives": "7",
-            "pairwise_false_positives": "3",
-            "pairwise_false_negatives": "3",
-            "complete_track_true_positives": "4",
-            "complete_track_false_positives": "6",
-            "complete_track_false_negatives": "6",
-        },
-        {
-            "approach": "BayesCaTrack",
-            "subject": "jm046",
-            "pairwise_f1": "0.75",
-            "complete_track_f1": "0.30",
-            "pairwise_true_positives": "8",
-            "pairwise_false_positives": "2",
-            "pairwise_false_negatives": "3",
-            "complete_track_true_positives": "3",
-            "complete_track_false_positives": "7",
-            "complete_track_false_negatives": "7",
-        },
-    ]
+    rows = _subject_comparison_rows()
 
     gap_rows = build_subject_gap_summary_rows(
         rows, reference_approach="Track2p", limit=2
