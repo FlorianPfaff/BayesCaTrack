@@ -59,8 +59,24 @@ def _handle_benchmark(args: list[str]) -> int:
             help="Tune Track2p global-assignment solver priors inside LOSO folds",
         )
         subparsers.add_parser(
+            "track2p-solver-oracles",
+            help="Run Track2p manual-GT solver-oracle benchmark diagnostics",
+        )
+        subparsers.add_parser(
+            "solver-oracles",
+            help="Alias for track2p-solver-oracles",
+        )
+        subparsers.add_parser(
+            "track2p-shifted-overlap-ablation",
+            help="Sweep shifted-IoU radii and shifted-mask-cosine ablations",
+        )
+        subparsers.add_parser(
             "track2p-monotone-loso",
             help="Run LOSO calibrated global assignment with monotone ranking costs",
+        )
+        subparsers.add_parser(
+            "track2p-teacher-distill",
+            help="Train monotone costs from Track2p teacher pseudo-labels and evaluate on manual GT",
         )
         subparsers.add_parser(
             "track2p-teacher-audit",
@@ -89,6 +105,10 @@ def _handle_benchmark(args: list[str]) -> int:
         subparsers.add_parser(
             "growth-registration-qa",
             help="Report spatially resolved growth/deformation registration QA",
+        )
+        subparsers.add_parser(
+            "registration-model-selection",
+            help="Run registration QA/benchmark grid and select a registration model",
         )
         subparsers.add_parser(
             "validate-track2p-inputs",
@@ -127,12 +147,30 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_track2p_solver_prior_loso_main(args[1:]))
+    if args[0] in {"track2p-solver-oracles", "solver-oracles"}:
+        from bayescatrack.experiments.track2p_solver_oracles import (
+            main as _track2p_solver_oracles_main,
+        )
+
+        return int(_track2p_solver_oracles_main(args[1:]))
+    if args[0] == "track2p-shifted-overlap-ablation":
+        from bayescatrack.experiments.track2p_shifted_overlap_ablation import (
+            main as _track2p_shifted_overlap_ablation_main,
+        )
+
+        return int(_track2p_shifted_overlap_ablation_main(args[1:]))
     if args[0] == "track2p-monotone-loso":
         from bayescatrack.experiments.track2p_monotone_loso_calibration import (
             main as _track2p_monotone_loso_main,
         )
 
         return int(_track2p_monotone_loso_main(args[1:]))
+    if args[0] == "track2p-teacher-distill":
+        from bayescatrack.experiments.track2p_teacher_distillation import (
+            main as _track2p_teacher_distillation_main,
+        )
+
+        return int(_track2p_teacher_distillation_main(args[1:]))
     if args[0] == "track2p-teacher-audit":
         from bayescatrack.experiments.track2p_teacher_audit import (
             main as _track2p_teacher_audit_main,
@@ -169,6 +207,12 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_growth_registration_qa_main(args[1:]))
+    if args[0] == "registration-model-selection":
+        from bayescatrack.experiments.registration_model_selection import (
+            main as _registration_model_selection_main,
+        )
+
+        return int(_registration_model_selection_main(args[1:]))
     if args[0] == "validate-track2p-inputs":
         from bayescatrack.experiments.track2p_input_validator import (
             main as _track2p_input_validator_main,

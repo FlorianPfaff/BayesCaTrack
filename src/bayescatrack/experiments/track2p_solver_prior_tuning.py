@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 import numpy as np
 from bayescatrack.association.calibrated_costs import (
     DEFAULT_ASSOCIATION_FEATURES,
+    collect_reference_pairwise_example_blocks,
     fit_logistic_association_model,
+)
+from bayescatrack.association.monotone_ranker import (
+    MonotoneRankerOptions,
+    fit_monotone_ranking_association_model_from_blocks,
 )
 from bayescatrack.association.pyrecest_global_assignment import (
     AssociationCost,
@@ -32,6 +37,7 @@ from bayescatrack.experiments.track2p_loso_calibration import (
     _collect_training_examples,
     _load_subject_calibration_data,
     _loso_logistic_model_kwargs,
+    _reference_training_options,
     _score_holdout_calibration,
     _stringify_class_weight,
     _training_sample_weight,
@@ -39,7 +45,8 @@ from bayescatrack.experiments.track2p_loso_calibration import (
 )
 
 SampleWeightStrategy = Literal["none", "balanced"]
-SolverPriorObjective = Literal["pairwise_f1", "complete_track_f1"]
+AssociationModelKind = Literal["logistic", "monotone"]
+SolverPriorObjective = Literal["pairwise_f1", "complete_track_f1", "mean_f1"]
 
 DEFAULT_SOLVER_PRIOR_START_COSTS = (1.0, 2.0, 5.0)
 DEFAULT_SOLVER_PRIOR_END_COSTS = (1.0, 2.0, 5.0)
@@ -100,6 +107,16 @@ class CachedSolverTuningSubject:
     session_edges: tuple[tuple[int, int], ...]
 
 
+@dataclass(frozen=True)
+class AssociationModelFit:
+    """Fold-internal association model plus paper-facing training metadata."""
+
+    model: Any
+    training_examples: int
+    positive_examples: int
+    score_fields: Mapping[str, float | int | str]
+
+
 # pylint: disable=too-many-arguments,too-many-locals
 def run_track2p_loso_solver_prior_tuning(
     config: Track2pBenchmarkConfig,
@@ -108,6 +125,8 @@ def run_track2p_loso_solver_prior_tuning(
     sample_weight: Any | None = None,
     sample_weight_strategy: SampleWeightStrategy = "none",
     model_kwargs: Mapping[str, Any] | None = None,
+    association_model: AssociationModelKind = "logistic",
+    monotone_options: MonotoneRankerOptions | None = None,
     solver_prior_options: SolverPriorTuningOptions | None = None,
 ) -> LosoCalibrationResult:
     """Run calibrated LOSO while tuning solver priors on training subjects.
@@ -129,6 +148,7 @@ def run_track2p_loso_solver_prior_tuning(
 
     feature_names = tuple(feature_names)
     sample_weight_strategy = _validate_sample_weight_strategy(sample_weight_strategy)
+    association_model = _validate_association_model_kind(association_model)
     logistic_model_kwargs = _loso_logistic_model_kwargs(model_kwargs)
     solver_prior_options = solver_prior_options or SolverPriorTuningOptions()
     progress = ProgressReporter(
@@ -150,39 +170,31 @@ def run_track2p_loso_solver_prior_tuning(
             for index, subject in enumerate(subject_data)
             if index != held_out_index
         )
-        training_features, training_labels = _collect_training_examples(
+        model_fit = _fit_loso_association_model(
             training_subjects,
             config=config,
             feature_names=feature_names,
+            association_model=association_model,
+            sample_weight=sample_weight,
+            sample_weight_strategy=sample_weight_strategy,
+            logistic_model_kwargs=logistic_model_kwargs,
+            monotone_options=monotone_options,
             progress=progress,
             held_out_subject=held_out.subject_name,
-        )
-        weights = _training_sample_weight(
-            training_labels,
-            sample_weight=sample_weight,
-            strategy=sample_weight_strategy,
-        )
-        progress.step(f"fitting model for {held_out.subject_name}")
-        calibrated_model = fit_logistic_association_model(
-            training_features,
-            training_labels,
-            feature_names=feature_names,
-            sample_weight=weights,
-            model_kwargs=logistic_model_kwargs,
         )
         progress.step(f"tuning solver priors for {held_out.subject_name}")
         tuning_result = tune_solver_priors_for_training_subjects(
             training_subjects,
             config=config,
             cost="calibrated",
-            calibrated_model=calibrated_model,
+            calibrated_model=model_fit.model,
             options=solver_prior_options,
         )
         progress.step(f"solving {held_out.subject_name}")
         assignment = _solve_loso_assignment_with_priors(
             held_out,
             config=config,
-            calibrated_model=calibrated_model,
+            calibrated_model=model_fit.model,
             parameters=tuning_result.parameters,
         )
         predicted_matrix = tracks_to_suite2p_index_matrix(
@@ -192,21 +204,22 @@ def run_track2p_loso_solver_prior_tuning(
             predicted_matrix, held_out.reference, config=config
         )
         calibration_scores = _score_holdout_calibration(
-            calibrated_model,
+            model_fit.model,
             held_out,
             config=config,
             feature_names=feature_names,
         )
-        positives = int(np.sum(training_labels))
+        positives = int(model_fit.positive_examples)
         scores: dict[str, float | int | str] = {
             **base_scores,
-            "training_examples": int(training_labels.shape[0]),
+            "training_examples": int(model_fit.training_examples),
             "positive_examples": positives,
-            "negative_examples": int(training_labels.shape[0] - positives),
+            "negative_examples": int(model_fit.training_examples - positives),
             "calibration_sample_weight_strategy": sample_weight_strategy,
             "calibration_class_weight": _stringify_class_weight(
                 logistic_model_kwargs.get("class_weight")
             ),
+            **model_fit.score_fields,
             **tuning_result.to_score_dict(),
             **calibration_scores,
         }
@@ -218,19 +231,126 @@ def run_track2p_loso_solver_prior_tuning(
                 ),
                 benchmark=SubjectBenchmarkResult(
                     subject=held_out.subject_name,
-                    variant="Calibrated costs + LOSO tuned-prior global assignment",
+                    variant=_solver_prior_variant_name(association_model),
                     method=config.method,
                     scores=scores,
                     n_sessions=held_out.reference.n_sessions,
                     reference_source=held_out.reference.source,
                 ),
-                training_examples=int(training_labels.shape[0]),
+                training_examples=int(model_fit.training_examples),
                 positive_examples=positives,
             )
         )
     return LosoCalibrationResult(
         folds=tuple(folds), feature_names=feature_names, max_gap=int(config.max_gap)
     )
+
+
+def _fit_loso_association_model(
+    training_subjects: Sequence[SubjectCalibrationData],
+    *,
+    config: Track2pBenchmarkConfig,
+    feature_names: Sequence[str],
+    association_model: AssociationModelKind,
+    sample_weight: Any | None,
+    sample_weight_strategy: SampleWeightStrategy,
+    logistic_model_kwargs: Mapping[str, Any],
+    monotone_options: MonotoneRankerOptions | None,
+    progress: ProgressReporter,
+    held_out_subject: str,
+) -> AssociationModelFit:
+    if association_model == "logistic":
+        training_features, training_labels = _collect_training_examples(
+            training_subjects,
+            config=config,
+            feature_names=feature_names,
+            progress=progress,
+            held_out_subject=held_out_subject,
+        )
+        weights = _training_sample_weight(
+            training_labels,
+            sample_weight=sample_weight,
+            strategy=sample_weight_strategy,
+        )
+        progress.step(f"fitting logistic model for {held_out_subject}")
+        calibrated_model = fit_logistic_association_model(
+            training_features,
+            training_labels,
+            feature_names=feature_names,
+            sample_weight=weights,
+            model_kwargs=logistic_model_kwargs,
+        )
+        positives = int(np.sum(training_labels))
+        return AssociationModelFit(
+            model=calibrated_model,
+            training_examples=int(training_labels.shape[0]),
+            positive_examples=positives,
+            score_fields={"calibration_model": "logistic"},
+        )
+
+    if sample_weight is not None or sample_weight_strategy != "none":
+        raise ValueError(
+            "Sample weights are only supported for association_model='logistic'"
+        )
+    extra_logistic_kwargs = set(logistic_model_kwargs) - {"class_weight"}
+    if extra_logistic_kwargs or logistic_model_kwargs.get("class_weight") is not None:
+        raise ValueError(
+            "Logistic model kwargs are not used when association_model='monotone'"
+        )
+    options = monotone_options or MonotoneRankerOptions()
+    blocks = _collect_monotone_training_blocks(
+        training_subjects,
+        config=config,
+        feature_names=feature_names,
+        progress=progress,
+        held_out_subject=held_out_subject,
+    )
+    progress.step(f"fitting monotone ranker for {held_out_subject}")
+    ranker = fit_monotone_ranking_association_model_from_blocks(
+        blocks, options=options
+    )
+    return AssociationModelFit(
+        model=ranker,
+        training_examples=int(ranker.n_training_examples),
+        positive_examples=int(ranker.n_positive_examples),
+        score_fields={
+            "calibration_model": "monotone-ranker",
+            "monotone_feature_names": ",".join(ranker.monotone_feature_names),
+            "monotone_rank_constraints": int(ranker.n_rank_constraints),
+            "monotone_training_rank_loss": float(ranker.training_rank_loss),
+            "monotone_training_binary_loss": float(ranker.training_binary_loss),
+            **_monotone_option_scores(options),
+        },
+    )
+
+
+def _collect_monotone_training_blocks(
+    training_subjects: Sequence[SubjectCalibrationData],
+    *,
+    config: Track2pBenchmarkConfig,
+    feature_names: Sequence[str],
+    progress: ProgressReporter,
+    held_out_subject: str,
+) -> tuple[Any, ...]:
+    blocks: list[Any] = []
+    training_options = _reference_training_options(config, feature_names)
+    for subject in training_subjects:
+        progress.step(
+            f"collecting {subject.subject_name} ranking blocks for {held_out_subject}"
+        )
+        blocks.extend(
+            collect_reference_pairwise_example_blocks(
+                subject.sessions,
+                subject.reference,
+                session_edges=session_edge_pairs(
+                    len(subject.sessions), max_gap=config.max_gap
+                ),
+                options=training_options,
+            )
+        )
+    if not blocks:
+        raise ValueError("At least one monotone training block is required")
+    return tuple(blocks)
 
 
 def tune_solver_priors_for_training_subjects(
@@ -339,7 +459,12 @@ def _score_solver_prior_candidate(
                 config=config,
             )
         )
-    return _mean_numeric_scores(score_rows)
+    scores = _mean_numeric_scores(score_rows)
+    if "pairwise_f1" in scores and "complete_track_f1" in scores:
+        scores["mean_f1"] = 0.5 * (
+            float(scores["pairwise_f1"]) + float(scores["complete_track_f1"])
+        )
+    return scores
 
 
 def _solve_loso_assignment_with_priors(
@@ -484,3 +609,31 @@ def _dedupe_threshold_values(
 
 def _threshold_label(threshold: float | None) -> float | str:
     return "none" if threshold is None else float(threshold)
+
+
+def _validate_association_model_kind(kind: str) -> AssociationModelKind:
+    if kind not in {"logistic", "monotone"}:
+        raise ValueError(
+            "association_model must be either 'logistic' or 'monotone'"
+        )
+    return kind  # type: ignore[return-value]
+
+
+def _monotone_option_scores(
+    options: MonotoneRankerOptions,
+) -> dict[str, float | int | str]:
+    values = asdict(options)
+    return {
+        f"monotone_option_{key}": ",".join(value)
+        if isinstance(value, tuple)
+        else value
+        for key, value in values.items()
+    }
+
+
+def _solver_prior_variant_name(
+    association_model: AssociationModelKind,
+) -> str:
+    if association_model == "monotone":
+        return "Monotone ranker costs + LOSO tuned-prior global assignment"
+    return "Calibrated costs + LOSO tuned-prior global assignment"

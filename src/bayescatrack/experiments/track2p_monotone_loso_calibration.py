@@ -8,15 +8,18 @@ import csv
 import json
 import sys
 from collections.abc import Sequence
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import numpy as np
+from bayescatrack.association.activity_similarity import ACTIVITY_TIEBREAKER_FEATURES
 from bayescatrack.association.calibrated_costs import (
     DEFAULT_ASSOCIATION_FEATURES,
+    LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
     collect_reference_pairwise_example_blocks,
     collect_reference_training_examples,
+    SPLIT_ROI_STAT_FEATURES,
 )
 from bayescatrack.association.monotone_ranker import (
     MonotoneRankerOptions,
@@ -45,12 +48,138 @@ from bayescatrack.experiments.track2p_loso_calibration import (
     _reference_training_options,
 )
 
+MonotoneFeatureSetName = Literal[
+    "default",
+    "legacy",
+    "split-roi",
+    "local-evidence",
+    "activity-tiebreaker",
+    "full",
+]
+MONOTONE_FEATURE_SET_NAMES: tuple[str, ...] = (
+    "default",
+    "legacy",
+    "split-roi",
+    "local-evidence",
+    "activity-tiebreaker",
+    "full",
+)
+
+_LEGACY_ASSOCIATION_FEATURES = (
+    "centroid_distance",
+    "mahalanobis_centroid_distance",
+    "one_minus_iou",
+    "one_minus_mask_cosine",
+    "area_ratio_cost",
+    "covariance_shape_cost",
+    "covariance_logdet_cost",
+    "roi_feature_cost",
+    "cell_probability_cost",
+    "activity_similarity_cost",
+    "activity_similarity_available",
+    "session_gap",
+)
+
+
+def monotone_feature_names_for_set(feature_set: str) -> tuple[str, ...]:
+    """Return the calibrated feature schema for one monotone LOSO ablation set.
+
+    The default calibrated schema already includes the split Suite2p ROI-stat
+    patch when the package is imported.  The explicit ablation names below make
+    that behavior reproducible and add opt-in local-evidence and activity
+    tie-breaker schemas for the learned ranking model.
+    """
+
+    feature_set = _validate_feature_set(feature_set)
+    if feature_set == "default":
+        return tuple(DEFAULT_ASSOCIATION_FEATURES)
+    if feature_set == "legacy":
+        return _LEGACY_ASSOCIATION_FEATURES
+
+    split_features = _replace_legacy_roi_scalar_with_split_features(
+        _LEGACY_ASSOCIATION_FEATURES
+    )
+    if feature_set == "split-roi":
+        return split_features
+    if feature_set == "local-evidence":
+        return _deduplicate_features(
+            (*split_features, *LOCAL_EVIDENCE_ASSOCIATION_FEATURES)
+        )
+    if feature_set == "activity-tiebreaker":
+        return _deduplicate_features((*split_features, *ACTIVITY_TIEBREAKER_FEATURES))
+    if feature_set == "full":
+        return _deduplicate_features(
+            (
+                *split_features,
+                *LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
+                *ACTIVITY_TIEBREAKER_FEATURES,
+            )
+        )
+    raise AssertionError(f"Unhandled monotone feature set: {feature_set!r}")
+
+
+def config_with_feature_dependencies(
+    config: Track2pBenchmarkConfig, feature_names: Sequence[str]
+) -> Track2pBenchmarkConfig:
+    """Enable pairwise component production required by selected features."""
+
+    if not any(name in LOCAL_EVIDENCE_ASSOCIATION_FEATURES for name in feature_names):
+        return config
+    pairwise_cost_kwargs = dict(config.pairwise_cost_kwargs or {})
+    pairwise_cost_kwargs["local_evidence_components"] = True
+    return replace(config, pairwise_cost_kwargs=pairwise_cost_kwargs)
+
+
+def monotone_options_for_feature_schema(
+    options: MonotoneRankerOptions, feature_names: Sequence[str]
+) -> MonotoneRankerOptions:
+    """Use all selected cost-like features unless the caller supplied a subset."""
+
+    if options.monotone_feature_names:
+        return options
+    return replace(
+        options,
+        monotone_feature_names=_default_monotone_feature_names(feature_names),
+    )
+
+
+def _validate_feature_set(feature_set: str) -> MonotoneFeatureSetName:
+    if feature_set not in MONOTONE_FEATURE_SET_NAMES:
+        raise ValueError(
+            "feature_set must be one of " + ", ".join(MONOTONE_FEATURE_SET_NAMES)
+        )
+    return cast(MonotoneFeatureSetName, feature_set)
+
+
+def _replace_legacy_roi_scalar_with_split_features(
+    feature_names: Sequence[str],
+) -> tuple[str, ...]:
+    split_features = tuple(SPLIT_ROI_STAT_FEATURES)
+    if not split_features:
+        return tuple(feature_names)
+    expanded: list[str] = []
+    for feature_name in feature_names:
+        if feature_name == "roi_feature_cost":
+            expanded.extend(split_features)
+        else:
+            expanded.append(feature_name)
+    return _deduplicate_features(expanded)
+
+
+def _deduplicate_features(feature_names: Sequence[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(str(name) for name in feature_names))
+
+
+def _default_monotone_feature_names(feature_names: Sequence[str]) -> tuple[str, ...]:
+    return tuple(name for name in feature_names if not str(name).endswith("_available"))
+
 
 # pylint: disable=too-many-arguments,too-many-locals
 def run_track2p_monotone_loso_calibration(
     config: Track2pBenchmarkConfig,
     *,
-    feature_names: Sequence[str] = DEFAULT_ASSOCIATION_FEATURES,
+    feature_names: Sequence[str] | None = None,
+    feature_set: MonotoneFeatureSetName = "full",
     monotone_options: MonotoneRankerOptions | None = None,
 ) -> LosoCalibrationResult:
     """Run LOSO global assignment with a monotone hard-negative ranking model."""
@@ -59,6 +188,13 @@ def run_track2p_monotone_loso_calibration(
         raise ValueError(
             "Monotone LOSO calibration requires method='global-assignment' and cost='calibrated'"
         )
+    feature_set_label = "custom" if feature_names is not None else feature_set
+    feature_names = tuple(
+        feature_names
+        if feature_names is not None
+        else monotone_feature_names_for_set(feature_set)
+    )
+    config = config_with_feature_dependencies(config, feature_names)
     subject_dirs = tuple(discover_subject_dirs(config.data))
     if len(subject_dirs) < 2:
         raise ValueError("LOSO calibration requires at least two subject directories")
@@ -73,8 +209,9 @@ def run_track2p_monotone_loso_calibration(
         progress.step(f"loading {subject_dir.name}")
         subjects.append(_load_subject_calibration_data(subject_dir, config=config))
 
-    options = monotone_options or MonotoneRankerOptions()
-    feature_names = tuple(feature_names)
+    options = monotone_options_for_feature_schema(
+        monotone_options or MonotoneRankerOptions(), feature_names
+    )
     folds: list[LosoCalibrationFold] = []
     for held_out_index, held_out in enumerate(subjects):
         training_subjects = tuple(
@@ -119,6 +256,7 @@ def run_track2p_monotone_loso_calibration(
             "positive_examples": positives,
             "negative_examples": int(training_examples - positives),
             "calibration_model": "monotone-ranker",
+            "monotone_feature_set": str(feature_set_label),
             "monotone_feature_names": ",".join(calibrated_model.monotone_feature_names),
             "monotone_rank_constraints": int(calibrated_model.n_rank_constraints),
             "monotone_training_rank_loss": float(calibrated_model.training_rank_loss),
@@ -261,6 +399,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--velocity-variance", type=float, default=25.0)
     parser.add_argument("--regularization", type=float, default=1.0e-6)
     parser.add_argument("--pairwise-cost-kwargs-json", default=None)
+    parser.add_argument(
+        "--feature-set",
+        choices=MONOTONE_FEATURE_SET_NAMES,
+        default="full",
+        help="Calibrated feature ablation set used by the monotone ranker.",
+    )
+    parser.add_argument(
+        "--feature-names",
+        default=None,
+        help="Comma-separated calibrated feature names; overrides --feature-set.",
+    )
     parser.add_argument("--monotone-ranker-kwargs-json", default=None)
     parser.add_argument(
         "--progress", action=argparse.BooleanOptionalAction, default=True
@@ -275,10 +424,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     config = _config_from_args(args)
     options = _monotone_options_from_args(args)
+    feature_names = _feature_names_from_args(args)
     rows = [
         fold.benchmark.to_dict()
         for fold in run_track2p_monotone_loso_calibration(
-            config, monotone_options=options
+            config,
+            feature_names=feature_names,
+            feature_set=args.feature_set,
+            monotone_options=options,
         ).folds
     ]
     if args.output is not None:
@@ -335,6 +488,12 @@ def _monotone_options_from_args(args: argparse.Namespace) -> MonotoneRankerOptio
     if not isinstance(parsed, dict):
         raise ValueError("--monotone-ranker-kwargs-json must decode to a JSON object")
     return MonotoneRankerOptions(**parsed)
+
+
+def _feature_names_from_args(args: argparse.Namespace) -> tuple[str, ...] | None:
+    if args.feature_names is None:
+        return None
+    return tuple(name.strip() for name in args.feature_names.split(",") if name.strip())
 
 
 def _write_stdout(

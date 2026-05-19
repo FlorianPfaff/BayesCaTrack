@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
 import numpy as np
+from bayescatrack.association.monotone_ranker import MonotoneRankerOptions
 from bayescatrack.association.pyrecest_global_assignment import (
     AssociationCost,
     _load_pyrecest_multisession_solver,
@@ -41,6 +42,9 @@ from bayescatrack.experiments.track2p_benchmark import (
     solve_configured_global_assignment,
 )
 from bayescatrack.reference import Track2pReference
+from bayescatrack.experiments import (
+    track2p_solver_prior_tuning as learned_solver_prior_tuning,
+)
 
 SolverPriorObjective = Literal["pairwise_f1", "complete_track_f1", "mean_f1"]
 
@@ -324,16 +328,40 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--allow-track2p-as-reference-for-smoke-test", action="store_true"
     )
     parser.add_argument(
-        "--cost", default="registered-iou", choices=("registered-iou", "roi-aware")
+        "--cost",
+        default="registered-iou",
+        choices=(
+            "registered-iou",
+            "registered-soft-iou",
+            "registered-shifted-iou",
+            "roi-aware",
+            "calibrated",
+        ),
+    )
+    parser.add_argument(
+        "--association-model", default="logistic", choices=("logistic", "monotone")
     )
     parser.add_argument("--max-gap", type=int, default=2)
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
+        choices=(
+            "affine",
+            "rigid",
+            "fov-translation",
+            "fov-affine",
+            "bspline",
+            "tps",
+            "thin-plate-spline",
+            "local-affine-grid",
+            "optical-flow",
+            "none",
+        ),
     )
     parser.add_argument("--start-costs", default="0.5,1,1.5,2")
     parser.add_argument("--end-costs", default="")
+    parser.add_argument("--model-kwargs-json", default=None)
+    parser.add_argument("--monotone-ranker-kwargs-json", default=None)
     parser.add_argument("--gap-penalties", default="0,0.3,0.6,0.9,1.2")
     parser.add_argument("--cost-thresholds", default="1.5,2,2.5,none")
     parser.add_argument(
@@ -371,6 +399,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if pairwise_cost_kwargs is not None and not isinstance(pairwise_cost_kwargs, dict):
         raise ValueError("--pairwise-cost-kwargs-json must decode to a JSON object")
+    association_model = cast(str, args.association_model)
     config = Track2pBenchmarkConfig(
         data=args.data,
         method="global-assignment",
@@ -403,7 +432,25 @@ def main(argv: list[str] | None = None) -> int:
         cost_thresholds=parse_threshold_list(args.cost_thresholds),
         objective=cast(SolverPriorObjective, args.objective),
     )
-    rows = run_track2p_loso_solver_priors(config, search=search).to_rows()
+    if args.cost == "calibrated":
+        learned_options = learned_solver_prior_tuning.SolverPriorTuningOptions(
+            objective=cast(learned_solver_prior_tuning.SolverPriorObjective, args.objective),
+            start_costs=search.start_costs,
+            end_costs=search.end_costs or search.start_costs,
+            gap_penalties=search.gap_penalties,
+            cost_thresholds=search.cost_thresholds,
+        )
+        rows = learned_solver_prior_tuning.run_track2p_loso_solver_prior_tuning(
+            config,
+            association_model=cast(learned_solver_prior_tuning.AssociationModelKind, association_model),
+            model_kwargs=_json_object_or_none(args.model_kwargs_json, name="--model-kwargs-json"),
+            monotone_options=_monotone_options_from_json(args.monotone_ranker_kwargs_json),
+            solver_prior_options=learned_options,
+        ).to_rows()
+    else:
+        if association_model != "logistic":
+            raise ValueError("--association-model=monotone requires --cost=calibrated")
+        rows = run_track2p_loso_solver_priors(config, search=search).to_rows()
     _write_rows(rows, args.output, args.format)
     return 0
 
@@ -586,6 +633,22 @@ def _thresholds(values: Sequence[float | None]) -> tuple[float | None, ...]:
 
 def threshold_label(threshold: float | None) -> float | str:
     return "none" if threshold is None else float(threshold)
+
+
+def _json_object_or_none(raw: str | None, *, name: str) -> dict[str, Any] | None:
+    if raw is None:
+        return None
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{name} must decode to a JSON object")
+    return parsed
+
+
+def _monotone_options_from_json(raw: str | None) -> MonotoneRankerOptions | None:
+    kwargs = _json_object_or_none(raw, name="--monotone-ranker-kwargs-json")
+    if kwargs is None:
+        return None
+    return MonotoneRankerOptions(**kwargs)
 
 
 def _write_rows(

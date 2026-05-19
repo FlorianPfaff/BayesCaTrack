@@ -46,6 +46,9 @@ def shifted_iou_pairwise_cost_matrix(
         Replace the standard mask-cosine term with best local shifted cosine.
     shifted_mask_cosine_weight
         Add an additional shifted-mask-cosine cost term.
+    return_shifted_overlap_components
+        Compute shifted-overlap diagnostic components even when they are not
+        used by the returned cost matrix. This is useful for edge-ranking QA.
     """
 
     shifted_iou_radius = _nonnegative_int(
@@ -61,6 +64,9 @@ def shifted_iou_pairwise_cost_matrix(
     use_shifted_mask_cosine_for_mask_cosine_cost = bool(
         kwargs.pop("use_shifted_mask_cosine_for_mask_cosine_cost", False)
     )
+    return_shifted_overlap_components = bool(
+        kwargs.pop("return_shifted_overlap_components", False)
+    )
 
     if shifted_iou_weight < 0.0:
         raise ValueError("shifted_iou_weight must be non-negative")
@@ -72,6 +78,7 @@ def shifted_iou_pairwise_cost_matrix(
         or shifted_iou_weight > 0.0
         or use_shifted_mask_cosine_for_mask_cosine_cost
         or shifted_mask_cosine_weight > 0.0
+        or return_shifted_overlap_components
     )
     if not uses_shifted_overlap:
         return original_method(self, other, **kwargs)

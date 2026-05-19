@@ -45,6 +45,7 @@ from bayescatrack.reference import (
     load_aligned_subject_reference,
     load_track2p_reference,
 )
+from bayescatrack.track2p_registration import REGISTRATION_TRANSFORM_TYPES
 
 ReferenceKind = Literal["auto", "manual-gt", "track2p-output", "aligned-subject-rows"]
 BenchmarkMethod = Literal[
@@ -439,8 +440,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
-        help="Track2p registration transform type",
+        choices=REGISTRATION_TRANSFORM_TYPES,
+        help="Registration transform type",
     )
     parser.add_argument(
         "--start-cost", type=float, default=5.0, help="PyRecEst track start cost"

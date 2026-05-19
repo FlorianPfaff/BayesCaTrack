@@ -43,7 +43,10 @@ from bayescatrack.experiments.track2p_benchmark import (
     _validate_reference_roi_indices,
     discover_subject_dirs,
 )
-from bayescatrack.track2p_registration import register_plane_pair
+from bayescatrack.track2p_registration import (
+    REGISTRATION_TRANSFORM_TYPES,
+    register_plane_pair,
+)
 
 RegistrationQACost = Literal["registered-iou", "roi-aware", "calibrated"]
 RegistrationQALevel = Literal["summary", "links", "edge-ledger", "backend-audit"]
@@ -682,7 +685,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "gt-affine-oracle", "none"),
+        choices=(*REGISTRATION_TRANSFORM_TYPES, "gt-affine-oracle"),
     )
     parser.add_argument(
         "--cost",
