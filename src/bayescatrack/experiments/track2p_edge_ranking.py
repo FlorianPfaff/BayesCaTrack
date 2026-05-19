@@ -17,8 +17,8 @@ from bayescatrack.association.pyrecest_global_assignment import (
     AssociationCost,
     registered_iou_cost_kwargs,
     registered_shifted_iou_cost_kwargs,
-    roi_aware_shifted_cost_kwargs,
     roi_aware_cost_kwargs,
+    roi_aware_shifted_cost_kwargs,
     session_edge_pairs,
 )
 from bayescatrack.evaluation.edge_ranking import (
