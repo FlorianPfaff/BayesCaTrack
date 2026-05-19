@@ -143,6 +143,25 @@ def write_subject_gap_summary(
     )
 
 
+def write_subject_deficit_summary(
+    rows: Sequence[dict[str, str]],
+    output_path: Path,
+    *,
+    reference_approach: str | None,
+    limit: int,
+) -> None:
+    """Write a Markdown summary of the largest grouped subject deficits."""
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        format_subject_deficit_summary(
+            rows, reference_approach=reference_approach, limit=limit
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def format_markdown_table(
     rows: Sequence[dict[str, float | int | str]],
     *,
@@ -262,6 +281,47 @@ def format_subject_gap_summary(
             f"{_format_value(_as_float(row['reference_value']))} | "
             f"{_format_delta(_as_float(row['gap_to_reference']))} | "
             f"{row['rank']} |"
+        )
+    return "\n".join(body)
+
+
+def format_subject_deficit_summary(
+    rows: Sequence[dict[str, str]],
+    *,
+    reference_approach: str | None,
+    limit: int = 12,
+) -> str:
+    """Format grouped subject-level deficits against the reference approach."""
+
+    reference_name = _reference_approach_name(rows, reference_approach)
+    deficit_rows = build_subject_deficit_summary_rows(
+        rows, reference_approach=reference_approach, limit=limit
+    )
+    body = [
+        f"### Worst Subjects by Total Deficit to {reference_name}",
+        "",
+        (
+            "| subject | approach | deficit metrics | total deficit | "
+            "mean deficit | worst metric | worst gap |"
+        ),
+        "| --- | --- | ---: | ---: | ---: | --- | ---: |",
+    ]
+    if not deficit_rows:
+        body.append(
+            "| n/a | no non-reference deficits | 0 | 0.000 | 0.000 | n/a | 0.000 |"
+        )
+        return "\n".join(body)
+
+    for row in deficit_rows:
+        body.append(
+            "| "
+            f"{row['subject']} | "
+            f"{row['approach']} | "
+            f"{row['deficit_metrics']} / {row['metrics_compared']} | "
+            f"{_format_delta(_as_float(row['total_deficit']))} | "
+            f"{_format_delta(_as_float(row['mean_deficit']))} | "
+            f"{row['worst_metric']} | "
+            f"{_format_delta(_as_float(row['worst_gap']))} |"
         )
     return "\n".join(body)
 
@@ -428,6 +488,63 @@ def build_subject_gap_summary_rows(
     )[:limit]
 
 
+def build_subject_deficit_summary_rows(
+    rows: Sequence[dict[str, str]],
+    *,
+    reference_approach: str | None,
+    limit: int = 12,
+) -> list[dict[str, float | int | str]]:
+    """Build per-subject/per-approach deficits grouped across subject metrics."""
+
+    if limit < 1:
+        raise ValueError("Subject deficit summary limit must be at least 1")
+
+    summaries: dict[tuple[str, str], dict[str, float | int | str]] = {}
+    for row in build_subject_metric_rows(rows, reference_approach=reference_approach):
+        if row["is_reference"] == "true" or row["gap_to_reference"] == "":
+            continue
+        key = (str(row["subject"]), str(row["approach"]))
+        summary = summaries.setdefault(
+            key,
+            {
+                "subject": str(row["subject"]),
+                "approach": str(row["approach"]),
+                "metrics_compared": 0,
+                "deficit_metrics": 0,
+                "total_deficit": 0.0,
+                "worst_metric": "",
+                "worst_gap": 0.0,
+            },
+        )
+        summary["metrics_compared"] = int(summary["metrics_compared"]) + 1
+        gap = _as_float(row["gap_to_reference"])
+        if gap < 0.0:
+            summary["deficit_metrics"] = int(summary["deficit_metrics"]) + 1
+            summary["total_deficit"] = _as_float(summary["total_deficit"]) + gap
+            if summary["worst_metric"] == "" or gap < _as_float(summary["worst_gap"]):
+                summary["worst_metric"] = str(row["metric"])
+                summary["worst_gap"] = gap
+
+    deficit_rows = [
+        {
+            **summary,
+            "mean_deficit": _as_float(summary["total_deficit"])
+            / int(summary["deficit_metrics"]),
+        }
+        for summary in summaries.values()
+        if int(summary["deficit_metrics"]) > 0
+    ]
+    return sorted(
+        deficit_rows,
+        key=lambda row: (
+            _as_float(row["total_deficit"]),
+            _as_float(row["worst_gap"]),
+            str(row["subject"]),
+            str(row["approach"]),
+        ),
+    )[:limit]
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     """Build the comparison-table CLI parser."""
 
@@ -504,6 +621,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=12,
         help="Maximum number of rows to include in the subject gap summary",
     )
+    parser.add_argument(
+        "--subject-deficit-summary-output",
+        type=Path,
+        default=None,
+        help="Optional Markdown path for grouped subject-level deficits",
+    )
+    parser.add_argument(
+        "--subject-deficit-summary-limit",
+        type=int,
+        default=12,
+        help="Maximum number of rows to include in the subject deficit summary",
+    )
     return parser
 
 
@@ -539,6 +668,13 @@ def main(argv: list[str] | None = None) -> int:
             args.subject_gap_summary_output,
             reference_approach=args.reference_approach,
             limit=args.subject_gap_summary_limit,
+        )
+    if args.subject_deficit_summary_output is not None:
+        write_subject_deficit_summary(
+            subject_rows,
+            args.subject_deficit_summary_output,
+            reference_approach=args.reference_approach,
+            limit=args.subject_deficit_summary_limit,
         )
     if args.output is not None:
         write_comparison(

@@ -8,15 +8,18 @@ from bayescatrack.experiments.benchmark_comparison import (
     aggregate_rows,
     build_metric_rows,
     build_reference_gap_rows,
+    build_subject_deficit_summary_rows,
     build_subject_gap_summary_rows,
     build_subject_metric_rows,
     format_best_summary,
     format_markdown_table,
     format_reference_gap_summary,
+    format_subject_deficit_summary,
     format_subject_gap_summary,
     load_labeled_rows,
     write_metric_csv,
     write_reference_gap_csv,
+    write_subject_deficit_summary,
     write_subject_gap_summary,
     write_subject_metric_csv,
 )
@@ -121,6 +124,27 @@ def _subject_comparison_rows() -> list[dict[str, str]]:
             complete_track_f1="0.30",
             pairwise_counts=(8, 2, 3),
             complete_track_counts=(3, 7, 7),
+        ),
+    ]
+
+
+def _subject_no_deficit_rows() -> list[dict[str, str]]:
+    return [
+        _subject_result_row(
+            "Track2p",
+            "jm039",
+            pairwise_f1="0.60",
+            complete_track_f1="0.50",
+            pairwise_counts=(6, 2, 6),
+            complete_track_counts=(5, 3, 7),
+        ),
+        _subject_result_row(
+            "BayesCaTrack",
+            "jm039",
+            pairwise_f1="0.70",
+            complete_track_f1="0.55",
+            pairwise_counts=(7, 2, 5),
+            complete_track_counts=(6, 3, 6),
         ),
     ]
 
@@ -414,25 +438,50 @@ def test_subject_gap_summary_reports_worst_non_reference_rows(tmp_path):
 
 
 def test_subject_gap_summary_reports_when_no_deficits():
-    rows = [
-        _subject_result_row(
-            "Track2p",
-            "jm039",
-            pairwise_f1="0.60",
-            complete_track_f1="0.50",
-            pairwise_counts=(6, 2, 6),
-            complete_track_counts=(5, 3, 7),
-        ),
-        _subject_result_row(
-            "BayesCaTrack",
-            "jm039",
-            pairwise_f1="0.70",
-            complete_track_f1="0.55",
-            pairwise_counts=(7, 2, 5),
-            complete_track_counts=(6, 3, 6),
-        ),
-    ]
+    summary = format_subject_gap_summary(
+        _subject_no_deficit_rows(), reference_approach="Track2p"
+    )
 
-    summary = format_subject_gap_summary(rows, reference_approach="Track2p")
+    assert "no non-reference deficits" in summary
+
+
+def test_subject_deficit_summary_groups_gaps_by_subject_and_approach(tmp_path):
+    rows = _subject_comparison_rows()
+
+    deficit_rows = build_subject_deficit_summary_rows(
+        rows, reference_approach="Track2p", limit=12
+    )
+    summary = format_subject_deficit_summary(
+        rows, reference_approach="Track2p", limit=12
+    )
+    output_path = tmp_path / "subject_deficits.md"
+    write_subject_deficit_summary(
+        rows,
+        output_path,
+        reference_approach="Track2p",
+        limit=12,
+    )
+
+    assert [row["subject"] for row in deficit_rows] == ["jm039", "jm046"]
+    assert deficit_rows[0]["total_deficit"] == pytest.approx(-0.60)
+    assert deficit_rows[0]["mean_deficit"] == pytest.approx(-0.30)
+    assert deficit_rows[0]["worst_metric"] == "pairwise F1"
+    assert deficit_rows[0]["deficit_metrics"] == 2
+    assert deficit_rows[0]["metrics_compared"] == 2
+    assert deficit_rows[1]["total_deficit"] == pytest.approx(-0.10)
+    assert deficit_rows[1]["deficit_metrics"] == 1
+    assert deficit_rows[1]["metrics_compared"] == 2
+    assert "### Worst Subjects by Total Deficit to Track2p" in summary
+    assert (
+        "| jm039 | BayesCaTrack | 2 / 2 | -0.600 | -0.300 | pairwise F1 | -0.300 |"
+        in summary
+    )
+    assert output_path.read_text(encoding="utf-8").endswith("\n")
+
+
+def test_subject_deficit_summary_reports_when_no_deficits():
+    summary = format_subject_deficit_summary(
+        _subject_no_deficit_rows(), reference_approach="Track2p"
+    )
 
     assert "no non-reference deficits" in summary
