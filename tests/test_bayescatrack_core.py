@@ -4,8 +4,13 @@ import numpy as np
 import numpy.testing as npt
 from bayescatrack import CalciumPlaneData
 from bayescatrack.association.calibrated_costs import (
+    DEFAULT_ASSOCIATION_FEATURES,
     LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
     pairwise_feature_tensor,
+)
+from bayescatrack.experiments.track2p_loso_calibration import (
+    calibration_feature_names,
+    pairwise_cost_kwargs_for_calibration_features,
 )
 from tests._support import run_module
 
@@ -84,6 +89,27 @@ def test_local_image_and_weighted_mask_evidence_components_rank_diagonal_pairs()
     )
     assert features.shape == (2, 2, len(LOCAL_EVIDENCE_ASSOCIATION_FEATURES))
     assert features[0, 0, 0] < features[0, 1, 0]
+
+
+def test_local_evidence_calibration_feature_preset_enables_components():
+    default_features = calibration_feature_names("default")
+    local_features = calibration_feature_names("local-evidence")
+    combined_features = calibration_feature_names("default+local-evidence")
+
+    assert default_features == tuple(DEFAULT_ASSOCIATION_FEATURES)
+    assert local_features == tuple(LOCAL_EVIDENCE_ASSOCIATION_FEATURES)
+    assert combined_features[: len(DEFAULT_ASSOCIATION_FEATURES)] == tuple(
+        DEFAULT_ASSOCIATION_FEATURES
+    )
+    assert set(LOCAL_EVIDENCE_ASSOCIATION_FEATURES).issubset(combined_features)
+
+    default_kwargs = pairwise_cost_kwargs_for_calibration_features({}, default_features)
+    local_kwargs = pairwise_cost_kwargs_for_calibration_features(
+        {"patch_radius": 3}, combined_features
+    )
+
+    assert default_kwargs is None
+    assert local_kwargs == {"patch_radius": 3, "local_evidence_components": True}
 
 
 def test_cli_summary_and_export(tmp_path):
