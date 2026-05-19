@@ -384,9 +384,9 @@ def test_subject_gap_summary_reports_worst_non_reference_rows(tmp_path):
     rows = _subject_comparison_rows()
 
     gap_rows = build_subject_gap_summary_rows(
-        rows, reference_approach="Track2p", limit=2
+        rows, reference_approach="Track2p", limit=12
     )
-    summary = format_subject_gap_summary(rows, reference_approach="Track2p", limit=2)
+    summary = format_subject_gap_summary(rows, reference_approach="Track2p", limit=12)
     output_path = tmp_path / "subject_gaps.md"
     write_subject_gap_summary(
         rows,
@@ -395,14 +395,44 @@ def test_subject_gap_summary_reports_worst_non_reference_rows(tmp_path):
         limit=2,
     )
 
-    assert [row["subject"] for row in gap_rows] == ["jm039", "jm039"]
+    assert [row["subject"] for row in gap_rows] == ["jm039", "jm039", "jm046"]
     assert [row["metric_column"] for row in gap_rows] == [
         "complete_track_f1",
         "pairwise_f1",
+        "complete_track_f1",
     ]
+    assert all(float(row["gap_to_reference"]) < 0.0 for row in gap_rows)
     assert "### Worst Subject Gaps to Track2p" in summary
     assert (
         "| jm039 | complete-track F1 | BayesCaTrack | 0.500 | 0.800 | -0.300 | 2 |"
         in summary
     )
+    assert (
+        "| jm046 | pairwise F1 | BayesCaTrack | 0.750 | 0.700 | +0.050 |" not in summary
+    )
     assert output_path.read_text(encoding="utf-8").endswith("\n")
+
+
+def test_subject_gap_summary_reports_when_no_deficits():
+    rows = [
+        _subject_result_row(
+            "Track2p",
+            "jm039",
+            pairwise_f1="0.60",
+            complete_track_f1="0.50",
+            pairwise_counts=(6, 2, 6),
+            complete_track_counts=(5, 3, 7),
+        ),
+        _subject_result_row(
+            "BayesCaTrack",
+            "jm039",
+            pairwise_f1="0.70",
+            complete_track_f1="0.55",
+            pairwise_counts=(7, 2, 5),
+            complete_track_counts=(6, 3, 6),
+        ),
+    ]
+
+    summary = format_subject_gap_summary(rows, reference_approach="Track2p")
+
+    assert "no non-reference deficits" in summary

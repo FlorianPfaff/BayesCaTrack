@@ -249,7 +249,7 @@ def format_subject_gap_summary(
         "| --- | --- | --- | ---: | ---: | ---: | ---: |",
     ]
     if not gap_rows:
-        body.append("| n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+        body.append("| n/a | no non-reference deficits | n/a | n/a | n/a | n/a | n/a |")
         return "\n".join(body)
 
     for row in gap_rows:
@@ -401,7 +401,7 @@ def build_subject_gap_summary_rows(
     reference_approach: str | None,
     limit: int = 12,
 ) -> list[dict[str, float | int | str]]:
-    """Build subject-level non-reference rows sorted by worst reference gap."""
+    """Build subject-level non-reference deficits sorted by worst reference gap."""
 
     if limit < 1:
         raise ValueError("Subject gap summary limit must be at least 1")
@@ -412,7 +412,9 @@ def build_subject_gap_summary_rows(
     gap_rows = [
         row
         for row in subject_metric_rows
-        if row["is_reference"] != "true" and row["gap_to_reference"] != ""
+        if row["is_reference"] != "true"
+        and row["gap_to_reference"] != ""
+        and _as_float(row["gap_to_reference"]) < 0.0
     ]
     return sorted(
         gap_rows,
