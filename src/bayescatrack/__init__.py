@@ -4,9 +4,6 @@
 
 from . import cli as _cli
 from .core import bridge as _bridge
-from .soft_overlap_costs import (
-    install_soft_overlap_costs as _install_soft_overlap_costs,
-)
 
 
 def _install_registration_transform_argparse_patch() -> None:
@@ -105,7 +102,5 @@ load_suite2p_plane = _bridge.load_suite2p_plane
 load_track2p_subject = _bridge.load_track2p_subject
 main = _cli.main
 summarize_subject = _bridge.summarize_subject
-
-_install_soft_overlap_costs()
 
 __all__ = tuple(dict.fromkeys((*_bridge.__all__, "main")))

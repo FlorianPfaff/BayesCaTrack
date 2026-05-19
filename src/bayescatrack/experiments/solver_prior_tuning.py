@@ -46,6 +46,7 @@ from bayescatrack.experiments.track2p_benchmark import (
     solve_configured_global_assignment,
 )
 from bayescatrack.reference import Track2pReference
+from bayescatrack.track2p_registration import REGISTRATION_TRANSFORM_TYPES
 
 SolverPriorObjective = Literal["pairwise_f1", "complete_track_f1", "mean_f1"]
 
@@ -350,7 +351,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
+        choices=REGISTRATION_TRANSFORM_TYPES,
     )
     parser.add_argument("--start-costs", default="0.5,1,1.5,2")
     parser.add_argument("--end-costs", default="")

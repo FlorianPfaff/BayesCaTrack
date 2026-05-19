@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from bayescatrack import CalciumPlaneData
 from bayescatrack.fov_affine_registration import (
+    apply_affine_image_warp,
     apply_affine_roi_mask_warp,
     estimate_fov_affine_transform,
     register_measurement_plane_by_fov_affine,
@@ -31,6 +32,18 @@ def test_apply_affine_roi_mask_warp_applies_translation():
 
     expected = np.zeros_like(masks)
     expected[0, 4, 2] = True
+    np.testing.assert_array_equal(registered, expected)
+
+
+def test_apply_affine_image_warp_applies_translation():
+    image = np.zeros((8, 8), dtype=float)
+    image[3, 4] = 7.0
+    affine_xy = np.asarray([[1.0, 0.0, -2.0], [0.0, 1.0, 1.0]], dtype=float)
+
+    registered = apply_affine_image_warp(image, affine_xy, output_shape=(8, 8))
+
+    expected = np.zeros_like(image)
+    expected[4, 2] = 7.0
     np.testing.assert_array_equal(registered, expected)
 
 
@@ -79,6 +92,40 @@ def test_fov_affine_registration_recovers_translation_like_fallback():
     assert (
         np.count_nonzero(registered_mask & reference_mask[0])
         >= np.count_nonzero(reference_mask[0]) // 2
+    )
+
+
+def test_fov_affine_registration_warps_measurement_fov_not_reference_fov():
+    reference_fov = _spot_image((96, 96), ((20, 22), (28, 72), (68, 28), (72, 75)))
+    measurement_fov = apply_integer_image_translation(
+        2.0 * reference_fov, [-3, 4], output_shape=(96, 96)
+    )
+    reference_mask = reference_fov[None, :, :] > 0.0
+    measurement_mask = (
+        apply_integer_image_translation(
+            reference_mask[0], [-3, 4], output_shape=(96, 96)
+        )[None, :, :]
+        > 0
+    )
+    reference_plane = CalciumPlaneData(
+        reference_mask, fov=reference_fov, source="reference"
+    )
+    measurement_plane = CalciumPlaneData(
+        measurement_mask, fov=measurement_fov, source="measurement"
+    )
+
+    registration = register_measurement_plane_by_fov_affine(
+        reference_plane, measurement_plane
+    )
+
+    expected_fov = apply_affine_image_warp(
+        measurement_fov, registration.estimate.matrix_xy, output_shape=(96, 96)
+    )
+    np.testing.assert_array_equal(
+        registration.registered_measurement_plane.fov, expected_fov
+    )
+    assert not np.array_equal(
+        registration.registered_measurement_plane.fov, reference_fov
     )
 
 

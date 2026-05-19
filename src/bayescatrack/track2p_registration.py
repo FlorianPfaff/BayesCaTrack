@@ -69,14 +69,14 @@ def _load_track2p_registration_backend() -> tuple[Any, Any]:
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
             "Track2p-compatible affine/rigid registration requires the 'track2p' "
-            "package and its ITK/elastix stack. Install that backend for "
-            "transform_type='affine' or transform_type='rigid'. Pass "
-            "allow_fov_affine_fallback=True to opt in to BayesCaTrack's NumPy "
-            "FOV-affine fallback for transform_type='affine', or request "
-            "transform_type='fov-affine' explicitly. Request "
+            "package and its ITK/elastix stack. transform_type='affine' and "
+            "transform_type='rigid' are reserved for that backend so their "
+            "numerical results do not depend on optional imports. Request "
             "transform_type='fov-translation' explicitly for the integer "
-            "phase-correlation fallback, or a nonrigid transform such as "
-            "'bspline', 'tps', 'local-affine-grid', or 'optical-flow' for growth-aware registration."
+            "phase-correlation fallback, transform_type='fov-affine' for "
+            "BayesCaTrack's NumPy FOV-affine registration, or a nonrigid "
+            "transform such as 'bspline', 'tps', 'local-affine-grid', or "
+            "'optical-flow' for growth-aware registration."
         ) from exc
     return reg_img_elastix, itk_reg_all_roi
 
@@ -188,17 +188,12 @@ def register_plane_pair(
             transform_type=transform_type,
         )
 
-    try:
-        reg_img_elastix, itk_reg_all_roi = _load_track2p_registration_backend()
-    except ImportError:
-        if transform_type == "affine" and allow_fov_affine_fallback:
-            return _fov_affine_registered_plane(
-                reference_plane,
-                moving_plane,
-                transform_type=transform_type,
-                reason="track2p.register.elastix import failed and allow_fov_affine_fallback=True",
-            )
-        raise
+    # Do not fall back from Track2p/elastix to BayesCaTrack's NumPy FOV-affine
+    # implementation here. The two backends can produce different registered
+    # masks/costs, so transform_type="affine" and transform_type="rigid" must
+    # either use the Track2p backend or fail. Lightweight alternatives remain
+    # available via the explicit "fov-affine" and "fov-translation" names.
+    reg_img_elastix, itk_reg_all_roi = _load_track2p_registration_backend()
 
     registered_fov, reg_params = reg_img_elastix(
         np.asarray(reference_plane.fov),

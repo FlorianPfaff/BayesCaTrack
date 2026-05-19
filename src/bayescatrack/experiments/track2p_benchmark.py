@@ -7,7 +7,7 @@ import csv
 import json
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -37,6 +37,7 @@ from bayescatrack.reference import (
     load_aligned_subject_reference,
     load_track2p_reference,
 )
+from bayescatrack.track2p_registration import REGISTRATION_TRANSFORM_TYPES
 
 ReferenceKind = Literal["auto", "manual-gt", "track2p-output", "aligned-subject-rows"]
 BenchmarkMethod = Literal["track2p-baseline", "global-assignment", "oracle-gt-links"]
@@ -44,6 +45,7 @@ BenchmarkSplit = Literal["subject", "leave-one-subject-out"]
 OutputFormat = Literal["table", "json", "csv"]
 CalibrationModel = Literal["monotone-ranker", "logistic"]
 CalibrationFeatureSet = Literal["default", "local-evidence", "default+local-evidence"]
+CalibrationSampleWeightStrategy = Literal["none", "balanced"]
 SolverPriorObjective = Literal["pairwise_f1", "complete_track_f1", "mean_f1"]
 GROUND_TRUTH_CSV_NAME = "ground_truth.csv"
 GROUND_TRUTH_REFERENCE_SOURCE = "ground_truth_csv"
@@ -89,11 +91,18 @@ class Track2pBenchmarkConfig:
     max_gap: int = 2
     calibration_model: CalibrationModel = "monotone-ranker"
     transform_type: str = "affine"
+    transform_suite: Sequence[str] = ()
     allow_fov_affine_fallback: bool = False
     start_cost: float = 5.0
     end_cost: float = 5.0
     gap_penalty: float = 1.0
     cost_threshold: float | None = 6.0
+    tune_solver_priors: bool = False
+    solver_prior_objective: SolverPriorObjective = "complete_track_f1"
+    solver_prior_start_costs: tuple[float, ...] | None = None
+    solver_prior_end_costs: tuple[float, ...] | None = None
+    solver_prior_gap_penalties: tuple[float, ...] | None = None
+    solver_prior_cost_thresholds: tuple[float | None, ...] | None = None
     include_behavior: bool = True
     include_non_cells: bool = False
     cell_probability_threshold: float = 0.5
@@ -104,6 +113,13 @@ class Track2pBenchmarkConfig:
     velocity_variance: float = 25.0
     regularization: float = 1.0e-6
     calibration_feature_set: CalibrationFeatureSet = "default"
+    calibration_sample_weight_strategy: CalibrationSampleWeightStrategy = "none"
+    calibration_model_kwargs: dict[str, Any] | None = None
+    calibration_hard_negative_ratio: float = 4.0
+    calibration_hard_negative_top_k: int | None = 20
+    calibration_hard_negative_include_columns: bool = True
+    calibration_hard_negative_features: tuple[str, ...] = ()
+    activity_feature_weight: float = 0.25
     pairwise_cost_kwargs: dict[str, Any] | None = None
     higher_order_consistency_config: dict[str, Any] | None = None
     activity_tie_breaker_weight: float = 0.0
@@ -111,12 +127,6 @@ class Track2pBenchmarkConfig:
     activity_trace_source: str = "auto"
     activity_event_threshold: float = 0.0
     progress: bool = False
-    tune_solver_priors: bool = False
-    solver_prior_objective: SolverPriorObjective = "complete_track_f1"
-    solver_prior_start_costs: tuple[float, ...] | None = None
-    solver_prior_end_costs: tuple[float, ...] | None = None
-    solver_prior_gap_penalties: tuple[float, ...] | None = None
-    solver_prior_cost_thresholds: tuple[float | None, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -176,6 +186,8 @@ def run_track2p_benchmark(
 ) -> list[SubjectBenchmarkResult]:
     """Run a Track2p benchmark over one subject directory or a dataset root."""
 
+    if config.transform_suite:
+        return _run_transform_suite(config)
     if config.split == "leave-one-subject-out":
         return _run_loso_benchmark(config)
     if config.tune_solver_priors:
@@ -227,6 +239,64 @@ def run_track2p_benchmark(
     return results
 
 
+def _run_transform_suite(
+    config: Track2pBenchmarkConfig,
+) -> list[SubjectBenchmarkResult]:
+    """Run one benchmark row per requested registration transform."""
+
+    if config.method != "global-assignment":
+        raise ValueError("transform_suite requires method='global-assignment'")
+
+    results: list[SubjectBenchmarkResult] = []
+    seen: set[str] = set()
+    for transform_type in _normalized_transform_suite(config.transform_suite):
+        if transform_type in seen:
+            continue
+        if transform_type not in REGISTRATION_TRANSFORM_TYPES:
+            valid_types = ", ".join(repr(value) for value in REGISTRATION_TRANSFORM_TYPES)
+            raise ValueError(
+                "transform_suite contains unsupported transform_type "
+                f"{transform_type!r}; expected one of {valid_types}"
+            )
+        seen.add(transform_type)
+        transform_config = replace(
+            config,
+            transform_type=transform_type,
+            transform_suite=(),
+        )
+        results.extend(
+            _tag_transform_results(
+                run_track2p_benchmark(transform_config),
+                transform_type=transform_type,
+            )
+        )
+    return results
+
+
+def _normalized_transform_suite(transform_suite: Sequence[str]) -> tuple[str, ...]:
+    if isinstance(transform_suite, str):
+        return (transform_suite,)
+    return tuple(str(value) for value in transform_suite)
+
+
+def _tag_transform_results(
+    results: Sequence[SubjectBenchmarkResult], *, transform_type: str
+) -> list[SubjectBenchmarkResult]:
+    return [
+        SubjectBenchmarkResult(
+            subject=result.subject,
+            variant=f"{result.variant} [{transform_type}]",
+            method=result.method,
+            scores={**dict(result.scores), "transform_type": transform_type},
+            n_sessions=result.n_sessions,
+            reference_source=result.reference_source,
+            registration_backend=result.registration_backend,
+            registration_transform_type=result.registration_transform_type,
+        )
+        for result in results
+    ]
+
+
 def discover_subject_dirs(data_path: str | Path) -> list[Path]:
     """Find Track2p subject directories beneath ``data_path``."""
 
@@ -244,7 +314,7 @@ def discover_subject_dirs(data_path: str | Path) -> list[Path]:
 def format_benchmark_table(rows: Sequence[dict[str, float | int | str]]) -> str:
     """Format benchmark rows as the first paper-facing Markdown table."""
 
-    columns = [
+    base_columns = [
         "variant",
         "registration_backend",
         "pairwise_f1",
@@ -253,6 +323,21 @@ def format_benchmark_table(rows: Sequence[dict[str, float | int | str]]) -> str:
         "pairwise_recall",
         "complete_tracks",
         "mean_track_length",
+    ]
+    optional_columns = [
+        "solver_prior_learned",
+        "solver_prior_objective",
+        "learned_start_cost",
+        "learned_end_cost",
+        "learned_gap_penalty",
+        "learned_cost_threshold",
+        "tuned_start_cost",
+        "tuned_end_cost",
+        "tuned_gap_penalty",
+        "tuned_cost_threshold",
+    ]
+    columns = base_columns + [
+        column for column in optional_columns if any(column in row for row in rows)
     ]
     header = "| " + " | ".join(columns) + " |"
     separator = "| " + " | ".join(["---"] + ["---:"] * (len(columns) - 1)) + " |"
@@ -284,6 +369,66 @@ def write_results(
             writer.writerows(rows)
         return
     output_path.write_text(format_benchmark_table(rows) + "\n", encoding="utf-8")
+
+
+def write_edge_ranking_diagnostics(
+    config: Track2pBenchmarkConfig,
+    output_path: Path,
+    *,
+    summary_output_path: Path | None = None,
+    feature_names: Sequence[str] | None = None,
+    similarity_features: Sequence[str] | None = None,
+) -> tuple[int, int]:
+    """Write pairwise edge-ranking diagnostics for the benchmark configuration.
+
+    This intentionally runs outside ``run_track2p_benchmark`` so the benchmark
+    remains a pure scorer. The CLI uses it to attach diagnostic CSVs to the same
+    configuration that produced the reported Track2p benchmark row. That makes
+    it easier to distinguish candidate-generation/ranking failures from losses
+    introduced later by the global assignment solver.
+    """
+
+    from bayescatrack.experiments.track2p_edge_ranking import (
+        DEFAULT_EDGE_RANKING_FEATURES,
+        DEFAULT_SIMILARITY_FEATURES,
+        run_track2p_edge_ranking,
+    )
+
+    output_path = Path(output_path)
+    resolved_summary_output_path = (
+        Path(summary_output_path) if summary_output_path is not None else None
+    )
+    resolved_feature_names = (
+        tuple(feature_names)
+        if feature_names is not None
+        else DEFAULT_EDGE_RANKING_FEATURES
+    )
+    resolved_similarity_features = (
+        tuple(similarity_features)
+        if similarity_features is not None
+        else DEFAULT_SIMILARITY_FEATURES
+    )
+    edge_rows, summary_rows = run_track2p_edge_ranking(
+        config,
+        output_path,
+        summary_output_path=resolved_summary_output_path,
+        feature_names=resolved_feature_names,
+        similarity_features=resolved_similarity_features,
+    )
+    summary_path = resolved_summary_output_path or _default_edge_ranking_summary_path(
+        output_path
+    )
+    print(
+        f"Wrote {edge_rows} edge-ranking rows to {output_path} and "
+        f"{summary_rows} summary rows to {summary_path}",
+        file=sys.stderr,
+    )
+    return edge_rows, summary_rows
+
+
+def _default_edge_ranking_summary_path(output_path: Path) -> Path:
+    suffix = output_path.suffix or ".csv"
+    return output_path.with_name(f"{output_path.stem}_summary{suffix}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -383,10 +528,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "fov-affine", "none"),
+        choices=REGISTRATION_TRANSFORM_TYPES,
+        help="Registration transform type used for pairwise ROI alignment",
+    )
+    parser.add_argument(
+        "--transform-suite",
+        nargs="+",
+        choices=REGISTRATION_TRANSFORM_TYPES,
+        default=(),
+        metavar="TRANSFORM",
         help=(
-            "Registration transform type; 'affine' and 'rigid' require "
-            "Track2p/elastix unless fallback is explicit"
+            "Run one benchmark row per listed registration transform, overriding "
+            "--transform-type."
         ),
     )
     parser.add_argument(
@@ -470,6 +623,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Pairwise activity component to add as a weak cost plane.",
     )
     parser.add_argument(
+        "--activity-feature-weight",
+        type=float,
+        default=0.25,
+        help="Scale continuous activity features during calibrated-cost training/inference.",
+    )
+    parser.add_argument(
         "--activity-trace-source",
         default="auto",
         choices=_ACTIVITY_TRACE_SOURCES,
@@ -542,9 +701,85 @@ def build_arg_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--calibration-sample-weight-strategy",
+        default="none",
+        choices=("none", "balanced"),
+        help="Sample-weight strategy for LOSO calibration training",
+    )
+    parser.add_argument(
+        "--calibration-model-kwargs-json",
+        default=None,
+        help="JSON object forwarded to the calibrated logistic model constructor",
+    )
+    parser.add_argument(
+        "--calibration-hard-negative-ratio",
+        type=float,
+        default=4.0,
+        help="Maximum hard-negative-to-positive ratio used for LOSO calibration",
+    )
+    parser.add_argument(
+        "--calibration-hard-negative-top-k",
+        type=int,
+        default=20,
+        help="Per-anchor hard-negative candidate count before ratio limiting",
+    )
+    parser.add_argument(
+        "--no-calibration-hard-negative-top-k",
+        action="store_true",
+        help="Disable per-anchor top-k candidate limiting before hard-negative selection",
+    )
+    parser.add_argument(
+        "--calibration-hard-negative-no-column-candidates",
+        action="store_true",
+        help="Use row-wise hard-negative candidates only; do not add column-wise candidates",
+    )
+    parser.add_argument(
+        "--calibration-hard-negative-features",
+        default="",
+        help="Comma-separated feature names used to rank hard negatives",
+    )
+    parser.add_argument(
         "--pairwise-cost-kwargs-json",
         default=None,
         help="JSON object merged into pairwise cost kwargs",
+    )
+    parser.add_argument(
+        "--edge-ranking-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional detailed edge-ranking CSV to write for the exact same "
+            "Track2p cost/configuration before global assignment"
+        ),
+    )
+    parser.add_argument(
+        "--edge-ranking-summary-output",
+        type=Path,
+        default=None,
+        help=(
+            "Optional edge-ranking summary CSV; defaults to "
+            "<edge-ranking-output-stem>_summary.csv"
+        ),
+    )
+    parser.add_argument(
+        "--edge-ranking-feature",
+        dest="edge_ranking_features",
+        action="append",
+        default=None,
+        help=(
+            "Feature/component to rank in the optional edge-ranking CSV; "
+            "repeat to override defaults"
+        ),
+    )
+    parser.add_argument(
+        "--edge-ranking-similarity-feature",
+        dest="edge_ranking_similarity_features",
+        action="append",
+        default=None,
+        help=(
+            "Feature in the optional edge-ranking CSV where larger values are "
+            "better; repeat to override defaults"
+        ),
     )
     _add_higher_order_consistency_arguments(parser)
     parser.add_argument(
@@ -576,6 +811,14 @@ def main(argv: list[str] | None = None) -> int:
         write_results(rows, args.output, args.format)
     else:
         _write_stdout(rows, args.format)
+    if args.edge_ranking_output is not None:
+        write_edge_ranking_diagnostics(
+            config,
+            args.edge_ranking_output,
+            summary_output_path=args.edge_ranking_summary_output,
+            feature_names=args.edge_ranking_features,
+            similarity_features=args.edge_ranking_similarity_features,
+        )
     return 0
 
 
@@ -677,6 +920,7 @@ def solve_configured_global_assignment(
 ) -> GlobalAssignmentRun:
     """Run global assignment using the benchmark configuration knobs."""
 
+    _validate_activity_tie_breaker_config(config)
     return solve_global_assignment_for_sessions(
         sessions,
         max_gap=config.max_gap,
@@ -707,8 +951,15 @@ def _configured_variant_name(config: Track2pBenchmarkConfig) -> str:
             config.cost,
             higher_order_consistency_config=config.higher_order_consistency_config,
         )
+        + _activity_feature_variant_suffix(config)
         + _activity_variant_suffix(config)
     )
+
+
+def _activity_feature_variant_suffix(config: Track2pBenchmarkConfig) -> str:
+    if config.cost != "calibrated" or config.activity_feature_weight == 1.0:
+        return ""
+    return f" + activity feature weight {config.activity_feature_weight:g}"
 
 
 def _activity_variant_suffix(config: Track2pBenchmarkConfig) -> str:
@@ -1214,16 +1465,27 @@ def _run_loso_benchmark(config: Track2pBenchmarkConfig) -> list[SubjectBenchmark
         run_track2p_loso_calibration,
     )
 
-    return run_track2p_loso_calibration(config).to_benchmark_results()
+    return run_track2p_loso_calibration(
+        config,
+        sample_weight_strategy=config.calibration_sample_weight_strategy,
+        model_kwargs=config.calibration_model_kwargs,
+    ).to_benchmark_results()
 
 
 def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
-    pairwise_cost_kwargs = None
-    if args.pairwise_cost_kwargs_json is not None:
-        parsed = json.loads(args.pairwise_cost_kwargs_json)
-        if not isinstance(parsed, dict):
-            raise ValueError("--pairwise-cost-kwargs-json must decode to a JSON object")
-        pairwise_cost_kwargs = parsed
+    pairwise_cost_kwargs = _optional_json_object(
+        args.pairwise_cost_kwargs_json, argument="--pairwise-cost-kwargs-json"
+    )
+    calibration_model_kwargs = _optional_json_object(
+        args.calibration_model_kwargs_json,
+        argument="--calibration-model-kwargs-json",
+    )
+    calibration_hard_negative_top_k = (
+        None
+        if args.no_calibration_hard_negative_top_k
+        else args.calibration_hard_negative_top_k
+    )
+    higher_order_consistency_config = _higher_order_consistency_config_from_args(args)
     activity_tie_breaker_weight = float(args.activity_tie_breaker_weight)
     if (
         not np.isfinite(activity_tie_breaker_weight)
@@ -1235,6 +1497,9 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
     activity_event_threshold = float(args.activity_event_threshold)
     if (not np.isfinite(activity_event_threshold)) or activity_event_threshold < 0.0:
         raise ValueError("--activity-event-threshold must be non-negative and finite")
+    activity_feature_weight = float(args.activity_feature_weight)
+    if (not np.isfinite(activity_feature_weight)) or activity_feature_weight < 0.0:
+        raise ValueError("--activity-feature-weight must be non-negative and finite")
 
     return Track2pBenchmarkConfig(
         data=args.data,
@@ -1252,28 +1517,12 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
         max_gap=args.max_gap,
         calibration_model=args.calibration_model,
         transform_type=args.transform_type,
+        transform_suite=tuple(args.transform_suite or ()),
         allow_fov_affine_fallback=args.allow_fov_affine_fallback,
         start_cost=args.start_cost,
         end_cost=args.end_cost,
         gap_penalty=args.gap_penalty,
         cost_threshold=None if args.no_cost_threshold else args.cost_threshold,
-        include_behavior=args.include_behavior,
-        include_non_cells=args.include_non_cells,
-        cell_probability_threshold=args.cell_probability_threshold,
-        weighted_masks=args.weighted_masks,
-        exclude_overlapping_pixels=args.exclude_overlapping_pixels,
-        order=args.order,
-        weighted_centroids=args.weighted_centroids,
-        velocity_variance=args.velocity_variance,
-        regularization=args.regularization,
-        calibration_feature_set=args.calibration_feature_set,
-        pairwise_cost_kwargs=pairwise_cost_kwargs,
-        higher_order_consistency_config=_higher_order_consistency_config_from_args(args),
-        activity_tie_breaker_weight=activity_tie_breaker_weight,
-        activity_tie_breaker_component=args.activity_tie_breaker_component,
-        activity_trace_source=args.activity_trace_source,
-        activity_event_threshold=activity_event_threshold,
-        progress=args.progress,
         tune_solver_priors=args.tune_solver_priors,
         solver_prior_objective=cast(SolverPriorObjective, args.solver_prior_objective),
         solver_prior_start_costs=_parse_optional_solver_float_list(
@@ -1294,14 +1543,69 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
         solver_prior_cost_thresholds=_parse_optional_solver_threshold_list(
             args.solver_prior_cost_thresholds
         ),
+        include_behavior=args.include_behavior,
+        include_non_cells=args.include_non_cells,
+        cell_probability_threshold=args.cell_probability_threshold,
+        weighted_masks=args.weighted_masks,
+        exclude_overlapping_pixels=args.exclude_overlapping_pixels,
+        order=args.order,
+        weighted_centroids=args.weighted_centroids,
+        velocity_variance=args.velocity_variance,
+        regularization=args.regularization,
+        calibration_feature_set=args.calibration_feature_set,
+        calibration_sample_weight_strategy=args.calibration_sample_weight_strategy,
+        calibration_model_kwargs=calibration_model_kwargs,
+        calibration_hard_negative_ratio=args.calibration_hard_negative_ratio,
+        calibration_hard_negative_top_k=calibration_hard_negative_top_k,
+        calibration_hard_negative_include_columns=(
+            not args.calibration_hard_negative_no_column_candidates
+        ),
+        calibration_hard_negative_features=_comma_separated_names(
+            args.calibration_hard_negative_features
+        ),
+        activity_feature_weight=activity_feature_weight,
+        pairwise_cost_kwargs=pairwise_cost_kwargs,
+        higher_order_consistency_config=higher_order_consistency_config,
+        activity_tie_breaker_weight=activity_tie_breaker_weight,
+        activity_tie_breaker_component=args.activity_tie_breaker_component,
+        activity_trace_source=args.activity_trace_source,
+        activity_event_threshold=activity_event_threshold,
+        progress=args.progress,
     )
+
+
+def _optional_json_object(value: str | None, *, argument: str) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{argument} must decode to a JSON object")
+    return parsed
+
+
+def _comma_separated_names(value: str | Sequence[str] | None) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raw_names = value.split(",")
+    else:
+        raw_names = value
+    return tuple(str(name).strip() for name in raw_names if str(name).strip())
 
 
 def _add_higher_order_consistency_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
+        "--higher-order-consistency-json",
+        default=None,
+        help=(
+            "JSON object passed as HigherOrderConsistencyConfig. "
+            "Triplet consistency is active when triplet_weight > 0."
+        ),
+    )
+    parser.add_argument(
         "--higher-order-triplet-weight",
         type=float,
-        default=0.0,
+        default=None,
         help=(
             "Weight for triplet-projected higher-order consistency penalties; "
             "0 disables the ablation."
@@ -1310,25 +1614,25 @@ def _add_higher_order_consistency_arguments(parser: argparse.ArgumentParser) -> 
     parser.add_argument(
         "--higher-order-support-top-k",
         type=int,
-        default=8,
+        default=None,
         help="Top-k compatible third-session candidates considered per anchor ROI.",
     )
     parser.add_argument(
         "--higher-order-support-cost-cap",
         type=float,
-        default=4.0,
+        default=None,
         help="Maximum pairwise cost admitted as third-session support evidence.",
     )
     parser.add_argument(
         "--higher-order-max-penalty",
         type=float,
-        default=2.0,
+        default=None,
         help="Maximum unweighted triplet-support penalty added to one edge.",
     )
     parser.add_argument(
         "--higher-order-large-cost",
         type=float,
-        default=1.0e6,
+        default=None,
         help="Sentinel cost treated as an inadmissible/gated edge.",
     )
 
@@ -1336,22 +1640,27 @@ def _add_higher_order_consistency_arguments(parser: argparse.ArgumentParser) -> 
 def _higher_order_consistency_config_from_args(
     args: argparse.Namespace,
 ) -> dict[str, Any] | None:
-    config = HigherOrderConsistencyConfig(
-        triplet_weight=args.higher_order_triplet_weight,
-        support_top_k=args.higher_order_support_top_k,
-        support_cost_cap=args.higher_order_support_cost_cap,
-        max_penalty=args.higher_order_max_penalty,
-        large_cost=args.higher_order_large_cost,
-    )
-    if not config.enabled:
-        return None
-    return {
-        "triplet_weight": float(config.triplet_weight),
-        "support_top_k": int(config.support_top_k),
-        "support_cost_cap": float(config.support_cost_cap),
-        "max_penalty": float(config.max_penalty),
-        "large_cost": float(config.large_cost),
+    config: dict[str, Any] = {}
+    if args.higher_order_consistency_json is not None:
+        config.update(
+            _optional_json_object(
+                args.higher_order_consistency_json,
+                argument="--higher-order-consistency-json",
+            )
+            or {}
+        )
+    cli_fields = {
+        "higher_order_triplet_weight": "triplet_weight",
+        "higher_order_support_top_k": "support_top_k",
+        "higher_order_support_cost_cap": "support_cost_cap",
+        "higher_order_max_penalty": "max_penalty",
+        "higher_order_large_cost": "large_cost",
     }
+    for attribute, config_key in cli_fields.items():
+        value = getattr(args, attribute)
+        if value is not None:
+            config[config_key] = value
+    return config or None
 
 
 def _solver_prior_search_config_from_benchmark_config(
@@ -1476,6 +1785,7 @@ def _csv_fieldnames(rows: Sequence[dict[str, float | int | str]]) -> list[str]:
         "method",
         "n_sessions",
         "reference_source",
+        "transform_type",
         "registration_backend",
         "registration_transform_type",
         "pairwise_f1",
@@ -1497,6 +1807,12 @@ def _csv_fieldnames(rows: Sequence[dict[str, float | int | str]]) -> list[str]:
         "negative_examples",
         "calibration_feature_set",
         "calibration_feature_count",
+        "calibration_sample_weight_strategy",
+        "calibration_class_weight",
+        "calibration_hard_negative_ratio",
+        "calibration_hard_negative_top_k",
+        "calibration_hard_negative_include_columns",
+        "calibration_hard_negative_features",
         "solver_prior_objective",
         "solver_prior_objective_score",
         "solver_prior_candidate_count",

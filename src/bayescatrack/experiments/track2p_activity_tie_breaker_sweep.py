@@ -37,6 +37,7 @@ from bayescatrack.experiments.track2p_cost_sweep import (
     _parse_nonnegative_values,
     _threshold_label,
 )
+from bayescatrack.track2p_registration import REGISTRATION_TRANSFORM_TYPES
 
 # pylint: disable=protected-access,too-many-locals
 
@@ -251,7 +252,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-affine", "fov-translation", "none"),
+        choices=REGISTRATION_TRANSFORM_TYPES,
     )
     parser.add_argument("--start-cost", type=float, default=5.0)
     parser.add_argument("--end-cost", type=float, default=5.0)
@@ -266,8 +267,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--activity-tie-breaker-weights",
         "--activity-weight-sweep",
         dest="activity_tie_breaker_weights",
-        default="0,0.01,0.03,0.1,0.3",
-        help="Comma-separated non-negative activity tie-breaker weights.",
+        default="0,0.003,0.01,0.03,0.1",
+        help=(
+            "Comma-separated non-negative activity tie-breaker weights. "
+            "Defaults stay deliberately weak so trace evidence acts as a tie-breaker "
+            "rather than a primary association cue."
+        ),
     )
     parser.add_argument(
         "--activity-tie-breaker-component",

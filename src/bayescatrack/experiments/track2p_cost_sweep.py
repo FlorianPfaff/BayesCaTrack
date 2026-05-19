@@ -34,6 +34,7 @@ from bayescatrack.experiments.track2p_benchmark import (
 from bayescatrack.experiments.track2p_fov_affine_benchmark import (
     _soft_iou_pairwise_cost_matrix,
 )
+from bayescatrack.track2p_registration import REGISTRATION_TRANSFORM_TYPES
 
 # pylint: disable=protected-access,too-many-locals
 
@@ -460,7 +461,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-affine", "fov-translation", "none"),
+        choices=REGISTRATION_TRANSFORM_TYPES,
     )
     parser.add_argument("--start-cost", type=float, default=5.0)
     parser.add_argument("--end-cost", type=float, default=5.0)

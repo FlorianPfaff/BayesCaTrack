@@ -98,6 +98,30 @@ def test_benchmark_manifest_rejects_unknown_run_keys(tmp_path):
         load_benchmark_manifest(manifest_path)
 
 
+def test_benchmark_manifest_accepts_nonrigid_registration_transform(tmp_path):
+    manifest_path = tmp_path / "benchmarks.json"
+    _write_manifest(
+        manifest_path,
+        {
+            "defaults": {
+                "data": "data",
+                "method": "global-assignment",
+                "transform_type": "tps",
+            },
+            "runs": [
+                {
+                    "name": "nonrigid-registration",
+                    "cost": "registered-iou",
+                }
+            ],
+        },
+    )
+
+    manifest = load_benchmark_manifest(manifest_path)
+
+    assert manifest.runs[0].config.transform_type == "tps"
+
+
 def test_benchmark_suite_cli_runs_manifest(tmp_path):
     write_synthetic_track2p_subject(
         tmp_path / "data",
@@ -135,3 +159,38 @@ def test_benchmark_suite_cli_runs_manifest(tmp_path):
 
     assert "track2p-default" in proc.stdout
     assert (tmp_path / "results" / "track2p.csv").exists()
+
+
+def test_benchmark_manifest_accepts_higher_order_consistency_config(tmp_path):
+    manifest_path = tmp_path / "benchmarks.json"
+    _write_manifest(
+        manifest_path,
+        {
+            "defaults": {
+                "data": "data/jm_manifest",
+                "method": "global-assignment",
+                "input_format": "suite2p",
+                "include_behavior": False,
+                "higher_order_consistency_config": {
+                    "triplet_weight": 0.35,
+                    "support_top_k": 6,
+                    "support_cost_cap": 3.0,
+                },
+            },
+            "runs": [
+                {
+                    "name": "higher-order",
+                    "cost": "registered-iou",
+                    "max_gap": 2,
+                }
+            ],
+        },
+    )
+
+    manifest = load_benchmark_manifest(manifest_path)
+
+    assert manifest.runs[0].config.higher_order_consistency_config == {
+        "triplet_weight": 0.35,
+        "support_top_k": 6,
+        "support_cost_cap": 3.0,
+    }

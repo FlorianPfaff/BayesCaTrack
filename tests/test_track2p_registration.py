@@ -66,7 +66,7 @@ def test_register_plane_pair_uses_explicit_fov_translation(
     )
 
 
-def test_register_plane_pair_affine_rigid_do_not_fall_back_to_fov_translation(
+def test_register_plane_pair_affine_rigid_require_track2p_backend(
     make_track2p_session,
     monkeypatch,
 ):
@@ -85,9 +85,40 @@ def test_register_plane_pair_affine_rigid_do_not_fall_back_to_fov_translation(
         registration, "_load_track2p_registration_backend", _missing_backend
     )
 
-    with pytest.raises(ImportError, match="missing test backend"):
-        register_plane_pair(
-            reference.plane_data,
-            moving.plane_data,
-            transform_type="rigid",
-        )
+    for transform_type in ("affine", "rigid"):
+        with pytest.raises(ImportError, match="missing test backend"):
+            register_plane_pair(
+                reference.plane_data,
+                moving.plane_data,
+                transform_type=transform_type,
+            )
+
+
+def test_register_plane_pair_uses_explicit_fov_affine_without_track2p_backend(
+    make_track2p_session,
+    monkeypatch,
+):
+    import bayescatrack.track2p_registration as registration
+
+    masks: np.ndarray = np.zeros((1, 6, 6), dtype=bool)
+    masks[0, 1:4, 2:5] = True
+    fov = masks.sum(axis=0, dtype=float)
+    reference = make_track2p_session("2024-05-01_a", masks, fov=fov)
+    moving = make_track2p_session("2024-05-02_a", masks.copy(), fov=fov.copy())
+
+    def _missing_backend():
+        raise AssertionError("explicit fov-affine must not import Track2p")
+
+    monkeypatch.setattr(
+        registration, "_load_track2p_registration_backend", _missing_backend
+    )
+
+    registered = register_plane_pair(
+        reference.plane_data,
+        moving.plane_data,
+        transform_type="fov-affine",
+    )
+
+    assert registered.ops is not None
+    assert registered.ops["registration_backend"] == "fov-affine"
+    assert registered.ops["registration_transform_type"] == "fov-affine"

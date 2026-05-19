@@ -29,6 +29,7 @@ from bayescatrack.association.shifted_overlap import (
     pairwise_kwargs_use_shifted_overlap,
 )
 from bayescatrack.soft_overlap_costs import (
+    install_soft_overlap_costs,
     install_soft_overlap_cost_patch,
     registered_soft_iou_cost_kwargs,
 )
@@ -70,6 +71,41 @@ def registered_iou_cost_kwargs(
     return {
         "centroid_weight": 0.0,
         "iou_weight": 1.0,
+        "mask_cosine_weight": 0.0,
+        "area_weight": 0.0,
+        "roi_feature_weight": 0.0,
+        "cell_probability_weight": 0.0,
+        "similarity_epsilon": float(similarity_epsilon),
+    }
+
+
+def registered_soft_iou_cost_kwargs(
+    *,
+    similarity_epsilon: float = 1.0e-6,
+    soft_iou_radius: int = 2,
+    distance_transform_overlap_radius: int = 3,
+    distance_transform_overlap_weight: float = 0.35,
+    distance_transform_overlap_scale: float | None = None,
+) -> dict[str, float | int | None]:
+    """Return kwargs for a registered near-miss-overlap ablation.
+
+    The preset deliberately disables centroid, feature, area and cell-probability
+    terms, matching ``registered-iou`` in spirit while replacing exact support
+    overlap by two soft overlap terms.
+    """
+
+    return {
+        "centroid_weight": 0.0,
+        "iou_weight": 0.0,
+        "soft_iou_weight": 1.0,
+        "soft_iou_radius": int(soft_iou_radius),
+        "distance_transform_overlap_weight": float(
+            distance_transform_overlap_weight
+        ),
+        "distance_transform_overlap_radius": int(
+            distance_transform_overlap_radius
+        ),
+        "distance_transform_overlap_scale": distance_transform_overlap_scale,
         "mask_cosine_weight": 0.0,
         "area_weight": 0.0,
         "roi_feature_weight": 0.0,
@@ -200,6 +236,7 @@ def build_registered_pairwise_costs(
         or activity_tie_breaker_weight > 0.0
     )
 
+    _ensure_optional_pairwise_cost_extensions(cost, pairwise_cost_kwargs)
     base_cost_kwargs = _cost_kwargs_for_method(cost)
     if pairwise_cost_kwargs is not None:
         base_cost_kwargs.update(dict(pairwise_cost_kwargs))
@@ -449,19 +486,35 @@ def _cost_kwargs_for_method(cost: AssociationCost) -> dict[str, Any]:
     raise ValueError(f"Unsupported association cost: {cost}")
 
 
+_SOFT_OVERLAP_COST_KEYS = frozenset(
+    {
+        "soft_iou_weight",
+        "soft_iou_radius",
+        "distance_transform_overlap_weight",
+        "distance_transform_overlap_radius",
+        "distance_transform_overlap_scale",
+    }
+)
+
+
+def _ensure_optional_pairwise_cost_extensions(
+    cost: AssociationCost,
+    pairwise_cost_kwargs: Mapping[str, Any] | None,
+) -> None:
+    """Install optional cost-matrix extensions required by selected kwargs."""
+
+    if cost == "registered-soft-iou" or _pairwise_kwargs_use_soft_overlap(
+        pairwise_cost_kwargs
+    ):
+        install_soft_overlap_costs()
+
+
 def _pairwise_kwargs_use_soft_overlap(
-    pairwise_cost_kwargs: Mapping[str, Any],
+    pairwise_cost_kwargs: Mapping[str, Any] | None,
 ) -> bool:
-    return any(
-        key in pairwise_cost_kwargs
-        for key in (
-            "soft_iou_weight",
-            "soft_iou_radius",
-            "distance_transform_overlap_weight",
-            "distance_transform_overlap_radius",
-            "distance_transform_overlap_scale",
-        )
-    )
+    if pairwise_cost_kwargs is None:
+        return False
+    return any(key in pairwise_cost_kwargs for key in _SOFT_OVERLAP_COST_KEYS)
 
 
 def _record_registration_metadata(
@@ -504,6 +557,61 @@ def _penalize_empty_registered_roi_columns(
         )
     cost_matrix[:, empty_registered_rois] = large_cost
     return cost_matrix
+
+
+def _add_activity_tiebreaker_cost(
+    cost_matrix: np.ndarray,
+    pairwise_components: Mapping[str, Any],
+    *,
+    weight: float,
+) -> np.ndarray:
+    """Add a bounded, availability-gated activity mismatch penalty.
+
+    The returned matrix differs from ``cost_matrix`` by at most ``weight`` per
+    entry. This keeps calcium activity as a tie-breaker for geometrically
+    plausible candidates instead of letting non-stationary activity dominate
+    registered ROI evidence.
+    """
+
+    weight = _validate_activity_tiebreaker_weight(weight)
+    base_cost = np.asarray(cost_matrix, dtype=float)
+    if weight == 0.0:
+        return base_cost.copy()
+    if "activity_similarity_cost" not in pairwise_components:
+        return base_cost.copy()
+    activity_cost = np.asarray(
+        pairwise_components["activity_similarity_cost"], dtype=float
+    )
+    if activity_cost.shape != base_cost.shape:
+        raise ValueError(
+            "activity_similarity_cost must have the same shape as cost_matrix"
+        )
+    if "activity_similarity_available" in pairwise_components:
+        available = np.asarray(
+            pairwise_components["activity_similarity_available"], dtype=float
+        ) > 0.0
+        if available.shape != base_cost.shape:
+            raise ValueError(
+                "activity_similarity_available must have the same shape as cost_matrix"
+            )
+    else:
+        available = np.isfinite(activity_cost)
+    bounded_activity_cost = np.clip(
+        np.nan_to_num(activity_cost, nan=0.0, posinf=1.0, neginf=0.0),
+        0.0,
+        1.0,
+    )
+    bounded_activity_cost = np.where(available, bounded_activity_cost, 0.0)
+    return base_cost + weight * bounded_activity_cost
+
+
+def _validate_activity_tiebreaker_weight(weight: float) -> float:
+    weight = float(weight)
+    if not np.isfinite(weight):
+        raise ValueError("activity_tiebreaker_weight must be finite")
+    if weight < 0.0:
+        raise ValueError("activity_tiebreaker_weight must be non-negative")
+    return weight
 
 
 def _roi_indices_for_session(session: Track2pSession) -> np.ndarray:

@@ -291,6 +291,22 @@ def test_score_complete_tracks_counts_duplicate_predictions_as_reconstructed_tra
     assert scores["ct"] == pytest.approx(0.5)
 
 
+def test_score_complete_tracks_scores_empty_denominator_as_zero():
+    scores = score_complete_tracks(
+        np.zeros((0, 2), dtype=int),
+        np.zeros((0, 2), dtype=int),
+    )
+
+    assert scores["perfectly_reconstructed_tracks"] == 0
+    assert scores["reconstructed_complete_tracks"] == 0
+    assert scores["ground_truth_complete_tracks"] == 0
+    assert scores["T_rc"] == 0
+    assert scores["T_c"] == 0
+    assert scores["T_gt"] == 0
+    assert scores["complete_tracks_score"] == pytest.approx(0.0)
+    assert scores["ct"] == pytest.approx(0.0)
+
+
 def test_score_complete_tracks_validates_shapes():
     with pytest.raises(ValueError, match="same number of sessions"):
         score_complete_tracks(
@@ -323,6 +339,32 @@ def test_pairs_from_label_vectors_and_scoring():
     assert scores["precision"] == pytest.approx(2 / 3)
     assert scores["recall"] == pytest.approx(2 / 3)
     assert scores["f1"] == pytest.approx(2 / 3)
+
+
+def test_score_pairwise_matches_scores_empty_denominators_as_zero():
+    empty_scores = score_pairwise_matches(
+        np.zeros((0, 2), dtype=int),
+        np.zeros((0, 2), dtype=int),
+    )
+
+    assert empty_scores["true_positives"] == 0
+    assert empty_scores["false_positives"] == 0
+    assert empty_scores["false_negatives"] == 0
+    assert empty_scores["precision"] == pytest.approx(0.0)
+    assert empty_scores["recall"] == pytest.approx(0.0)
+    assert empty_scores["f1"] == pytest.approx(0.0)
+
+    no_prediction_scores = score_pairwise_matches(
+        np.zeros((0, 2), dtype=int),
+        np.array([[0, 1]], dtype=int),
+    )
+
+    assert no_prediction_scores["true_positives"] == 0
+    assert no_prediction_scores["false_positives"] == 0
+    assert no_prediction_scores["false_negatives"] == 1
+    assert no_prediction_scores["precision"] == pytest.approx(0.0)
+    assert no_prediction_scores["recall"] == pytest.approx(0.0)
+    assert no_prediction_scores["f1"] == pytest.approx(0.0)
 
 
 def test_score_label_vectors_against_reference_and_duplicate_detection():

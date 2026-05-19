@@ -1,9 +1,9 @@
-"""Soft ROI-overlap costs for near-miss registered masks.
+"""Compatibility helpers for soft ROI-overlap costs.
 
-This module extends :meth:`CalciumPlaneData.build_pairwise_cost_matrix` with
-optional soft overlap terms without changing the public bridge data model.  The
-terms are useful when growth-aware registration places a true ROI very near the
-reference ROI, but exact-pixel IoU remains zero.
+Soft overlap terms are implemented directly by
+:meth:`CalciumPlaneData.build_pairwise_cost_matrix`.  This module is retained so
+older imports of :func:`install_soft_overlap_costs` and
+:func:`registered_soft_iou_cost_kwargs` remain valid.
 """
 
 from __future__ import annotations
@@ -55,11 +55,9 @@ def install_soft_overlap_cost_patch() -> Any:
 
 
 def install_soft_overlap_costs() -> None:
-    """Install soft-overlap cost extensions and cost presets."""
+    """Backward-compatible no-op; soft-overlap costs are first-class."""
 
-    install_soft_overlap_cost_patch()
-    _install_global_assignment_preset()
-    _install_registration_qa_preset()
+    return None
 
 
 def _install_cost_matrix_patch() -> None:

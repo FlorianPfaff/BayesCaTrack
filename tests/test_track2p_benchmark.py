@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from bayescatrack.experiments import track2p_benchmark
 from bayescatrack.experiments.track2p_benchmark import (
     SubjectBenchmarkResult,
     Track2pBenchmarkConfig,
@@ -214,6 +215,72 @@ def test_benchmark_uses_ground_truth_csv_reference(tmp_path, write_raw_npy_sessi
     assert result["reference_source"] == "ground_truth_csv"
     assert result["pairwise_f1"] == pytest.approx(1.0)
     assert result["complete_track_f1"] == pytest.approx(1.0)
+
+
+def test_track2p_benchmark_cli_can_emit_edge_ranking_diagnostics(
+    tmp_path, monkeypatch, capsys
+):
+    seen = {}
+
+    def fake_run_track2p_benchmark(config):
+        seen["benchmark_config"] = config
+        return []
+
+    def fake_run_track2p_edge_ranking(
+        config,
+        output_path,
+        *,
+        summary_output_path=None,
+        feature_names=(),
+        similarity_features=(),
+    ):
+        seen["edge_config"] = config
+        seen["edge_output_path"] = output_path
+        seen["edge_summary_output_path"] = summary_output_path
+        seen["edge_feature_names"] = tuple(feature_names)
+        seen["edge_similarity_features"] = tuple(similarity_features)
+        return 7, 3
+
+    from bayescatrack.experiments import track2p_edge_ranking
+
+    monkeypatch.setattr(
+        track2p_benchmark, "run_track2p_benchmark", fake_run_track2p_benchmark
+    )
+    monkeypatch.setattr(
+        track2p_edge_ranking,
+        "run_track2p_edge_ranking",
+        fake_run_track2p_edge_ranking,
+    )
+
+    edge_output = tmp_path / "edge_ranking.csv"
+    summary_output = tmp_path / "edge_ranking_summary.csv"
+    status = track2p_benchmark.main(
+        [
+            "--data",
+            str(tmp_path),
+            "--method",
+            "global-assignment",
+            "--edge-ranking-output",
+            str(edge_output),
+            "--edge-ranking-summary-output",
+            str(summary_output),
+            "--edge-ranking-feature",
+            "pairwise_cost_matrix",
+            "--edge-ranking-feature",
+            "iou",
+            "--edge-ranking-similarity-feature",
+            "iou",
+            "--no-progress",
+        ]
+    )
+
+    assert status == 0
+    assert seen["edge_config"] is seen["benchmark_config"]
+    assert seen["edge_output_path"] == edge_output
+    assert seen["edge_summary_output_path"] == summary_output
+    assert seen["edge_feature_names"] == ("pairwise_cost_matrix", "iou")
+    assert seen["edge_similarity_features"] == ("iou",)
+    assert "Wrote 7 edge-ranking rows" in capsys.readouterr().err
 
 
 def test_oracle_gt_links_reconstructs_complete_tracks(tmp_path, write_raw_npy_session):
@@ -452,6 +519,189 @@ def test_loso_benchmark_dispatches_noncalibrated_solver_prior_tuning(monkeypatch
     assert captured["search"].end_costs == (0.8,)
     assert captured["search"].gap_penalties == (0.2,)
     assert captured["search"].cost_thresholds == (None,)
+
+
+def test_track2p_benchmark_parser_accepts_item6_ablation_knobs():
+    from bayescatrack.experiments.track2p_benchmark import (
+        _config_from_args,
+        build_arg_parser,
+    )
+
+    args = build_arg_parser().parse_args(
+        [
+            "--data",
+            "/tmp/track2p",
+            "--method",
+            "global-assignment",
+            "--cost",
+            "registered-soft-iou",
+            "--activity-tie-breaker-weight",
+            "0.03",
+            "--activity-tie-breaker-component",
+            "spike_similarity_cost",
+            "--activity-trace-source",
+            "spike_traces",
+            "--activity-event-threshold",
+            "0.2",
+            "--higher-order-consistency-json",
+            '{"triplet_weight": 0.4, "support_top_k": 6}',
+        ]
+    )
+
+    config = _config_from_args(args)
+
+    assert config.cost == "registered-soft-iou"
+    assert config.activity_tie_breaker_weight == pytest.approx(0.03)
+    assert config.activity_tie_breaker_component == "spike_similarity_cost"
+    assert config.activity_trace_source == "spike_traces"
+    assert config.activity_event_threshold == pytest.approx(0.2)
+    assert config.higher_order_consistency_config == {
+        "triplet_weight": 0.4,
+        "support_top_k": 6,
+    }
+
+
+def test_solve_configured_global_assignment_passes_item6_knobs(monkeypatch):
+    from bayescatrack.experiments import track2p_benchmark as benchmark
+
+    captured = {}
+
+    def _fake_solver(sessions, **kwargs):
+        captured["sessions"] = sessions
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(
+        benchmark, "solve_global_assignment_for_sessions", _fake_solver
+    )
+    config = Track2pBenchmarkConfig(
+        data=Path("/tmp/track2p"),
+        method="global-assignment",
+        cost="registered-soft-iou",
+        activity_tie_breaker_weight=0.03,
+        activity_tie_breaker_component="spike_similarity_cost",
+        activity_trace_source="spike_traces",
+        activity_event_threshold=0.2,
+        higher_order_consistency_config={
+            "triplet_weight": 0.4,
+            "support_top_k": 6,
+        },
+    )
+
+    result = benchmark.solve_configured_global_assignment([], config)
+
+    assert result is not None
+    assert captured["sessions"] == []
+    assert captured["cost"] == "registered-soft-iou"
+    assert captured["activity_tie_breaker_weight"] == pytest.approx(0.03)
+    assert captured["activity_tie_breaker_component"] == "spike_similarity_cost"
+    assert captured["activity_trace_source"] == "spike_traces"
+    assert captured["activity_event_threshold"] == pytest.approx(0.2)
+    assert captured["higher_order_consistency_config"] == {
+        "triplet_weight": 0.4,
+        "support_top_k": 6,
+    }
+
+
+def test_configured_global_assignment_forwards_activity_tiebreaker(monkeypatch):
+    from bayescatrack.experiments import track2p_benchmark as benchmark_module
+
+    captured = {}
+    sentinel = object()
+
+    def fake_solve_global_assignment_for_sessions(sessions, **kwargs):
+        captured["sessions"] = sessions
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        benchmark_module,
+        "solve_global_assignment_for_sessions",
+        fake_solve_global_assignment_for_sessions,
+    )
+    sessions = [object()]
+    config = Track2pBenchmarkConfig(
+        data=Path("."),
+        method="global-assignment",
+        activity_tie_breaker_weight=0.03,
+        activity_tie_breaker_component="fluorescence_similarity_cost",
+        activity_trace_source="traces",
+        activity_event_threshold=0.2,
+    )
+
+    result = benchmark_module.solve_configured_global_assignment(sessions, config)
+    assert result is sentinel
+
+    assert captured["sessions"] is sessions
+    assert captured["activity_tie_breaker_weight"] == pytest.approx(0.03)
+    assert captured["activity_tie_breaker_component"] == "fluorescence_similarity_cost"
+
+
+def test_global_assignment_benchmark_runs_transform_suite(
+    tmp_path, monkeypatch, write_raw_npy_session
+):
+    subject_dir = tmp_path / "jm008"
+    _write_subject(subject_dir, write_raw_npy_session)
+    _install_fake_multisession_assignment(monkeypatch)
+
+    from bayescatrack.association import pyrecest_global_assignment as global_assignment
+
+    used_transforms: list[str] = []
+
+    def fake_register_plane_pair(_reference, moving, **kwargs):
+        used_transforms.append(kwargs["transform_type"])
+        return moving
+
+    monkeypatch.setattr(
+        global_assignment,
+        "register_plane_pair",
+        fake_register_plane_pair,
+    )
+
+    rows = run_track2p_benchmark(
+        Track2pBenchmarkConfig(
+            data=subject_dir,
+            method="global-assignment",
+            cost="registered-iou",
+            max_gap=2,
+            transform_suite=("fov-translation", "fov-affine"),
+            allow_track2p_as_reference_for_smoke_test=True,
+        )
+    )
+
+    assert len(rows) == 2
+    results = [row.to_dict() for row in rows]
+    assert [result["transform_type"] for result in results] == [
+        "fov-translation",
+        "fov-affine",
+    ]
+    assert [result["variant"] for result in results] == [
+        "Same costs + global assignment [fov-translation]",
+        "Same costs + global assignment [fov-affine]",
+    ]
+    assert {"fov-translation", "fov-affine"}.issubset(set(used_transforms))
+    assert all(result["pairwise_f1"] == pytest.approx(2 / 3) for result in results)
+    assert all(
+        result["complete_track_f1"] == pytest.approx(2 / 3) for result in results
+    )
+    assert captured["activity_trace_source"] == "traces"
+    assert captured["activity_event_threshold"] == pytest.approx(0.2)
+    expected_variant = (
+        "Same costs + global assignment + activity tie-breaker 0.03 "
+        "(fluorescence_similarity_cost)"
+    )
+    assert benchmark_module._configured_variant_name(config) == expected_variant
+
+
+def test_activity_tiebreaker_rejects_non_global_assignment_method():
+    with pytest.raises(ValueError, match="method='global-assignment'"):
+        run_track2p_benchmark(
+            Track2pBenchmarkConfig(
+                data=Path("."),
+                method="track2p-baseline",
+                activity_tie_breaker_weight=0.01,
+            )
+        )
 
 
 def test_loso_benchmark_dispatches_calibrated_solver_prior_tuning(monkeypatch):

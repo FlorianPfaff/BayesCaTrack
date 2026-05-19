@@ -33,11 +33,18 @@ from bayescatrack.core.bridge import (
 from bayescatrack.reference import Track2pReference
 from bayescatrack.track2p_registration import register_plane_pair
 
+DEFAULT_ACTIVITY_FEATURE_WEIGHT = 0.25
 _ACTIVITY_FEATURES = {
     "activity_correlation",
     "activity_similarity",
     "activity_similarity_cost",
     "activity_similarity_available",
+}
+_SCALED_ACTIVITY_FEATURES = {
+    "activity_correlation",
+    "activity_similarity",
+    "activity_similarity_cost",
+    "one_minus_activity_similarity",
 }
 
 DEFAULT_ASSOCIATION_FEATURES = (
@@ -74,12 +81,16 @@ class CalibratedAssociationModel:
 
     model: Any
     feature_names: tuple[str, ...] = DEFAULT_ASSOCIATION_FEATURES
+    activity_feature_weight: float = 1.0
 
     @property
     def schema(self) -> NamedPairwiseFeatureSchema:
         """Named PyRecEst feature schema used by this calibrated model."""
 
-        return pairwise_feature_schema(self.feature_names)
+        return pairwise_feature_schema(
+            self.feature_names,
+            activity_feature_weight=self.activity_feature_weight,
+        )
 
     def _pyrecest_model(self) -> CalibratedPairwiseAssociationModel:
         return CalibratedPairwiseAssociationModel(self.model, schema=self.schema)
@@ -150,6 +161,7 @@ class ReferenceTrainingOptions:
     velocity_variance: float = 25.0
     regularization: float = 1.0e-6
     feature_names: tuple[str, ...] = DEFAULT_ASSOCIATION_FEATURES
+    activity_feature_weight: float = DEFAULT_ACTIVITY_FEATURE_WEIGHT
     pairwise_cost_kwargs: Mapping[str, Any] | None = None
 
 
@@ -172,11 +184,19 @@ class ReferencePairwiseExamples:
 
 def pairwise_feature_schema(
     feature_names: Sequence[str] = DEFAULT_ASSOCIATION_FEATURES,
+    *,
+    activity_feature_weight: float = 1.0,
 ) -> NamedPairwiseFeatureSchema:
     """Return the PyRecEst named feature schema for BayesCaTrack components."""
 
     names = tuple(feature_names)
-    return NamedPairwiseFeatureSchema(names, transforms=_feature_transforms_for(names))
+    return NamedPairwiseFeatureSchema(
+        names,
+        transforms=_feature_transforms_for(
+            names,
+            activity_feature_weight=activity_feature_weight,
+        ),
+    )
 
 
 def pairwise_components_from_bundle(
@@ -229,12 +249,17 @@ def pairwise_feature_tensor(
     pairwise_components: Mapping[str, Any],
     *,
     feature_names: Sequence[str] = DEFAULT_ASSOCIATION_FEATURES,
+    activity_feature_weight: float = 1.0,
 ) -> np.ndarray:
     """Build a ``(n_reference, n_measurement, n_features)`` tensor from pairwise components."""
 
     return np.asarray(
         pyrecest_pairwise_feature_tensor(
-            pairwise_components, pairwise_feature_schema(feature_names)
+            pairwise_components,
+            pairwise_feature_schema(
+                feature_names,
+                activity_feature_weight=activity_feature_weight,
+            ),
         ),
         dtype=float,
     )
@@ -317,7 +342,9 @@ def collect_reference_pairwise_example_blocks(
             bundle, session_gap=session_b - session_a
         )
         features = pairwise_feature_tensor(
-            components, feature_names=options.feature_names
+            components,
+            feature_names=options.feature_names,
+            activity_feature_weight=options.activity_feature_weight,
         )
         labels = label_matrix_from_reference(
             reference,
@@ -354,13 +381,18 @@ def fit_logistic_association_model(
     feature_names: Sequence[str] = DEFAULT_ASSOCIATION_FEATURES,
     sample_weight: Any | None = None,
     model_kwargs: Mapping[str, Any] | None = None,
+    activity_feature_weight: float = 1.0,
 ) -> CalibratedAssociationModel:
     """Fit PyRecEst's logistic pairwise association model and keep its feature schema."""
 
     model_class = load_logistic_pairwise_association_model()
     model = model_class(**dict(model_kwargs or {}))
     model.fit(features, labels, sample_weight=sample_weight)
-    return CalibratedAssociationModel(model=model, feature_names=tuple(feature_names))
+    return CalibratedAssociationModel(
+        model=model,
+        feature_names=tuple(feature_names),
+        activity_feature_weight=activity_feature_weight,
+    )
 
 
 # pylint: disable=too-many-arguments
@@ -384,6 +416,7 @@ def fit_logistic_association_model_from_reference(
         labels,
         feature_names=options.feature_names,
         sample_weight=sample_weight,
+        activity_feature_weight=options.activity_feature_weight,
         model_kwargs=model_kwargs,
     )
 
@@ -403,7 +436,10 @@ def calibrated_cost_matrix_from_bundle(
 
 def _feature_transforms_for(
     feature_names: Sequence[str],
+    *,
+    activity_feature_weight: float = 1.0,
 ) -> dict[str, FeatureTransform]:
+    activity_feature_weight = _validate_activity_feature_weight(activity_feature_weight)
     transforms: dict[str, FeatureTransform] = {}
     for feature_name in feature_names:
         if feature_name == "one_minus_iou":
@@ -419,14 +455,22 @@ def _feature_transforms_for(
                 components, "covariance_shape_similarity"
             )
         elif feature_name == "one_minus_activity_similarity":
-            transforms[feature_name] = lambda components: 1.0 - _finite_component(
-                components, "activity_similarity"
+            transforms[feature_name] = lambda components, scale=activity_feature_weight: (
+                scale * (1.0 - _finite_component(components, "activity_similarity"))
             )
         elif (
             feature_name in _ACTIVITY_FEATURES
             or feature_name in _LOCAL_EVIDENCE_FEATURES
         ):
-            transforms[feature_name] = _optional_zero_component_transform(feature_name)
+            scale = (
+                activity_feature_weight
+                if feature_name in _SCALED_ACTIVITY_FEATURES
+                else 1.0
+            )
+            transforms[feature_name] = _optional_zero_component_transform(
+                feature_name,
+                scale=scale,
+            )
         elif feature_name == "session_gap":
             transforms[feature_name] = _session_gap_transform
     return transforms
@@ -434,13 +478,24 @@ def _feature_transforms_for(
 
 def _optional_zero_component_transform(
     feature_name: str,
+    *,
+    scale: float = 1.0,
 ) -> FeatureTransform:
     def transform(pairwise_components: Mapping[str, Any]) -> np.ndarray:
         if feature_name not in pairwise_components:
             return _zero_like_pairwise_component(pairwise_components)
-        return _finite_component(pairwise_components, feature_name)
+        return float(scale) * _finite_component(pairwise_components, feature_name)
 
     return transform
+
+
+def _validate_activity_feature_weight(weight: float) -> float:
+    weight = float(weight)
+    if not np.isfinite(weight):
+        raise ValueError("activity_feature_weight must be finite")
+    if weight < 0.0:
+        raise ValueError("activity_feature_weight must be non-negative")
+    return weight
 
 
 def _session_gap_transform(pairwise_components: Mapping[str, Any]) -> np.ndarray:

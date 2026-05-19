@@ -631,6 +631,8 @@ def _pair_set(pairs: Sequence[Sequence[Any]] | np.ndarray) -> set[tuple[int, int
 
 
 def _safe_ratio(numerator: float, denominator: float) -> float:
+    """Return a metric ratio, scoring undefined empty denominators as zero."""
+
     if denominator == 0:
-        return 1.0
+        return 0.0
     return float(numerator) / float(denominator)

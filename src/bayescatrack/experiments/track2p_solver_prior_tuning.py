@@ -39,7 +39,7 @@ from bayescatrack.experiments.track2p_loso_calibration import (
 )
 
 SampleWeightStrategy = Literal["none", "balanced"]
-SolverPriorObjective = Literal["pairwise_f1", "complete_track_f1"]
+SolverPriorObjective = Literal["pairwise_f1", "complete_track_f1", "mean_f1"]
 
 DEFAULT_SOLVER_PRIOR_START_COSTS = (1.0, 2.0, 5.0)
 DEFAULT_SOLVER_PRIOR_END_COSTS = (1.0, 2.0, 5.0)
@@ -80,6 +80,7 @@ class SolverPriorTuningResult:
 
     def to_score_dict(self) -> dict[str, float | int | str]:
         return {
+            "solver_prior_learned": 1,
             "solver_prior_objective": self.objective_name,
             "solver_prior_objective_score": float(self.objective_value),
             "solver_prior_candidate_count": int(self.candidate_count),
@@ -87,6 +88,12 @@ class SolverPriorTuningResult:
             "tuned_end_cost": float(self.parameters.end_cost),
             "tuned_gap_penalty": float(self.parameters.gap_penalty),
             "tuned_cost_threshold": _threshold_label(self.parameters.cost_threshold),
+            # Keep aliases compatible with the non-calibrated solver-prior tuner so
+            # benchmark tables/CSVs expose one stable set of selected-prior fields.
+            "learned_start_cost": float(self.parameters.start_cost),
+            "learned_end_cost": float(self.parameters.end_cost),
+            "learned_gap_penalty": float(self.parameters.gap_penalty),
+            "learned_cost_threshold": _threshold_label(self.parameters.cost_threshold),
         }
 
 
@@ -339,7 +346,14 @@ def _score_solver_prior_candidate(
                 config=config,
             )
         )
-    return _mean_numeric_scores(score_rows)
+    mean_scores = _mean_numeric_scores(score_rows)
+    if "pairwise_f1" in mean_scores and "complete_track_f1" in mean_scores:
+        mean_scores = {
+            **mean_scores,
+            "mean_f1": 0.5
+            * (mean_scores["pairwise_f1"] + mean_scores["complete_track_f1"]),
+        }
+    return mean_scores
 
 
 def _solve_loso_assignment_with_priors(

@@ -55,6 +55,11 @@ def register_measurement_plane_by_fov_affine(
         estimate.matrix_xy,
         output_shape=reference_plane.image_shape,
     )
+    registered_fov = apply_affine_image_warp(
+        measurement_plane.fov,
+        estimate.matrix_xy,
+        output_shape=reference_plane.image_shape,
+    )
     ops = {} if measurement_plane.ops is None else dict(measurement_plane.ops)
     ops.update(
         {
@@ -70,7 +75,7 @@ def register_measurement_plane_by_fov_affine(
     )
     registered_plane = measurement_plane.with_replaced_masks(
         masks,
-        fov=reference_plane.fov,
+        fov=registered_fov,
         source=f"{measurement_plane.source}_fov_affine_registered",
         ops=ops,
     )
@@ -174,6 +179,78 @@ def apply_affine_roi_mask_warp(
             values = np.asarray(mask[yy[valid], xx[valid]], dtype=output.dtype)
             np.maximum.at(output[roi_index], (y[valid], x[valid]), values)
     return output
+
+
+def apply_affine_image_warp(
+    image: np.ndarray,
+    matrix_xy: np.ndarray,
+    *,
+    output_shape: tuple[int, int],
+    fill_value: float = 0.0,
+) -> np.ndarray:
+    """Warp a 2-D FOV image into the output frame using an affine transform.
+
+    ``matrix_xy`` maps source measurement coordinates to destination reference
+    coordinates. The image is sampled by inverse mapping with bilinear
+    interpolation so every output pixel is filled from the corresponding
+    measurement coordinate when possible.
+    """
+
+    image = np.asarray(image)
+    matrix_xy = np.asarray(matrix_xy, dtype=float)
+    if image.ndim != 2:
+        raise ValueError("image must have shape (height, width)")
+    if matrix_xy.shape != (2, 3):
+        raise ValueError("matrix_xy must have shape (2, 3)")
+
+    output_height, output_width = int(output_shape[0]), int(output_shape[1])
+    if output_height < 0 or output_width < 0:
+        raise ValueError("output_shape must contain non-negative dimensions")
+
+    inverse_matrix_xy = invert_affine_xy(matrix_xy)
+    yy, xx = np.indices((output_height, output_width), dtype=float)
+    dst_xy = np.column_stack((xx.ravel(), yy.ravel()))
+    src_xy = (
+        dst_xy @ inverse_matrix_xy[:, :2].T + inverse_matrix_xy[:, 2][None, :]
+    )
+    values = _bilinear_sample_image(
+        np.asarray(image, dtype=float),
+        src_xy[:, 0],
+        src_xy[:, 1],
+        fill_value=float(fill_value),
+    )
+    return values.reshape((output_height, output_width))
+
+
+def _bilinear_sample_image(
+    image: np.ndarray, x: np.ndarray, y: np.ndarray, *, fill_value: float
+) -> np.ndarray:
+    height, width = image.shape
+    values = np.full(x.shape, fill_value, dtype=float)
+    finite = np.isfinite(x) & np.isfinite(y)
+    valid = (
+        finite
+        & (x >= 0.0)
+        & (x <= width - 1)
+        & (y >= 0.0)
+        & (y <= height - 1)
+    )
+    if not np.any(valid):
+        return values
+
+    x_valid = x[valid]
+    y_valid = y[valid]
+    x0 = np.floor(x_valid).astype(int)
+    y0 = np.floor(y_valid).astype(int)
+    x1 = np.minimum(x0 + 1, width - 1)
+    y1 = np.minimum(y0 + 1, height - 1)
+    dx = x_valid - x0
+    dy = y_valid - y0
+
+    top = (1.0 - dx) * image[y0, x0] + dx * image[y0, x1]
+    bottom = (1.0 - dx) * image[y1, x0] + dx * image[y1, x1]
+    values[valid] = (1.0 - dy) * top + dy * bottom
+    return values
 
 
 def invert_affine_xy(matrix_xy: np.ndarray) -> np.ndarray:

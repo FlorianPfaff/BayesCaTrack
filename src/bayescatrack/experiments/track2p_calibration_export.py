@@ -26,6 +26,7 @@ from bayescatrack.experiments.track2p_loso_calibration import (
     _load_subject_calibration_data,
     _reference_training_options,
 )
+from bayescatrack.track2p_registration import REGISTRATION_TRANSFORM_TYPES
 
 
 def export_loso_calibration_csv(
@@ -123,7 +124,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
+        choices=REGISTRATION_TRANSFORM_TYPES,
     )
     parser.add_argument("--curated-only", action="store_true")
     parser.add_argument(

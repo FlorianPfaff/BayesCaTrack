@@ -1,6 +1,8 @@
 import numpy as np
 import numpy.testing as npt
+import pytest
 from bayescatrack.matching import (
+    SessionMatchResult,
     build_track_rows_from_bundles,
     build_track_rows_from_matches,
     solve_bundle_linear_assignment,
@@ -38,6 +40,52 @@ def test_build_track_rows_from_later_seed_session_stitches_both_directions():
         rows,
         np.array([[0, 10, 5], [2, 20, 6], [-1, 30, -1]]),
     )
+
+
+def test_build_track_rows_from_tuple_matches_rejects_duplicate_reference_indices():
+    with pytest.raises(ValueError, match="duplicate reference ROI index 1"):
+        build_track_rows_from_matches(
+            ("s1", "s2"),
+            [([1, 1], [10, 11])],
+            start_roi_indices=[1],
+        )
+
+
+def test_build_track_rows_from_array_matches_rejects_duplicate_reference_indices():
+    with pytest.raises(ValueError, match="duplicate reference ROI index 1"):
+        build_track_rows_from_matches(
+            ("s1", "s2"),
+            [np.array([[1, 10], [1, 11]], dtype=int)],
+            start_roi_indices=[1],
+        )
+
+
+def test_build_track_rows_from_mapping_matches_rejects_duplicate_measurement_indices():
+    with pytest.raises(ValueError, match="duplicate measurement ROI index 10"):
+        build_track_rows_from_matches(
+            ("s1", "s2"),
+            [{1: 10, 2: 10}],
+            start_roi_indices=[1, 2],
+        )
+
+
+def test_build_track_rows_from_session_match_result_rejects_duplicate_reference_indices():
+    match_result = SessionMatchResult(
+        reference_session_name="s1",
+        measurement_session_name="s2",
+        reference_positions=np.array([0, 1], dtype=int),
+        measurement_positions=np.array([0, 1], dtype=int),
+        reference_roi_indices=np.array([1, 1], dtype=int),
+        measurement_roi_indices=np.array([10, 11], dtype=int),
+        costs=np.array([0.0, 0.0], dtype=float),
+    )
+
+    with pytest.raises(ValueError, match="duplicate reference ROI index 1"):
+        build_track_rows_from_matches(
+            ("s1", "s2"),
+            [match_result],
+            start_roi_indices=[1],
+        )
 
 
 def test_solve_bundle_linear_assignment_uses_default_cost_gate():

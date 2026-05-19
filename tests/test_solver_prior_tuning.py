@@ -6,7 +6,12 @@ from typing import Any
 import numpy as np
 import pytest
 from bayescatrack.experiments import solver_prior_tuning as tuning
-from bayescatrack.experiments.track2p_benchmark import Track2pBenchmarkConfig
+from bayescatrack.experiments.track2p_benchmark import (
+    Track2pBenchmarkConfig,
+    _config_from_args,
+    build_arg_parser,
+    format_benchmark_table,
+)
 from bayescatrack.experiments.track2p_solver_prior_tuning import (
     DEFAULT_SOLVER_PRIOR_COST_THRESHOLDS,
     DEFAULT_SOLVER_PRIOR_END_COSTS,
@@ -14,6 +19,8 @@ from bayescatrack.experiments.track2p_solver_prior_tuning import (
     DEFAULT_SOLVER_PRIOR_START_COSTS,
     SolverPriorTuningOptions,
     _solver_prior_parameter_grid,
+    SolverPriorParameters,
+    SolverPriorTuningResult,
 )
 
 
@@ -109,6 +116,80 @@ def test_solver_prior_grid_rejects_invalid_values():
             config,
             options=SolverPriorTuningOptions(cost_thresholds=(-1.0,)),
         )
+
+
+def test_calibrated_solver_prior_result_exposes_common_learned_fields():
+    result = SolverPriorTuningResult(
+        parameters=SolverPriorParameters(
+            start_cost=0.75,
+            end_cost=1.25,
+            gap_penalty=0.3,
+            cost_threshold=None,
+        ),
+        objective_name="mean_f1",
+        objective_value=0.8,
+        candidate_count=4,
+        mean_scores={"mean_f1": 0.8},
+    )
+
+    fields = result.to_score_dict()
+
+    assert fields["solver_prior_learned"] == 1
+    assert fields["learned_start_cost"] == pytest.approx(0.75)
+    assert fields["learned_end_cost"] == pytest.approx(1.25)
+    assert fields["learned_gap_penalty"] == pytest.approx(0.3)
+    assert fields["learned_cost_threshold"] == "none"
+
+
+def test_track2p_benchmark_parses_solver_prior_tuning_grid():
+    args = build_arg_parser().parse_args(
+        [
+            "--data",
+            "track2p",
+            "--method",
+            "global-assignment",
+            "--split",
+            "leave-one-subject-out",
+            "--cost",
+            "roi-aware",
+            "--tune-solver-priors",
+            "--solver-prior-objective",
+            "mean_f1",
+            "--solver-prior-start-costs",
+            "0.5,1.0",
+            "--solver-prior-gap-penalties",
+            "0,0.5",
+            "--solver-prior-cost-thresholds",
+            "none,2.5",
+        ]
+    )
+
+    config = _config_from_args(args)
+
+    assert config.tune_solver_priors is True
+    assert config.solver_prior_objective == "mean_f1"
+    assert config.solver_prior_start_costs == (0.5, 1.0)
+    assert config.solver_prior_gap_penalties == (0.0, 0.5)
+    assert config.solver_prior_cost_thresholds == (None, 2.5)
+
+
+def test_benchmark_table_includes_learned_solver_prior_columns():
+    table = format_benchmark_table(
+        [
+            {
+                "variant": "LOSO learned solver priors",
+                "pairwise_f1": 0.4,
+                "complete_track_f1": 0.3,
+                "learned_start_cost": 0.5,
+                "learned_end_cost": 1.0,
+                "learned_gap_penalty": 0.2,
+                "learned_cost_threshold": "none",
+            }
+        ]
+    )
+
+    assert "learned_start_cost" in table
+    assert "learned_cost_threshold" in table
 
 
 def test_tune_solver_priors_selects_best_training_candidate(monkeypatch):

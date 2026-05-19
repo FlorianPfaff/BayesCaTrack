@@ -398,3 +398,64 @@ def test_loso_calibration_requires_calibrated_cost(tmp_path, write_raw_npy_sessi
                 cost="registered-iou",
             )
         )
+
+
+def test_calibration_feature_set_presets_enable_local_evidence_components():
+    from bayescatrack.association.calibrated_costs import (
+        DEFAULT_ASSOCIATION_FEATURES,
+        LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
+    )
+    from bayescatrack.experiments.track2p_loso_calibration import (
+        calibration_feature_names,
+        pairwise_cost_kwargs_for_calibration_features,
+    )
+
+    local_features = calibration_feature_names("local-evidence")
+    combined_features = calibration_feature_names("default+local-evidence")
+
+    assert local_features == LOCAL_EVIDENCE_ASSOCIATION_FEATURES
+    assert "weighted_dice_cost" in local_features
+    assert "centroid_rank_cost" in local_features
+    assert combined_features[: len(DEFAULT_ASSOCIATION_FEATURES)] == (
+        DEFAULT_ASSOCIATION_FEATURES
+    )
+
+    kwargs = pairwise_cost_kwargs_for_calibration_features(
+        {"patch_radius": 4}, combined_features
+    )
+    assert kwargs == {"patch_radius": 4, "local_evidence_components": True}
+
+
+def test_loso_calibration_can_train_default_plus_local_evidence(
+    tmp_path, monkeypatch, write_raw_npy_session
+):
+    _prepare_loso_fixture(
+        tmp_path,
+        monkeypatch,
+        lambda subject_dir: _write_subject(subject_dir, write_raw_npy_session),
+    )
+    from bayescatrack.experiments.track2p_loso_calibration import (
+        calibration_feature_names,
+        run_track2p_loso_calibration,
+    )
+
+    feature_set = "default+local-evidence"
+    expected_feature_count = len(calibration_feature_names(feature_set))
+    results = run_track2p_loso_calibration(
+        replace(
+            _loso_config(tmp_path, allow_smoke_reference=True),
+            calibration_feature_set=feature_set,
+        )
+    ).to_benchmark_results()
+
+    fake_models = sys.modules["pyrecest.utils.association_models"]
+    assert len(fake_models.fit_models) == 2
+    for model in fake_models.fit_models:
+        assert model.fit_args is not None
+        features, _labels, _sample_weight = model.fit_args
+        assert features.shape[-1] == expected_feature_count
+
+    for result in results:
+        row = result.to_dict()
+        assert row["calibration_feature_set"] == feature_set
+        assert row["calibration_feature_count"] == expected_feature_count

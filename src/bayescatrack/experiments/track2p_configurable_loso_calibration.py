@@ -7,13 +7,12 @@ import csv
 import json
 import sys
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, cast
 
 import numpy as np
 from bayescatrack.association.calibrated_costs import (
-    DEFAULT_ASSOCIATION_FEATURES,
     CalibratedAssociationModel,
     collect_reference_pairwise_example_blocks,
     fit_logistic_association_model,
@@ -52,6 +51,7 @@ from bayescatrack.experiments.track2p_loso_calibration import (
     _score_holdout_calibration,
     calibration_feature_names,
 )
+from bayescatrack.track2p_registration import REGISTRATION_TRANSFORM_TYPES
 
 SampleWeightStrategy = Literal["none", "balanced"]
 CalibrationModelKind = Literal["logistic", "hist-gradient-boosting"]
@@ -99,7 +99,7 @@ class SklearnPairwiseProbabilityAdapter:
 def run_track2p_configurable_loso_calibration(
     config: Track2pBenchmarkConfig,
     *,
-    feature_names: Sequence[str] = DEFAULT_ASSOCIATION_FEATURES,
+    feature_names: Sequence[str] | None = None,
     sample_weight: Any | None = None,
     sample_weight_strategy: SampleWeightStrategy = "none",
     model_kind: CalibrationModelKind = "logistic",
@@ -187,6 +187,8 @@ def run_track2p_configurable_loso_calibration(
                 sort_keys=True,
                 separators=(",", ":"),
             ),
+            "calibration_feature_set": _feature_set_label(config, feature_names),
+            "calibration_feature_count": int(len(feature_names)),
             "calibration_sample_weight_strategy": sample_weight_strategy,
             "calibration_class_weight": _class_weight_label(model_kwargs),
             **_hard_negative_scores(hard_negative_options),
@@ -425,7 +427,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
+        choices=REGISTRATION_TRANSFORM_TYPES,
     )
     parser.add_argument("--start-cost", type=float, default=5.0)
     parser.add_argument("--end-cost", type=float, default=5.0)
@@ -507,6 +509,9 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
         restrict_to_reference_seed_rois=args.restrict_to_reference_seed_rois,
         cost="calibrated",
         max_gap=args.max_gap,
+        calibration_feature_set=cast(
+            CalibrationFeatureSet, args.calibration_feature_set
+        ),
         transform_type=args.transform_type,
         start_cost=args.start_cost,
         end_cost=args.end_cost,
@@ -521,7 +526,6 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
         weighted_centroids=args.weighted_centroids,
         velocity_variance=args.velocity_variance,
         regularization=args.regularization,
-        calibration_feature_set=args.calibration_feature_set,
         pairwise_cost_kwargs=_json_object(
             args.pairwise_cost_kwargs_json,
             "--pairwise-cost-kwargs-json",

@@ -19,7 +19,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -76,14 +76,14 @@ class SessionMatchResult:
     def as_roi_index_mapping(self) -> dict[int, int]:
         """Return matches as ``reference_roi_index -> measurement_roi_index``."""
 
-        return {
-            int(reference_roi): int(measurement_roi)
-            for reference_roi, measurement_roi in zip(
+        return _normalize_match_pairs(
+            zip(
                 self.reference_roi_indices,
                 self.measurement_roi_indices,
                 strict=True,
-            )
-        }
+            ),
+            representation_name="SessionMatchResult",
+        )
 
     def as_pair_array(self) -> np.ndarray:
         """Return matches as a ``(n_matches, 2)`` integer array."""
@@ -417,24 +417,61 @@ def _normalize_match_mapping(
     if isinstance(match, SessionMatchResult):
         return match.as_roi_index_mapping()
     if isinstance(match, Mapping):
-        return {
-            int(reference_roi): int(measurement_roi)
-            for reference_roi, measurement_roi in match.items()
-        }
+        return _normalize_match_pairs(
+            match.items(),
+            representation_name="mapping-based matches",
+        )
     if isinstance(match, tuple) and len(match) == 2:
         reference_roi_indices = [int(value) for value in match[0]]
         measurement_roi_indices = [int(value) for value in match[1]]
         if len(reference_roi_indices) != len(measurement_roi_indices):
             raise ValueError("tuple-based matches must have equal lengths")
-        return dict(zip(reference_roi_indices, measurement_roi_indices, strict=True))
+        return _normalize_match_pairs(
+            zip(reference_roi_indices, measurement_roi_indices, strict=True),
+            representation_name="tuple-based matches",
+        )
 
     match_array = np.asarray(match)
     if match_array.ndim == 2 and match_array.shape[1] == 2:
-        return {
-            int(reference_roi): int(measurement_roi)
-            for reference_roi, measurement_roi in match_array.tolist()
-        }
+        return _normalize_match_pairs(
+            match_array.tolist(),
+            representation_name="array-based matches",
+        )
     raise TypeError("unsupported match representation")
+
+
+def _normalize_match_pairs(
+    pairs: Iterable[Sequence[Any]],
+    *,
+    representation_name: str,
+) -> dict[int, int]:
+    """Normalize match pairs while enforcing a one-to-one ROI mapping.
+
+    Manual tuple/array inputs previously went through ``dict(...)`` directly.
+    Duplicate reference ROI indices were therefore collapsed silently, with the
+    last duplicate winning. Duplicate measurement ROI indices are also invalid
+    for track stitching and should be rejected before they can produce
+    ambiguous forward tracks.
+    """
+
+    mapping: dict[int, int] = {}
+    measurement_roi_indices: set[int] = set()
+    for reference_roi, measurement_roi in pairs:
+        reference_roi = int(reference_roi)
+        measurement_roi = int(measurement_roi)
+        if reference_roi in mapping:
+            raise ValueError(
+                f"duplicate reference ROI index {reference_roi} in "
+                f"{representation_name}; matches must be one-to-one"
+            )
+        if measurement_roi in measurement_roi_indices:
+            raise ValueError(
+                f"duplicate measurement ROI index {measurement_roi} in "
+                f"{representation_name}; matches must be one-to-one"
+            )
+        mapping[reference_roi] = measurement_roi
+        measurement_roi_indices.add(measurement_roi)
+    return mapping
 
 
 def _empty_match_result(bundle: Any) -> SessionMatchResult:

@@ -24,6 +24,7 @@ from bayescatrack.association.calibrated_costs import (
 )
 from bayescatrack.association.pyrecest_global_assignment import (
     registered_iou_cost_kwargs,
+    registered_soft_iou_cost_kwargs,
     roi_aware_cost_kwargs,
     roi_aware_shifted_cost_kwargs,
     session_edge_pairs,
@@ -48,12 +49,20 @@ from bayescatrack.experiments.track2p_benchmark import (
     _validate_reference_roi_indices,
     discover_subject_dirs,
 )
-from bayescatrack.track2p_registration import register_plane_pair
+from bayescatrack.track2p_registration import (
+    REGISTRATION_TRANSFORM_TYPES,
+    register_plane_pair,
+)
 
 RegistrationQACost = Literal[
-    "registered-iou", "roi-aware", "roi-aware-shifted", "calibrated"
+    "registered-iou",
+    "registered-soft-iou",
+    "roi-aware",
+    "roi-aware-shifted",
+    "calibrated",
 ]
 RegistrationQALevel = Literal["summary", "links", "backend-audit"]
+REGISTRATION_QA_TRANSFORM_TYPES = (*REGISTRATION_TRANSFORM_TYPES, "gt-affine-oracle")
 OutputFormat = Literal["table", "json", "csv"]
 
 
@@ -510,12 +519,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "gt-affine-oracle", "none"),
+        choices=REGISTRATION_QA_TRANSFORM_TYPES,
     )
     parser.add_argument(
         "--cost",
         default="registered-iou",
-        choices=("registered-iou", "roi-aware", "roi-aware-shifted", "calibrated"),
+        choices=(
+            "registered-iou",
+            "registered-soft-iou",
+            "roi-aware",
+            "roi-aware-shifted",
+            "calibrated",
+        ),
     )
     parser.add_argument("--cost-threshold", type=float, default=6.0)
     parser.add_argument("--no-cost-threshold", action="store_true")
@@ -1211,6 +1226,8 @@ def _raw_pairwise_components(
 def _cost_kwargs(config: RegistrationQAConfig) -> dict[str, Any]:
     if config.cost == "registered-iou":
         kwargs = registered_iou_cost_kwargs()
+    elif config.cost == "registered-soft-iou":
+        kwargs = registered_soft_iou_cost_kwargs()
     elif config.cost == "roi-aware-shifted":
         kwargs = roi_aware_shifted_cost_kwargs()
     else:

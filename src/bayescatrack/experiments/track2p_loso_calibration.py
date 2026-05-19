@@ -167,6 +167,7 @@ def run_track2p_loso_calibration(
     sample_weight: Any | None = None,
     sample_weight_strategy: SampleWeightStrategy = "none",
     model_kwargs: Mapping[str, Any] | None = None,
+    hard_negative_options: CandidateHardNegativeOptions | None = None,
 ) -> LosoCalibrationResult:
     """Run calibrated global assignment with leave-one-subject-out model fitting.
 
@@ -212,13 +213,15 @@ def run_track2p_loso_calibration(
             "sample weights are only supported for calibration_model='logistic'"
         )
     logistic_model_kwargs = _loso_logistic_model_kwargs(model_kwargs)
+    hard_negative_options = hard_negative_options or _hard_negative_options_from_config(
+        config
+    )
     folds: list[LosoCalibrationFold] = []
 
     for held_out_index, held_out in enumerate(subjects):
         training_subjects = tuple(
             subject for index, subject in enumerate(subjects) if index != held_out_index
         )
-        hard_negative_options = CandidateHardNegativeOptions()
         training_pairwise_blocks = _collect_training_pairwise_blocks(
             training_subjects,
             config=config,
@@ -245,6 +248,7 @@ def run_track2p_loso_calibration(
                 training_labels,
                 feature_names=feature_names,
                 sample_weight=weights,
+                activity_feature_weight=config.activity_feature_weight,
                 model_kwargs=logistic_model_kwargs,
             )
         else:
@@ -288,6 +292,18 @@ def run_track2p_loso_calibration(
             "calibration_sample_weight_strategy": sample_weight_strategy,
             "calibration_class_weight": _stringify_class_weight(
                 logistic_model_kwargs.get("class_weight")
+            ),
+            "calibration_hard_negative_ratio": (
+                hard_negative_options.negative_to_positive_ratio
+            ),
+            "calibration_hard_negative_top_k": _stringify_optional_int(
+                hard_negative_options.candidate_top_k_per_anchor
+            ),
+            "calibration_hard_negative_include_columns": str(
+                hard_negative_options.include_column_candidates
+            ),
+            "calibration_hard_negative_features": ",".join(
+                hard_negative_options.hardness_feature_names
             ),
             **_activity_tie_breaker_metadata(config),
             **calibration_scores,
@@ -426,6 +442,39 @@ def _stringify_class_weight(class_weight: Any) -> str:
     return "None" if class_weight is None else str(class_weight)
 
 
+def _stringify_optional_int(value: int | None) -> str:
+    return "None" if value is None else str(int(value))
+
+
+def _hard_negative_options_from_config(
+    config: Track2pBenchmarkConfig,
+) -> CandidateHardNegativeOptions:
+    return CandidateHardNegativeOptions(
+        negative_to_positive_ratio=float(
+            getattr(config, "calibration_hard_negative_ratio", 4.0)
+        ),
+        candidate_top_k_per_anchor=getattr(
+            config, "calibration_hard_negative_top_k", 20
+        ),
+        include_column_candidates=bool(
+            getattr(config, "calibration_hard_negative_include_columns", True)
+        ),
+        hardness_feature_names=_tuple_from_names(
+            getattr(config, "calibration_hard_negative_features", ())
+        ),
+    )
+
+
+def _tuple_from_names(value: str | Sequence[str] | None) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        raw_names = value.split(",")
+    else:
+        raw_names = value
+    return tuple(str(name).strip() for name in raw_names if str(name).strip())
+
+
 def _score_holdout_calibration(
     calibrated_model: Any,
     held_out: SubjectCalibrationData,
@@ -475,6 +524,7 @@ def _collect_training_examples(
     feature_names: Sequence[str],
     progress: ProgressReporter | None = None,
     held_out_subject: str | None = None,
+    hard_negative_options: CandidateHardNegativeOptions | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     pairwise_blocks = _collect_training_pairwise_blocks(
         training_subjects,
@@ -483,8 +533,11 @@ def _collect_training_examples(
         progress=progress,
         held_out_subject=held_out_subject,
     )
+    hard_negative_options = hard_negative_options or _hard_negative_options_from_config(
+        config
+    )
     return collect_candidate_limited_training_examples(
-        pairwise_blocks, options=CandidateHardNegativeOptions()
+        pairwise_blocks, options=hard_negative_options
     )
 
 
@@ -529,6 +582,7 @@ def _reference_training_options(
         velocity_variance=config.velocity_variance,
         regularization=config.regularization,
         feature_names=tuple(feature_names),
+        activity_feature_weight=config.activity_feature_weight,
         pairwise_cost_kwargs=pairwise_cost_kwargs_for_calibration_features(
             config.pairwise_cost_kwargs, feature_names
         ),

@@ -213,6 +213,11 @@ class CalciumPlaneData:
         centroid_scale: float | None = None,
         max_centroid_distance: float | None = None,
         iou_weight: float = 6.0,
+        soft_iou_weight: float = 0.0,
+        soft_iou_radius: int = 0,
+        distance_transform_overlap_weight: float = 0.0,
+        distance_transform_overlap_radius: int = 0,
+        distance_transform_overlap_scale: float | None = None,
         mask_cosine_weight: float = 2.0,
         area_weight: float = 0.5,
         roi_feature_weight: float = 0.25,
@@ -240,7 +245,8 @@ class CalciumPlaneData:
             the reference frame of ``self`` using :meth:`with_replaced_masks`.
         order, weighted_centroids
             Forwarded to centroid/covariance computations.
-        centroid_weight, iou_weight, mask_cosine_weight, area_weight,
+        centroid_weight, iou_weight, soft_iou_weight,
+        distance_transform_overlap_weight, mask_cosine_weight, area_weight,
         roi_feature_weight, cell_probability_weight
             Non-negative weights of the corresponding cost terms.
         centroid_scale
@@ -249,6 +255,14 @@ class CalciumPlaneData:
         max_centroid_distance
             Optional hard gate in pixels. Pairs beyond the threshold are set to
             ``large_cost``.
+        soft_iou_radius
+            Binary dilation radius, in pixels, for the soft-IoU near-miss term.
+        distance_transform_overlap_radius
+            Maximum pixel distance admitted by the distance-transform overlap
+            near-miss term.
+        distance_transform_overlap_scale
+            Optional Gaussian distance scale for the distance-transform overlap
+            term. If omitted, a robust default derived from the radius is used.
         large_cost
             Finite penalty assigned to pairs excluded by the hard gate.
         similarity_epsilon
@@ -265,6 +279,8 @@ class CalciumPlaneData:
         for weight_name, weight_value in {
             "centroid_weight": centroid_weight,
             "iou_weight": iou_weight,
+            "soft_iou_weight": soft_iou_weight,
+            "distance_transform_overlap_weight": distance_transform_overlap_weight,
             "mask_cosine_weight": mask_cosine_weight,
             "area_weight": area_weight,
             "roi_feature_weight": roi_feature_weight,
@@ -272,6 +288,22 @@ class CalciumPlaneData:
         }.items():
             if weight_value < 0.0:
                 raise ValueError(f"{weight_name} must be non-negative")
+
+        soft_iou_radius = int(soft_iou_radius)
+        distance_transform_overlap_radius = int(distance_transform_overlap_radius)
+        if soft_iou_radius < 0:
+            raise ValueError("soft_iou_radius must be non-negative")
+        if distance_transform_overlap_radius < 0:
+            raise ValueError(
+                "distance_transform_overlap_radius must be non-negative"
+            )
+        if (
+            distance_transform_overlap_scale is not None
+            and distance_transform_overlap_scale <= 0.0
+        ):
+            raise ValueError(
+                "distance_transform_overlap_scale must be strictly positive when provided"
+            )
 
         cost_shape = (self.n_rois, other.n_rois)
         zero_cost = np.zeros(cost_shape, dtype=float)
@@ -308,6 +340,44 @@ class CalciumPlaneData:
         else:
             iou_matrix = zero_cost
             iou_cost = zero_cost
+
+        if soft_iou_weight > 0.0 or (return_components and soft_iou_radius > 0):
+            soft_iou = _pairwise_dilated_iou_matrix(
+                self.roi_masks,
+                other.roi_masks,
+                radius=soft_iou_radius,
+            )
+            soft_iou_cost = -np.log(
+                np.clip(soft_iou, similarity_epsilon, 1.0)
+            )
+            if soft_iou_weight > 0.0:
+                total_cost += soft_iou_weight * soft_iou_cost
+        else:
+            soft_iou = zero_cost
+            soft_iou_cost = zero_cost
+
+        if distance_transform_overlap_weight > 0.0 or (
+            return_components and distance_transform_overlap_radius > 0
+        ):
+            distance_transform_overlap = (
+                _pairwise_distance_transform_overlap_matrix(
+                    self.roi_masks,
+                    other.roi_masks,
+                    radius=distance_transform_overlap_radius,
+                    distance_scale=distance_transform_overlap_scale,
+                )
+            )
+            distance_transform_overlap_cost = -np.log(
+                np.clip(distance_transform_overlap, similarity_epsilon, 1.0)
+            )
+            if distance_transform_overlap_weight > 0.0:
+                total_cost += (
+                    distance_transform_overlap_weight
+                    * distance_transform_overlap_cost
+                )
+        else:
+            distance_transform_overlap = zero_cost
+            distance_transform_overlap_cost = zero_cost
 
         if mask_cosine_weight > 0.0 or return_components:
             mask_cosine_similarity = _pairwise_mask_cosine_similarity(
@@ -396,6 +466,10 @@ class CalciumPlaneData:
             "centroid_cost": centroid_cost,
             "iou": iou_matrix,
             "iou_cost": iou_cost,
+            "soft_iou": soft_iou,
+            "soft_iou_cost": soft_iou_cost,
+            "distance_transform_overlap": distance_transform_overlap,
+            "distance_transform_overlap_cost": distance_transform_overlap_cost,
             "mask_cosine_similarity": mask_cosine_similarity,
             "mask_cosine_cost": mask_cosine_cost,
             "area_ratio_cost": area_ratio_cost,
@@ -1343,6 +1417,107 @@ def _pairwise_iou_matrix(
     valid = unions > 0.0
     iou[valid] = intersections[valid] / unions[valid]
     return iou
+
+
+def _pairwise_dilated_iou_matrix(
+    reference_masks: np.ndarray,
+    measurement_masks: np.ndarray,
+    *,
+    radius: int,
+) -> np.ndarray:
+    if radius < 0:
+        raise ValueError("radius must be non-negative")
+    if radius == 0:
+        return _pairwise_iou_matrix(reference_masks, measurement_masks)
+    return _pairwise_iou_matrix(
+        _dilate_binary_mask_stack(reference_masks, radius),
+        _dilate_binary_mask_stack(measurement_masks, radius),
+    )
+
+
+def _pairwise_distance_transform_overlap_matrix(
+    reference_masks: np.ndarray,
+    measurement_masks: np.ndarray,
+    *,
+    radius: int,
+    distance_scale: float | None,
+) -> np.ndarray:
+    if radius < 0:
+        raise ValueError("radius must be non-negative")
+    if radius == 0:
+        return _pairwise_iou_matrix(reference_masks, measurement_masks)
+    if distance_scale is None:
+        distance_scale = max(float(radius) / 2.0, 1.0)
+    if distance_scale <= 0.0:
+        raise ValueError("distance_scale must be strictly positive")
+    reference_to_measurement = _pairwise_one_sided_distance_overlap(
+        reference_masks,
+        measurement_masks,
+        radius=radius,
+        distance_scale=float(distance_scale),
+    )
+    measurement_to_reference = _pairwise_one_sided_distance_overlap(
+        measurement_masks,
+        reference_masks,
+        radius=radius,
+        distance_scale=float(distance_scale),
+    ).T
+    return np.clip(
+        0.5 * (reference_to_measurement + measurement_to_reference),
+        0.0,
+        1.0,
+    )
+
+
+def _pairwise_one_sided_distance_overlap(
+    source_masks: np.ndarray,
+    query_masks: np.ndarray,
+    *,
+    radius: int,
+    distance_scale: float,
+) -> np.ndarray:
+    source_support = np.asarray(source_masks) > 0
+    query_support = np.asarray(query_masks) > 0
+    if source_support.shape[1:] != query_support.shape[1:]:
+        raise ValueError("Mask stacks must have matching spatial shapes")
+    scores = np.zeros((source_support.shape[0], query_support.shape[0]), dtype=float)
+    query_areas = np.maximum(_mask_support_areas(query_support), 1.0)
+    covered = np.zeros_like(source_support, dtype=bool)
+    for distance in range(radius + 1):
+        dilated = _dilate_binary_mask_stack(source_support, distance)
+        band = dilated & ~covered
+        covered |= dilated
+        if not np.any(band):
+            continue
+        weight = float(np.exp(-0.5 * (float(distance) / float(distance_scale)) ** 2))
+        scores += weight * _pairwise_sparse_mask_dot(band, query_support, binary=True)
+    return np.clip(scores / query_areas[None, :], 0.0, 1.0)
+
+
+def _dilate_binary_mask_stack(masks: np.ndarray, radius: int) -> np.ndarray:
+    if radius < 0:
+        raise ValueError("radius must be non-negative")
+    mask_array = np.asarray(masks) > 0
+    if radius == 0 or mask_array.size == 0:
+        return mask_array
+    padded = np.pad(
+        mask_array,
+        ((0, 0), (radius, radius), (radius, radius)),
+        mode="constant",
+        constant_values=False,
+    )
+    dilated = np.zeros_like(mask_array, dtype=bool)
+    height, width = mask_array.shape[1:]
+    for offset_y in range(-radius, radius + 1):
+        for offset_x in range(-radius, radius + 1):
+            if offset_y * offset_y + offset_x * offset_x > radius * radius:
+                continue
+            y_start = radius + offset_y
+            x_start = radius + offset_x
+            y_slice = slice(y_start, y_start + height)
+            x_slice = slice(x_start, x_start + width)
+            dilated |= padded[:, y_slice, x_slice]
+    return dilated
 
 
 def _pairwise_sparse_mask_dot(

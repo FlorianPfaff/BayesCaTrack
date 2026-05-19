@@ -95,6 +95,16 @@ def test_registered_shifted_iou_cost_kwargs_replace_exact_iou_term():
     assert kwargs["shifted_iou_shift_penalty_weight"] == 0.0
 
 
+def test_registered_soft_iou_cost_kwargs_available_without_package_side_effect():
+    # pylint: disable=protected-access
+    kwargs = global_assignment._cost_kwargs_for_method("registered-soft-iou")
+
+    assert kwargs["iou_weight"] == 0.0
+    assert kwargs["soft_iou_weight"] > 0.0
+    assert kwargs["distance_transform_overlap_weight"] > 0.0
+    assert kwargs["centroid_weight"] == 0.0
+
+
 def test_roi_aware_shifted_cost_kwargs_replace_overlap_terms():
     kwargs = global_assignment.roi_aware_shifted_cost_kwargs(shifted_iou_radius=3)
 
@@ -186,6 +196,36 @@ def test_registered_shifted_iou_cost_recovers_local_residual_shift(
         global_assignment.CalciumPlaneData.build_pairwise_cost_matrix
         is previous_pairwise_cost_method
     )
+
+
+def test_registered_soft_iou_cost_recovers_near_miss_overlap(
+    make_track2p_session,
+    monkeypatch,
+):
+    reference_masks = np.zeros((1, 10, 10), dtype=bool)
+    reference_masks[0, 2:4, 2:4] = True
+    measurement_masks = np.zeros_like(reference_masks)
+    measurement_masks[0, 2:4, 5:7] = True
+
+    reference = make_track2p_session("2024-05-01_a", reference_masks)
+    measurement = make_track2p_session("2024-05-02_a", measurement_masks)
+
+    def _fake_register_plane_pair(*_args, **_kwargs):
+        return measurement.plane_data
+
+    monkeypatch.setattr(
+        global_assignment, "register_plane_pair", _fake_register_plane_pair
+    )
+
+    exact_costs = global_assignment.build_registered_pairwise_costs(
+        [reference, measurement], max_gap=1, cost="registered-iou"
+    )
+    soft_costs = global_assignment.build_registered_pairwise_costs(
+        [reference, measurement], max_gap=1, cost="registered-soft-iou"
+    )
+
+    assert np.isfinite(soft_costs[(0, 1)][0, 0])
+    assert soft_costs[(0, 1)][0, 0] < exact_costs[(0, 1)][0, 0]
 
 
 def test_empty_registered_mask_placeholders_use_distinct_pixels(make_track2p_session):

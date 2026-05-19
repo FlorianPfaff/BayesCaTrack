@@ -103,7 +103,10 @@ python -m pip install ".[track2p]"
 Use `--transform-type affine` or `--transform-type rigid` to request Track2p's
 registration stack. For hosted benchmark runs without this optional backend,
 use `--transform-type fov-translation`; that selects BayesCaTrack's integer FOV
-phase-correlation fallback explicitly.
+phase-correlation fallback explicitly. BayesCaTrack-native registration options
+can also be benchmarked directly via `--transform-type fov-affine`, `bspline`,
+`tps`, `local-affine-grid`, or `optical-flow` depending on the deformation model
+you want to test.
 
 Create a small synthetic Suite2p-style subject for benchmark development:
 
@@ -138,6 +141,36 @@ python -m bayescatrack benchmark track2p \
   --reference-kind manual-gt \
   --transform-type fov-translation \
   --max-gap 2
+```
+
+Run growth-aware registration as a first-class benchmark axis:
+
+```bash
+python -m bayescatrack benchmark track2p \
+  --data /path/to/track2p_zenodo \
+  --method global-assignment \
+  --cost registered-iou \
+  --reference /path/to/manual_ground_truth_root \
+  --reference-kind manual-gt \
+  --transform-suite \
+    fov-translation fov-affine bspline tps local-affine-grid optical-flow \
+  --max-gap 2 \
+  --format csv \
+  --output results/registration_axis.csv
+```
+
+Add triplet-projected higher-order consistency penalties on top of the
+pairwise costs:
+
+```bash
+python -m bayescatrack benchmark track2p \
+  --data /path/to/track2p_zenodo \
+  --method global-assignment \
+  --cost registered-iou \
+  --reference /path/to/manual_ground_truth_root \
+  --reference-kind manual-gt \
+  --max-gap 2 \
+  --higher-order-triplet-weight 0.35
 ```
 
 Run the BayesCaTrack ROI-aware cost ablation:
@@ -218,6 +251,11 @@ Run a reproducible benchmark suite from one JSON manifest:
       "method": "global-assignment",
       "cost": "registered-iou",
       "max_gap": 2,
+      "higher_order_consistency_config": {
+        "triplet_weight": 0.35,
+        "support_top_k": 8,
+        "support_cost_cap": 4.0
+      },
       "output": "results/registered_iou.csv"
     }
   ],

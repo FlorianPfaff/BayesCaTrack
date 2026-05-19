@@ -44,6 +44,7 @@ from bayescatrack.experiments.track2p_loso_calibration import (
     _load_subject_calibration_data,
     _reference_training_options,
 )
+from bayescatrack.track2p_registration import REGISTRATION_TRANSFORM_TYPES
 
 
 # pylint: disable=too-many-arguments,too-many-locals
@@ -238,7 +239,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transform-type",
         default="affine",
-        choices=("affine", "rigid", "fov-translation", "none"),
+        choices=REGISTRATION_TRANSFORM_TYPES,
     )
     parser.add_argument("--start-cost", type=float, default=5.0)
     parser.add_argument("--end-cost", type=float, default=5.0)
