@@ -132,7 +132,7 @@ def _handle_benchmark(args: list[str]) -> int:
 
         return int(_track2p_solver_prior_loso_main(args[1:]))
     if args[0] == "track2p-loso-calibration":
-        from bayescatrack.experiments.track2p_loso_calibration import (
+        from bayescatrack.experiments.track2p_configurable_loso_calibration import (
             main as _track2p_loso_calibration_main,
         )
 
