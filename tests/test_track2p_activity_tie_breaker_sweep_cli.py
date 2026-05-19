@@ -19,7 +19,7 @@ def test_activity_tie_breaker_sweep_cli_builds_config():
             "--activity-event-threshold",
             "0.2",
             "--no-cost-threshold",
-            "--progress=false",
+            "--no-progress",
         ]
     )
 
@@ -27,6 +27,7 @@ def test_activity_tie_breaker_sweep_cli_builds_config():
 
     assert config.benchmark.method == "global-assignment"
     assert config.benchmark.cost_threshold is None
+    assert config.benchmark.progress is False
     assert config.activity_tie_breaker_weights == (0.0, 0.03, 0.1)
     assert config.activity_tie_breaker_component == "spike_similarity_cost"
     assert config.activity_trace_source == "spike_traces"
