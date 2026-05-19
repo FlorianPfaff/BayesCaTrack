@@ -44,6 +44,18 @@ from bayescatrack.reference import Track2pReference
 
 SampleWeightStrategy = Literal["none", "balanced"]
 CalibrationFeatureSet = Literal["default", "local-evidence", "default+local-evidence"]
+_LOCAL_EVIDENCE_COMPONENT_KWARGS = frozenset(
+    {
+        "local_evidence_components",
+        "weighted_dice_weight",
+        "overlap_fraction_weight",
+        "containment_weight",
+        "distance_transform_weight",
+        "image_patch_weight",
+        "neighbor_constellation_weight",
+        "centroid_rank_weight",
+    }
+)
 
 
 def calibration_feature_names(
@@ -162,9 +174,7 @@ def run_track2p_loso_calibration(
             "LOSO calibration requires method='global-assignment' and cost='calibrated'"
         )
     feature_names = tuple(
-        calibration_feature_names(getattr(config, "calibration_feature_set", "default"))
-        if feature_names is None
-        else feature_names
+        _feature_names_from_config(config) if feature_names is None else feature_names
     )
     config = _config_with_pairwise_kwargs_for_features(config, feature_names)
     subject_dirs = tuple(discover_subject_dirs(config.data))
@@ -235,9 +245,7 @@ def run_track2p_loso_calibration(
             "training_examples": int(training_labels.shape[0]),
             "positive_examples": positives,
             "negative_examples": int(training_labels.shape[0] - positives),
-            "calibration_feature_set": str(
-                getattr(config, "calibration_feature_set", "default")
-            ),
+            "calibration_feature_set": _feature_set_label(config, feature_names),
             "calibration_feature_count": int(len(feature_names)),
             "calibration_sample_weight_strategy": sample_weight_strategy,
             "calibration_class_weight": _stringify_class_weight(
@@ -266,6 +274,43 @@ def run_track2p_loso_calibration(
     return LosoCalibrationResult(
         folds=tuple(folds), feature_names=feature_names, max_gap=int(config.max_gap)
     )
+
+
+def _feature_names_from_config(config: Track2pBenchmarkConfig) -> tuple[str, ...]:
+    feature_set = getattr(config, "calibration_feature_set", "default")
+    if feature_set != "default":
+        return calibration_feature_names(str(feature_set))
+    if _pairwise_kwargs_request_local_evidence(config.pairwise_cost_kwargs):
+        return calibration_feature_names("default+local-evidence")
+    return calibration_feature_names("default")
+
+
+def _feature_set_label(
+    config: Track2pBenchmarkConfig, feature_names: Sequence[str]
+) -> str:
+    configured = str(getattr(config, "calibration_feature_set", "default"))
+    if configured != "default":
+        return configured
+    if tuple(feature_names) == calibration_feature_names("default+local-evidence"):
+        return "default+local-evidence"
+    if tuple(feature_names) == calibration_feature_names("local-evidence"):
+        return "local-evidence"
+    return "custom" if tuple(feature_names) != calibration_feature_names("default") else "default"
+
+
+def _pairwise_kwargs_request_local_evidence(
+    pairwise_cost_kwargs: Mapping[str, Any] | None,
+) -> bool:
+    if not pairwise_cost_kwargs:
+        return False
+    for key in _LOCAL_EVIDENCE_COMPONENT_KWARGS:
+        value = pairwise_cost_kwargs.get(key)
+        if isinstance(value, bool):
+            if value:
+                return True
+        elif value is not None and float(value) > 0.0:
+            return True
+    return False
 
 
 def _uses_local_evidence_features(feature_names: Sequence[str]) -> bool:
