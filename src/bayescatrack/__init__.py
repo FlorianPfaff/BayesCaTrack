@@ -28,6 +28,13 @@ def _install_registration_transform_argparse_patch() -> None:
         "landmark-tps",
         "local-affine-grid",
         "optical-flow",
+        "association-guided-bspline",
+        "association-guided-b-spline",
+        "association-guided-thin-plate-spline",
+        "association-guided-tps",
+        "association-guided-landmark-tps",
+        "association-guided-local-affine-grid",
+        "association-guided-optical-flow",
     )
     soft_cost_choices = (
         "registered-soft-iou",
@@ -62,7 +69,8 @@ def _install_registration_transform_argparse_patch() -> None:
             help_text = kwargs.get("help")
             if isinstance(help_text, str) and "bspline" not in help_text:
                 kwargs["help"] = (
-                    f"{help_text}; supports fov-affine and growth-aware transforms "
+                    f"{help_text}; supports fov-affine, association-guided growth-aware "
+                    "transforms, and image-driven growth-aware transforms "
                     "bspline, tps, local-affine-grid, and optical-flow"
                 )
         if "--cost" in name_or_flags:

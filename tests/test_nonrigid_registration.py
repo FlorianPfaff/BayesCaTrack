@@ -4,6 +4,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
+from bayescatrack.association_guided_registration import (
+    ASSOCIATION_GUIDED_NONRIGID_REGISTRATION_TRANSFORM_TYPES,
+    register_measurement_plane_by_association_guided_nonrigid,
+)
 from bayescatrack.core.bridge import CalciumPlaneData
 from bayescatrack.nonrigid_registration import (
     NONRIGID_REGISTRATION_TRANSFORM_TYPES,
@@ -139,6 +143,9 @@ def test_nonrigid_transform_names_are_registered() -> None:
     assert set(NONRIGID_REGISTRATION_TRANSFORM_TYPES).issubset(
         set(REGISTRATION_TRANSFORM_TYPES)
     )
+    assert set(ASSOCIATION_GUIDED_NONRIGID_REGISTRATION_TRANSFORM_TYPES).issubset(
+        set(REGISTRATION_TRANSFORM_TYPES)
+    )
 
 
 def test_nonrigid_registration_routes_through_public_pair_registration() -> None:
@@ -200,4 +207,43 @@ def test_tps_registration_handles_lower_left_anchor_upper_right_growth() -> None
     assert (
         registration.registered_measurement_plane.ops["nonrigid_registration_backend"]
         == "thin-plate-spline-landmark-warp"
+    )
+
+
+def test_association_guided_tps_refines_from_unsupervised_pseudo_links() -> None:
+    reference, measurement, reference_xy, measurement_xy, affine_xy, estimate = (
+        _growth_planes_and_estimate()
+    )
+    affine_registered_xy = _apply_affine_xy(measurement_xy, affine_xy)
+    affine_error = _median_link_error(affine_registered_xy, reference_xy)
+
+    with patch(
+        "bayescatrack.association_guided_registration.estimate_fov_affine_transform",
+        return_value=estimate,
+    ):
+        registration = register_measurement_plane_by_association_guided_nonrigid(
+            reference,
+            measurement,
+            transform_type="association-guided-tps",
+            grid_shape=(3, 3),
+            min_tile_size=16,
+            iterations=2,
+            min_pseudo_links=3,
+            pseudo_link_cost_threshold=8.0,
+        )
+
+    registered_xy = registration.registered_measurement_plane.centroids(order="xy").T
+    guided_error = _median_link_error(registered_xy, reference_xy)
+
+    assert registration.selected_pseudo_links.shape[0] >= 3
+    assert guided_error < 0.75 * affine_error
+    assert guided_error < 3.0
+    assert registration.registered_measurement_plane.ops is not None
+    assert (
+        registration.registered_measurement_plane.ops["registration_backend"]
+        == "bayescatrack-association-guided-nonrigid"
+    )
+    assert (
+        registration.registered_measurement_plane.ops["registration_transform_type"]
+        == "association-guided-tps"
     )

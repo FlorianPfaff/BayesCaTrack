@@ -14,6 +14,10 @@ from bayescatrack import (
     build_consecutive_session_association_bundles,
     load_track2p_subject,
 )
+from bayescatrack.association_guided_registration import (
+    ASSOCIATION_GUIDED_NONRIGID_REGISTRATION_TRANSFORM_TYPES,
+    register_measurement_plane_by_association_guided_nonrigid,
+)
 from bayescatrack.nonrigid_registration import (
     NONRIGID_REGISTRATION_TRANSFORM_TYPES,
     register_measurement_plane_by_nonrigid_fov,
@@ -31,6 +35,13 @@ RegistrationTransform = Literal[
     "landmark-tps",
     "local-affine-grid",
     "optical-flow",
+    "association-guided-bspline",
+    "association-guided-b-spline",
+    "association-guided-thin-plate-spline",
+    "association-guided-tps",
+    "association-guided-landmark-tps",
+    "association-guided-local-affine-grid",
+    "association-guided-optical-flow",
     "none",
 ]
 REGISTRATION_TRANSFORM_TYPES: tuple[str, ...] = (
@@ -39,6 +50,7 @@ REGISTRATION_TRANSFORM_TYPES: tuple[str, ...] = (
     "fov-translation",
     "fov-affine",
     *NONRIGID_REGISTRATION_TRANSFORM_TYPES,
+    *ASSOCIATION_GUIDED_NONRIGID_REGISTRATION_TRANSFORM_TYPES,
     "none",
 )
 
@@ -147,11 +159,30 @@ def _nonrigid_registered_plane(
     moving_plane: CalciumPlaneData,
     *,
     transform_type: str,
+    registration_kwargs: Mapping[str, Any] | None = None,
 ) -> CalciumPlaneData:
+    options = {} if registration_kwargs is None else dict(registration_kwargs)
     return register_measurement_plane_by_nonrigid_fov(
         reference_plane,
         moving_plane,
         transform_type=transform_type,
+        **options,
+    ).registered_measurement_plane
+
+
+def _association_guided_nonrigid_registered_plane(
+    reference_plane: CalciumPlaneData,
+    moving_plane: CalciumPlaneData,
+    *,
+    transform_type: str,
+    registration_kwargs: Mapping[str, Any] | None = None,
+) -> CalciumPlaneData:
+    options = {} if registration_kwargs is None else dict(registration_kwargs)
+    return register_measurement_plane_by_association_guided_nonrigid(
+        reference_plane,
+        moving_plane,
+        transform_type=transform_type,
+        **options,
     ).registered_measurement_plane
 
 
@@ -160,6 +191,7 @@ def register_plane_pair(
     moving_plane: CalciumPlaneData,
     *,
     transform_type: RegistrationTransform | str = "affine",
+    registration_kwargs: Mapping[str, Any] | None = None,
 ) -> CalciumPlaneData:
     if transform_type not in REGISTRATION_TRANSFORM_TYPES:
         valid_types = ", ".join(repr(value) for value in REGISTRATION_TRANSFORM_TYPES)
@@ -179,6 +211,14 @@ def register_plane_pair(
             reference_plane,
             moving_plane,
             transform_type=transform_type,
+            registration_kwargs=registration_kwargs,
+        )
+    if transform_type in ASSOCIATION_GUIDED_NONRIGID_REGISTRATION_TRANSFORM_TYPES:
+        return _association_guided_nonrigid_registered_plane(
+            reference_plane,
+            moving_plane,
+            transform_type=transform_type,
+            registration_kwargs=registration_kwargs,
         )
 
     try:
@@ -256,6 +296,7 @@ def register_consecutive_session_measurement_planes(
     sessions: Sequence[Track2pSession],
     *,
     transform_type: RegistrationTransform | str = "affine",
+    registration_kwargs: Mapping[str, Any] | None = None,
 ) -> list[CalciumPlaneData]:
     sessions = list(sessions)
     if len(sessions) < 2:
@@ -265,6 +306,7 @@ def register_consecutive_session_measurement_planes(
             sessions[i].plane_data,
             sessions[i + 1].plane_data,
             transform_type=transform_type,
+            registration_kwargs=registration_kwargs,
         )
         for i in range(len(sessions) - 1)
     ]
@@ -282,6 +324,7 @@ def build_registered_subject_association_bundles(  # pylint: disable=too-many-ar
     velocity_variance: float = 25.0,
     regularization: float = 1e-6,
     pairwise_cost_kwargs: Mapping[str, Any] | None = None,
+    registration_kwargs: Mapping[str, Any] | None = None,
     return_pairwise_components: bool = True,
     **suite2p_kwargs: Any,
 ) -> list[SessionAssociationBundle]:
@@ -293,7 +336,9 @@ def build_registered_subject_association_bundles(  # pylint: disable=too-many-ar
         suite2p_kwargs=suite2p_kwargs,
     )
     registered_measurement_planes = register_consecutive_session_measurement_planes(
-        sessions, transform_type=transform_type
+        sessions,
+        transform_type=transform_type,
+        registration_kwargs=registration_kwargs,
     )
 
     association_kwargs: dict[str, Any] = {"order": order}

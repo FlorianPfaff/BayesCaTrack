@@ -66,6 +66,7 @@ class Track2pBenchmarkConfig:
     cost: AssociationCost = "registered-iou"
     max_gap: int = 2
     transform_type: str = "affine"
+    registration_kwargs: dict[str, Any] | None = None
     start_cost: float = 5.0
     end_cost: float = 5.0
     gap_penalty: float = 1.0
@@ -337,6 +338,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Track2p registration transform type",
     )
     parser.add_argument(
+        "--registration-kwargs-json",
+        default=None,
+        help="JSON object forwarded to the registration backend; useful for association-guided iterations and pseudo-link thresholds",
+    )
+    parser.add_argument(
         "--start-cost", type=float, default=5.0, help="PyRecEst track start cost"
     )
     parser.add_argument(
@@ -540,6 +546,7 @@ def solve_configured_global_assignment(
         cost=config.cost if cost is None else cost,
         calibrated_model=calibrated_model,
         transform_type=config.transform_type,
+        registration_kwargs=config.registration_kwargs,
         start_cost=config.start_cost,
         end_cost=config.end_cost,
         gap_penalty=config.gap_penalty,
@@ -957,12 +964,12 @@ def _looks_like_subject_dir(path: Path) -> bool:
 
 
 def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
-    pairwise_cost_kwargs = None
-    if args.pairwise_cost_kwargs_json is not None:
-        parsed = json.loads(args.pairwise_cost_kwargs_json)
-        if not isinstance(parsed, dict):
-            raise ValueError("--pairwise-cost-kwargs-json must decode to a JSON object")
-        pairwise_cost_kwargs = parsed
+    pairwise_cost_kwargs = _json_object_or_none(
+        args.pairwise_cost_kwargs_json, "--pairwise-cost-kwargs-json"
+    )
+    registration_kwargs = _json_object_or_none(
+        args.registration_kwargs_json, "--registration-kwargs-json"
+    )
     return Track2pBenchmarkConfig(
         data=args.data,
         method=args.method,
@@ -978,6 +985,7 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
         cost=args.cost,
         max_gap=args.max_gap,
         transform_type=args.transform_type,
+        registration_kwargs=registration_kwargs,
         start_cost=args.start_cost,
         end_cost=args.end_cost,
         gap_penalty=args.gap_penalty,
@@ -994,6 +1002,15 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
         pairwise_cost_kwargs=pairwise_cost_kwargs,
         progress=args.progress,
     )
+
+
+def _json_object_or_none(value: str | None, option_name: str) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{option_name} must decode to a JSON object")
+    return parsed
 
 
 def _write_stdout(
