@@ -131,6 +131,43 @@ def _loso_config(tmp_path, *, allow_smoke_reference=False):
     )
 
 
+def test_loso_calibration_feature_presets_expose_split_and_local_components():
+    from bayescatrack.association.calibrated_costs import (
+        DEFAULT_ASSOCIATION_FEATURES,
+        LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
+        SPLIT_ROI_STAT_FEATURES,
+        pairwise_feature_tensor,
+    )
+    from bayescatrack.experiments.track2p_loso_calibration import (
+        calibration_feature_names,
+        pairwise_cost_kwargs_for_calibration_features,
+    )
+
+    assert SPLIT_ROI_STAT_FEATURES
+    assert LOCAL_EVIDENCE_ASSOCIATION_FEATURES
+    assert len(DEFAULT_ASSOCIATION_FEATURES) == len(set(DEFAULT_ASSOCIATION_FEATURES))
+    assert "roi_feature_cost" not in DEFAULT_ASSOCIATION_FEATURES
+    assert set(SPLIT_ROI_STAT_FEATURES) <= set(DEFAULT_ASSOCIATION_FEATURES)
+
+    local_feature_names = calibration_feature_names("local-evidence")
+    combined_feature_names = calibration_feature_names("default+local-evidence")
+    assert local_feature_names == LOCAL_EVIDENCE_ASSOCIATION_FEATURES
+    assert set(DEFAULT_ASSOCIATION_FEATURES) <= set(combined_feature_names)
+    assert set(LOCAL_EVIDENCE_ASSOCIATION_FEATURES) <= set(combined_feature_names)
+
+    kwargs = pairwise_cost_kwargs_for_calibration_features(
+        {"patch_radius": 3}, combined_feature_names
+    )
+    assert kwargs == {"patch_radius": 3, "local_evidence_components": True}
+
+    feature_tensor = pairwise_feature_tensor(
+        {"centroid_distance": np.zeros((2, 3), dtype=float)},
+        feature_names=LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
+    )
+    assert feature_tensor.shape == (2, 3, len(LOCAL_EVIDENCE_ASSOCIATION_FEATURES))
+    assert np.all(feature_tensor == 0.0)
+
+
 def _prepare_loso_fixture(tmp_path, monkeypatch, subject_writer):
     for subject_name in ("jm001", "jm002"):
         subject_writer(tmp_path / subject_name)

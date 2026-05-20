@@ -5,9 +5,11 @@ import numpy.testing as npt
 import pytest
 from bayescatrack.association import pyrecest_global_assignment as global_assignment
 from bayescatrack.association.registered_masks import (
+    add_registered_roi_validity_components,
     drop_empty_registered_masks,
     expand_registered_pairwise_components,
     expand_registered_pairwise_cost_columns,
+    mask_invalid_registered_roi_columns,
 )
 
 
@@ -194,3 +196,31 @@ def test_expand_registered_pairwise_components_marks_invalid_columns():
         expanded["activity_similarity_available"],
         np.array([[1.0, 0.0, 0.0]]),
     )
+
+
+def test_invalid_registered_roi_columns_mask_placeholder_evidence():
+    pairwise_components = {
+        "iou": np.array([[0.75, 1.0]]),
+        "centroid_distance": np.array([[2.0, 0.0]]),
+        "area_ratio_cost": np.array([[0.1, 0.0]]),
+        "session_gap": np.array([[1.0, 1.0]]),
+        "gated": np.zeros((1, 2), dtype=bool),
+    }
+
+    add_registered_roi_validity_components(
+        pairwise_components,
+        np.array([True, False]),
+        large_cost=99.0,
+    )
+    masked = mask_invalid_registered_roi_columns(
+        pairwise_components,
+        large_cost=99.0,
+    )
+
+    assert masked["registered_roi_valid"].tolist() == [[True, False]]
+    assert masked["iou"].tolist() == [[0.75, 0.0]]
+    assert masked["centroid_distance"].tolist() == [[2.0, 99.0]]
+    assert masked["area_ratio_cost"].tolist() == [[0.1, 99.0]]
+    assert masked["session_gap"].tolist() == [[1.0, 1.0]]
+    assert masked["gated"].tolist() == [[False, True]]
+    assert masked["registered_roi_invalid_cost"].tolist() == [[0.0, 99.0]]

@@ -22,6 +22,7 @@ from bayescatrack.association.higher_order_consistency import (
     apply_higher_order_consistency,
 )
 from bayescatrack.association.registered_masks import (
+    add_registered_roi_validity_components,
     drop_empty_registered_masks,
     expand_registered_pairwise_cost_columns,
 )
@@ -34,6 +35,10 @@ from bayescatrack.core.bridge import (
     Track2pSession,
     build_session_pair_association_bundle,
 )
+from bayescatrack.soft_overlap_costs import (
+    install_soft_overlap_costs,
+    registered_soft_iou_cost_kwargs as _registered_soft_overlap_cost_kwargs,
+)
 from bayescatrack.track2p_registration import register_plane_pair
 
 AssociationCost = Literal[
@@ -45,6 +50,25 @@ AssociationCost = Literal[
     "calibrated",
 ]
 SessionEdge = tuple[int, int]
+SOFT_OVERLAP_COST_KWARG_NAMES = frozenset(
+    {
+        "soft_iou_weight",
+        "soft_iou_radius",
+        "distance_transform_overlap_weight",
+        "distance_transform_overlap_radius",
+        "distance_transform_overlap_scale",
+    }
+)
+
+
+@dataclass(frozen=True)
+class TripletSupportConsistencyConfig:
+    """Penalty for skip edges that lack support through intermediate sessions."""
+
+    triplet_weight: float = 0.0
+    support_top_k: int = 3
+    support_cost_cap: float | None = None
+    max_penalty: float | None = None
 
 
 @dataclass(frozen=True)
@@ -73,13 +97,10 @@ def registered_iou_cost_kwargs(
     }
 
 
-def registered_soft_iou_cost_kwargs(
-    *, similarity_epsilon: float = 1.0e-6
-) -> dict[str, Any]:
-    """Return cost kwargs for registered IoU using weighted mask overlap."""
-    kwargs = registered_iou_cost_kwargs(similarity_epsilon=similarity_epsilon)
-    kwargs["soft_iou"] = True
-    return kwargs
+def registered_soft_iou_cost_kwargs(**kwargs: Any) -> dict[str, Any]:
+    """Return registered near-miss soft-overlap cost kwargs."""
+
+    return dict(_registered_soft_overlap_cost_kwargs(**kwargs))
 
 
 def registered_shifted_iou_cost_kwargs(
@@ -168,6 +189,126 @@ def session_edge_pairs(
     )
 
 
+def apply_triplet_support_consistency(
+    pairwise_costs: Mapping[SessionEdge, np.ndarray],
+    *,
+    config: TripletSupportConsistencyConfig | None,
+) -> dict[SessionEdge, np.ndarray]:
+    """Penalize skip-session edges without a compatible two-hop support path.
+
+    A direct edge ``source -> target`` is considered supported when at least one
+    intermediate session ``middle`` contains a low-cost path
+    ``source -> middle -> target``.  The penalty is applied only to skip edges,
+    so consecutive-session costs remain unchanged.
+    """
+
+    adjusted = {
+        edge: np.asarray(cost_matrix, dtype=float).copy()
+        for edge, cost_matrix in pairwise_costs.items()
+    }
+    if config is None or config.triplet_weight <= 0.0:
+        return adjusted
+    if config.support_top_k < 1:
+        raise ValueError("support_top_k must be at least 1")
+    if config.support_cost_cap is not None and config.support_cost_cap < 0.0:
+        raise ValueError("support_cost_cap must be non-negative when provided")
+    if config.max_penalty is not None and config.max_penalty < 0.0:
+        raise ValueError("max_penalty must be non-negative when provided")
+
+    penalty_value = float(config.triplet_weight)
+    if config.max_penalty is not None:
+        penalty_value = min(penalty_value, float(config.max_penalty))
+    if penalty_value <= 0.0:
+        return adjusted
+
+    support_cost_cap = (
+        None if config.support_cost_cap is None else float(config.support_cost_cap)
+    )
+    for (source_session, target_session), direct_costs in tuple(adjusted.items()):
+        if target_session - source_session < 2:
+            continue
+        support_costs = _best_triplet_support_costs(
+            pairwise_costs,
+            source_session=source_session,
+            target_session=target_session,
+            support_top_k=config.support_top_k,
+        )
+        if support_costs is None:
+            continue
+        if support_costs.shape != direct_costs.shape:
+            raise ValueError(
+                "Triplet support matrix shape mismatch for edge "
+                f"{(source_session, target_session)!r}: "
+                f"expected {direct_costs.shape}, got {support_costs.shape}"
+            )
+        unsupported = ~np.isfinite(support_costs)
+        if support_cost_cap is not None:
+            unsupported |= support_costs > support_cost_cap
+        direct_costs[unsupported] += penalty_value
+
+    return adjusted
+
+
+def _best_triplet_support_costs(
+    pairwise_costs: Mapping[SessionEdge, np.ndarray],
+    *,
+    source_session: int,
+    target_session: int,
+    support_top_k: int,
+) -> np.ndarray | None:
+    best_support: np.ndarray | None = None
+    for middle_session in range(source_session + 1, target_session):
+        left = pairwise_costs.get((source_session, middle_session))
+        right = pairwise_costs.get((middle_session, target_session))
+        if left is None or right is None:
+            continue
+        candidate_support = _best_two_step_path_costs(
+            left,
+            right,
+            support_top_k=support_top_k,
+        )
+        if best_support is None:
+            best_support = candidate_support
+        else:
+            best_support = np.minimum(best_support, candidate_support)
+    return best_support
+
+
+def _best_two_step_path_costs(
+    source_to_middle: np.ndarray,
+    middle_to_target: np.ndarray,
+    *,
+    support_top_k: int,
+) -> np.ndarray:
+    left = np.asarray(source_to_middle, dtype=float)
+    right = np.asarray(middle_to_target, dtype=float)
+    if left.ndim != 2 or right.ndim != 2:
+        raise ValueError("Pairwise support costs must be two-dimensional matrices")
+    if left.shape[1] != right.shape[0]:
+        raise ValueError(
+            "Incompatible two-hop support shapes: "
+            f"{left.shape} cannot compose with {right.shape}"
+        )
+    best = np.full((left.shape[0], right.shape[1]), np.inf, dtype=float)
+    for source_index, row in enumerate(left):
+        middle_candidates = _top_finite_indices(row, support_top_k)
+        if middle_candidates.size == 0:
+            continue
+        best[source_index, :] = np.min(
+            row[middle_candidates, None] + right[middle_candidates, :], axis=0
+        )
+    return best
+
+
+def _top_finite_indices(costs: np.ndarray, top_k: int) -> np.ndarray:
+    finite_indices = np.flatnonzero(np.isfinite(costs))
+    if finite_indices.size <= top_k:
+        return finite_indices
+    finite_costs = np.asarray(costs, dtype=float)[finite_indices]
+    selected = np.argpartition(finite_costs, top_k - 1)[:top_k]
+    return finite_indices[selected]
+
+
 # pylint: disable=too-many-arguments,too-many-locals
 def build_registered_pairwise_costs(
     sessions: Sequence[Track2pSession],
@@ -204,6 +345,8 @@ def build_registered_pairwise_costs(
     base_cost_kwargs = _cost_kwargs_for_method(cost)
     if pairwise_cost_kwargs is not None:
         base_cost_kwargs.update(dict(pairwise_cost_kwargs))
+    if _pairwise_kwargs_use_soft_overlap(base_cost_kwargs):
+        install_soft_overlap_costs()
 
     previous_pairwise_cost_method = None
     if pairwise_kwargs_use_shifted_overlap(base_cost_kwargs):
@@ -239,6 +382,11 @@ def build_registered_pairwise_costs(
                     registered_measurement_plane,
                     trace_source=activity_trace_source,
                     event_threshold=activity_event_threshold,
+                )
+                add_registered_roi_validity_components(
+                    bundle.pairwise_components,
+                    ~empty_registered_rois,
+                    large_cost=float(base_cost_kwargs.get("large_cost", 1.0e6)),
                 )
             if cost == "calibrated":
                 assert calibrated_model is not None
@@ -421,6 +569,12 @@ def _cost_kwargs_for_method(cost: AssociationCost) -> dict[str, Any]:
     if cost in {"roi-aware", "calibrated"}:
         return roi_aware_cost_kwargs()
     raise ValueError(f"Unsupported association cost: {cost}")
+
+
+def _pairwise_kwargs_use_soft_overlap(pairwise_cost_kwargs: Mapping[str, Any]) -> bool:
+    """Return whether pairwise kwargs need the soft-overlap cost extension."""
+
+    return bool(SOFT_OVERLAP_COST_KWARG_NAMES.intersection(pairwise_cost_kwargs))
 
 
 def _roi_indices_for_session(session: Track2pSession) -> np.ndarray:

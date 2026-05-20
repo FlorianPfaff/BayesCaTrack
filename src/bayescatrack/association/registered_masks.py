@@ -3,9 +3,33 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 from bayescatrack.core.bridge import CalciumPlaneData
+
+REGISTERED_ROI_VALID_COMPONENT = "registered_roi_valid"
+REGISTERED_ROI_INVALID_COST_COMPONENT = "registered_roi_invalid_cost"
+
+_COST_COMPONENT_NAMES = frozenset(
+    {
+        "pairwise_cost_matrix",
+        "centroid_distance",
+        "centroid_cost",
+        "mahalanobis_centroid_distance",
+        "area_ratio_cost",
+    }
+)
+_SIMILARITY_COMPONENT_NAMES = frozenset(
+    {
+        "iou",
+        "mask_cosine_similarity",
+        "activity_similarity",
+        "activity_correlation",
+        "covariance_shape_similarity",
+    }
+)
+_PRESERVED_COMPONENT_NAMES = frozenset({"session_gap"})
 
 
 def empty_registered_roi_mask(plane: CalciumPlaneData) -> np.ndarray:
@@ -170,6 +194,146 @@ def expand_registered_roi_columns(
     if compact_column_count:
         expanded[:, ~empty_registered_rois] = array
     return expanded
+
+
+def add_registered_roi_validity_components(
+    pairwise_components: dict[str, Any],
+    valid_registered_rois: Any,
+    *,
+    large_cost: float = 1.0e6,
+) -> None:
+    """Add registered-ROI validity planes to pairwise components."""
+
+    if large_cost <= 0.0:
+        raise ValueError("large_cost must be strictly positive")
+    shape = _infer_pairwise_component_shape(pairwise_components)
+    valid = _validated_registered_roi_validity(valid_registered_rois, shape)
+    pairwise_components[REGISTERED_ROI_VALID_COMPONENT] = np.broadcast_to(
+        valid[None, :], shape
+    ).copy()
+    pairwise_components[REGISTERED_ROI_INVALID_COST_COMPONENT] = np.broadcast_to(
+        np.where(valid, 0.0, float(large_cost))[None, :], shape
+    ).copy()
+
+
+def mask_invalid_registered_roi_columns(
+    pairwise_components: Mapping[str, Any],
+    valid_registered_rois: Any | None = None,
+    *,
+    large_cost: float = 1.0e6,
+) -> dict[str, np.ndarray]:
+    """Return components with invalid registered-ROI columns neutralized."""
+
+    if large_cost <= 0.0:
+        raise ValueError("large_cost must be strictly positive")
+    if (
+        valid_registered_rois is None
+        and REGISTERED_ROI_VALID_COMPONENT not in pairwise_components
+    ):
+        return {
+            key: np.asarray(value).copy()
+            for key, value in pairwise_components.items()
+        }
+
+    components = _copy_pairwise_components(pairwise_components)
+    shape = _infer_pairwise_component_shape(components)
+    if valid_registered_rois is None:
+        validity_component = np.asarray(
+            components[REGISTERED_ROI_VALID_COMPONENT], dtype=bool
+        )
+        if validity_component.ndim != 2 or validity_component.shape != shape:
+            raise ValueError("registered ROI validity component has inconsistent shape")
+        valid = np.all(validity_component, axis=0)
+    else:
+        valid = _validated_registered_roi_validity(valid_registered_rois, shape)
+
+    invalid = ~valid
+    if np.any(invalid):
+        for key, values in list(components.items()):
+            if values.ndim != 2 or values.shape != shape:
+                continue
+            if key == REGISTERED_ROI_VALID_COMPONENT:
+                values[:, invalid] = False
+            elif key in _PRESERVED_COMPONENT_NAMES:
+                continue
+            elif key == "gated":
+                values[:, invalid] = True
+            elif _is_availability_component(key) or _is_similarity_component(key):
+                values[:, invalid] = 0.0
+            elif _is_cost_component(key):
+                values[:, invalid] = float(large_cost)
+            else:
+                values[:, invalid] = 0.0
+
+    components[REGISTERED_ROI_VALID_COMPONENT] = np.broadcast_to(
+        valid[None, :], shape
+    ).copy()
+    components[REGISTERED_ROI_INVALID_COST_COMPONENT] = np.broadcast_to(
+        np.where(valid, 0.0, float(large_cost))[None, :], shape
+    ).copy()
+    return components
+
+
+def _copy_pairwise_components(
+    pairwise_components: Mapping[str, Any],
+) -> dict[str, np.ndarray]:
+    copied: dict[str, np.ndarray] = {}
+    for key, value in pairwise_components.items():
+        array_value = np.asarray(value)
+        if array_value.ndim == 2 and key not in {
+            "gated",
+            REGISTERED_ROI_VALID_COMPONENT,
+        }:
+            copied[key] = array_value.astype(float, copy=True)
+        else:
+            copied[key] = array_value.copy()
+    return copied
+
+
+def _infer_pairwise_component_shape(
+    pairwise_components: Mapping[str, Any],
+) -> tuple[int, int]:
+    for values in pairwise_components.values():
+        array_values = np.asarray(values)
+        if array_values.ndim == 2:
+            return int(array_values.shape[0]), int(array_values.shape[1])
+    raise ValueError("At least one two-dimensional pairwise component is required")
+
+
+def _validated_registered_roi_validity(
+    valid_registered_rois: Any, shape: tuple[int, int]
+) -> np.ndarray:
+    valid = np.asarray(valid_registered_rois, dtype=bool)
+    if valid.ndim != 1:
+        raise ValueError("valid_registered_rois must be one-dimensional")
+    if valid.shape == (shape[1],):
+        return valid
+    if int(np.count_nonzero(valid)) == shape[1]:
+        return np.ones((shape[1],), dtype=bool)
+    raise ValueError(
+        "valid_registered_rois must have one entry for each measurement ROI"
+    )
+
+
+def _is_availability_component(component_name: str) -> bool:
+    return component_name.endswith("_available")
+
+
+def _is_similarity_component(component_name: str) -> bool:
+    return (
+        component_name in _SIMILARITY_COMPONENT_NAMES
+        or component_name.endswith("_similarity")
+        or component_name.endswith("_correlation")
+    )
+
+
+def _is_cost_component(component_name: str) -> bool:
+    return (
+        component_name in _COST_COMPONENT_NAMES
+        or component_name.endswith("_cost")
+        or component_name.endswith("_distance")
+        or component_name.endswith("_penalty")
+    )
 
 
 def _slice_optional_roi_array(

@@ -20,7 +20,11 @@ from bayescatrack.association.activity_similarity import (
     ACTIVITY_TIEBREAKER_FEATURES,
     add_activity_similarity_components,
 )
-from bayescatrack.association.registered_masks import replace_empty_registered_masks
+from bayescatrack.association.registered_masks import (
+    add_registered_roi_validity_components,
+    mask_invalid_registered_roi_columns,
+    replace_empty_registered_masks,
+)
 from bayescatrack.association.shifted_overlap import (
     install_shifted_overlap_cost_patch,
     pairwise_kwargs_use_shifted_overlap,
@@ -76,8 +80,21 @@ SPLIT_ROI_STAT_FEATURES: tuple[str, ...] = _SPLIT_ROI_STAT_FEATURES
 LOCAL_EVIDENCE_ASSOCIATION_FEATURES: tuple[str, ...] = (
     _LOCAL_EVIDENCE_ASSOCIATION_FEATURES
 )
+SHIFTED_OVERLAP_ASSOCIATION_FEATURES = (
+    "shifted_iou_cost",
+    "shifted_mask_cosine_cost",
+    "shifted_iou_shift_norm",
+    "shifted_iou_shift_penalty_cost",
+)
+DEFAULT_SHIFTED_OVERLAP_PAIRWISE_COST_KWARGS: dict[str, Any] = {
+    "shifted_iou_radius": 2,
+}
 _OPTIONAL_ZERO_FEATURES = frozenset(
-    (*_ACTIVITY_FEATURES, *LOCAL_EVIDENCE_ASSOCIATION_FEATURES)
+    (
+        *_ACTIVITY_FEATURES,
+        *LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
+        *SHIFTED_OVERLAP_ASSOCIATION_FEATURES,
+    )
 )
 
 DEFAULT_ASSOCIATION_FEATURES = (
@@ -120,9 +137,10 @@ class CalibratedAssociationModel:
     def pairwise_cost_matrix_from_components(
         self, pairwise_components: Mapping[str, Any]
     ) -> np.ndarray:
+        components = mask_invalid_registered_roi_columns(pairwise_components)
         return np.asarray(
             self._pyrecest_model().pairwise_cost_matrix_from_components(
-                pairwise_components
+                components
             ),
             dtype=float,
         )
@@ -144,9 +162,10 @@ class CalibratedAssociationModel:
     ) -> np.ndarray:
         """Convert pairwise components into calibrated match probabilities."""
 
+        components = mask_invalid_registered_roi_columns(pairwise_components)
         return np.asarray(
             self._pyrecest_model().pairwise_probability_matrix_from_components(
-                pairwise_components
+                components
             ),
             dtype=float,
         )
@@ -514,6 +533,9 @@ def _pairwise_cost_kwargs_for_training_features(
     kwargs = dict(pairwise_cost_kwargs or {})
     if _uses_local_evidence_features(feature_names):
         kwargs.setdefault("local_evidence_components", True)
+    if _uses_shifted_overlap_features(feature_names):
+        for key, value in DEFAULT_SHIFTED_OVERLAP_PAIRWISE_COST_KWARGS.items():
+            kwargs.setdefault(key, value)
     return kwargs or None
 
 
@@ -521,6 +543,13 @@ def _uses_local_evidence_features(feature_names: Sequence[str]) -> bool:
     local_evidence_features = frozenset(LOCAL_EVIDENCE_ASSOCIATION_FEATURES)
     return any(
         feature_name in local_evidence_features for feature_name in feature_names
+    )
+
+
+def _uses_shifted_overlap_features(feature_names: Sequence[str]) -> bool:
+    shifted_overlap_features = frozenset(SHIFTED_OVERLAP_ASSOCIATION_FEATURES)
+    return any(
+        feature_name in shifted_overlap_features for feature_name in feature_names
     )
 
 
@@ -535,7 +564,7 @@ def _build_training_bundle(
         sessions[session_b].plane_data,
         transform_type=options.transform_type,
     )
-    registered_measurement_plane, _ = replace_empty_registered_masks(
+    registered_measurement_plane, empty_registered_rois = replace_empty_registered_masks(
         registered_measurement_plane
     )
     pairwise_cost_kwargs = _pairwise_cost_kwargs_for_training_features(
@@ -566,6 +595,11 @@ def _build_training_bundle(
         bundle.pairwise_components,
         sessions[session_a].plane_data,
         registered_measurement_plane,
+    )
+    add_registered_roi_validity_components(
+        bundle.pairwise_components,
+        ~empty_registered_rois,
+        large_cost=float((options.pairwise_cost_kwargs or {}).get("large_cost", 1.0e6)),
     )
     return bundle
 

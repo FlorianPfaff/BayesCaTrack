@@ -11,8 +11,10 @@ import numpy as np
 from bayescatrack.association.calibrated_costs import (
     ACTIVITY_ASSOCIATION_FEATURES,
     DEFAULT_ASSOCIATION_FEATURES,
+    DEFAULT_SHIFTED_OVERLAP_PAIRWISE_COST_KWARGS,
     LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
     ReferenceTrainingOptions,
+    SHIFTED_OVERLAP_ASSOCIATION_FEATURES,
     collect_reference_pairwise_example_blocks,
     collect_reference_training_examples,
     fit_logistic_association_model,
@@ -20,6 +22,9 @@ from bayescatrack.association.calibrated_costs import (
 from bayescatrack.association.pyrecest_global_assignment import (
     session_edge_pairs,
     tracks_to_suite2p_index_matrix,
+)
+from bayescatrack.association.shifted_overlap import (
+    pairwise_kwargs_use_shifted_overlap,
 )
 from bayescatrack.core.bridge import Track2pSession
 from bayescatrack.evaluation.calibration_diagnostics import calibration_summary
@@ -35,6 +40,10 @@ from bayescatrack.experiments.track2p_benchmark import (
     Track2pBenchmarkConfig,
     _load_reference_for_subject,
     _load_subject_sessions,
+    assignment_prior_assignment_runs,
+    assignment_prior_score_metadata,
+    assignment_prior_sweep_is_enabled,
+    assignment_prior_variant_name,
     _score_prediction_against_reference,
     _validate_reference_for_benchmark,
     _validate_reference_roi_indices,
@@ -52,6 +61,9 @@ CalibrationFeatureSet = Literal[
     "default+activity",
     "activity+local-evidence",
     "default+activity+local-evidence",
+    "shifted-overlap",
+    "default+shifted-overlap",
+    "default+local-evidence+shifted-overlap",
 ]
 CALIBRATION_FEATURE_SET_CHOICES: tuple[CalibrationFeatureSet, ...] = (
     "default",
@@ -61,6 +73,9 @@ CALIBRATION_FEATURE_SET_CHOICES: tuple[CalibrationFeatureSet, ...] = (
     "default+activity",
     "activity+local-evidence",
     "default+activity+local-evidence",
+    "shifted-overlap",
+    "default+shifted-overlap",
+    "default+local-evidence+shifted-overlap",
 )
 _LOCAL_EVIDENCE_COMPONENT_KWARGS = frozenset(
     {
@@ -108,6 +123,19 @@ def calibration_feature_names(
             ACTIVITY_ASSOCIATION_FEATURES,
             LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
         )
+    if feature_set == "shifted-overlap":
+        return tuple(SHIFTED_OVERLAP_ASSOCIATION_FEATURES)
+    if feature_set == "default+shifted-overlap":
+        return _deduplicated_feature_names(
+            DEFAULT_ASSOCIATION_FEATURES,
+            SHIFTED_OVERLAP_ASSOCIATION_FEATURES,
+        )
+    if feature_set == "default+local-evidence+shifted-overlap":
+        return _deduplicated_feature_names(
+            DEFAULT_ASSOCIATION_FEATURES,
+            LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
+            SHIFTED_OVERLAP_ASSOCIATION_FEATURES,
+        )
     raise ValueError(
         "calibration feature set must be one of: "
         + ", ".join(CALIBRATION_FEATURE_SET_CHOICES)
@@ -125,16 +153,19 @@ def pairwise_cost_kwargs_for_calibration_features(
     """Return pairwise-cost kwargs needed to materialize calibrated features.
 
     Local-evidence calibrated features are optional-zero transforms for backward
-    compatibility. They become useful only when the bundle builder is asked to
-    collect the corresponding local components. This helper keeps LOSO training
-    and held-out solving synchronized: selecting a local-evidence feature preset
-    automatically turns on ``local_evidence_components`` while preserving any
-    caller-provided pairwise-cost overrides.
+    compatibility. Shifted-overlap calibrated features are also optional-zero
+    transforms, but become useful only when the bundle builder is asked to run
+    the local shift search. This helper keeps LOSO training and held-out solving
+    synchronized: selecting a feature preset automatically enables the
+    corresponding pairwise components while preserving caller overrides.
     """
 
     kwargs = dict(pairwise_cost_kwargs or {})
     if _uses_local_evidence_features(feature_names):
         kwargs.setdefault("local_evidence_components", True)
+    if _uses_shifted_overlap_features(feature_names):
+        for key, value in DEFAULT_SHIFTED_OVERLAP_PAIRWISE_COST_KWARGS.items():
+            kwargs.setdefault(key, value)
     return kwargs or None
 
 
@@ -273,44 +304,56 @@ def run_track2p_loso_calibration(
             cost="calibrated",
             calibrated_model=calibrated_model,
         )
-        predicted_matrix = tracks_to_suite2p_index_matrix(
-            assignment.result.tracks, held_out.sessions
-        )
-        base_scores = _score_prediction_against_reference(
-            predicted_matrix, held_out.reference, config=config
-        )
         positives = int(np.sum(training_labels))
-        scores: dict[str, float | int | str] = {
-            **base_scores,
-            "training_examples": int(training_labels.shape[0]),
-            "positive_examples": positives,
-            "negative_examples": int(training_labels.shape[0] - positives),
-            "calibration_feature_set": _feature_set_label(config, feature_names),
-            "calibration_feature_count": int(len(feature_names)),
-            "calibration_sample_weight_strategy": sample_weight_strategy,
-            "calibration_class_weight": _stringify_class_weight(
-                logistic_model_kwargs.get("class_weight")
-            ),
-            **calibration_scores,
-        }
-        folds.append(
-            LosoCalibrationFold(
-                held_out_subject=held_out.subject_name,
-                training_subjects=tuple(
-                    subject.subject_name for subject in training_subjects
-                ),
-                benchmark=SubjectBenchmarkResult(
-                    subject=held_out.subject_name,
-                    variant="Calibrated costs + LOSO global assignment",
-                    method=config.method,
-                    scores=scores,
-                    n_sessions=held_out.reference.n_sessions,
-                    reference_source=held_out.reference.source,
-                ),
-                training_examples=int(training_labels.shape[0]),
-                positive_examples=positives,
+
+        for prior_setting, prior_assignment in assignment_prior_assignment_runs(
+            assignment, config
+        ):
+            predicted_matrix = tracks_to_suite2p_index_matrix(
+                prior_assignment.result.tracks, held_out.sessions
             )
-        )
+            base_scores = _score_prediction_against_reference(
+                predicted_matrix, held_out.reference, config=config
+            )
+            assignment_prior_scores: dict[str, float | str] = {}
+            if assignment_prior_sweep_is_enabled(config):
+                assignment_prior_scores = assignment_prior_score_metadata(prior_setting)
+            scores: dict[str, float | int | str] = {
+                **base_scores,
+                "training_examples": int(training_labels.shape[0]),
+                "positive_examples": positives,
+                "negative_examples": int(training_labels.shape[0] - positives),
+                "calibration_feature_set": _feature_set_label(config, feature_names),
+                "calibration_feature_count": int(len(feature_names)),
+                "calibration_sample_weight_strategy": sample_weight_strategy,
+                "calibration_class_weight": _stringify_class_weight(
+                    logistic_model_kwargs.get("class_weight")
+                ),
+                **calibration_scores,
+                **assignment_prior_scores,
+            }
+            folds.append(
+                LosoCalibrationFold(
+                    held_out_subject=held_out.subject_name,
+                    training_subjects=tuple(
+                        subject.subject_name for subject in training_subjects
+                    ),
+                    benchmark=SubjectBenchmarkResult(
+                        subject=held_out.subject_name,
+                        variant=assignment_prior_variant_name(
+                            "Calibrated costs + LOSO global assignment",
+                            prior_setting,
+                            config,
+                        ),
+                        method=config.method,
+                        scores=scores,
+                        n_sessions=held_out.reference.n_sessions,
+                        reference_source=held_out.reference.source,
+                    ),
+                    training_examples=int(training_labels.shape[0]),
+                    positive_examples=positives,
+                ),
+            )
     return LosoCalibrationResult(
         folds=tuple(folds), feature_names=feature_names, max_gap=int(config.max_gap)
     )
@@ -320,8 +363,18 @@ def _feature_names_from_config(config: Track2pBenchmarkConfig) -> tuple[str, ...
     feature_set = getattr(config, "calibration_feature_set", "default")
     if feature_set != "default":
         return calibration_feature_names(str(feature_set))
-    if _pairwise_kwargs_request_local_evidence(config.pairwise_cost_kwargs):
+    requests_local_evidence = _pairwise_kwargs_request_local_evidence(
+        config.pairwise_cost_kwargs
+    )
+    requests_shifted_overlap = pairwise_kwargs_use_shifted_overlap(
+        config.pairwise_cost_kwargs
+    )
+    if requests_local_evidence and requests_shifted_overlap:
+        return calibration_feature_names("default+local-evidence+shifted-overlap")
+    if requests_local_evidence:
         return calibration_feature_names("default+local-evidence")
+    if requests_shifted_overlap:
+        return calibration_feature_names("default+shifted-overlap")
     return calibration_feature_names("default")
 
 
@@ -331,6 +384,16 @@ def _feature_set_label(
     configured = str(getattr(config, "calibration_feature_set", "default"))
     if configured != "default":
         return configured
+    if (
+        tuple(feature_names)
+        == calibration_feature_names("default+local-evidence+shifted-overlap")
+        and _uses_local_evidence_features(feature_names)
+    ):
+        return "default+local-evidence+shifted-overlap"
+    if tuple(feature_names) == calibration_feature_names("default+shifted-overlap"):
+        return "default+shifted-overlap"
+    if tuple(feature_names) == calibration_feature_names("shifted-overlap"):
+        return "shifted-overlap"
     if tuple(feature_names) == calibration_feature_names("default+local-evidence"):
         return "default+local-evidence"
     if tuple(feature_names) == calibration_feature_names("local-evidence"):
@@ -356,6 +419,13 @@ def _pairwise_kwargs_request_local_evidence(
 def _uses_local_evidence_features(feature_names: Sequence[str]) -> bool:
     local_evidence_features = set(LOCAL_EVIDENCE_ASSOCIATION_FEATURES)
     return any(feature_name in local_evidence_features for feature_name in feature_names)
+
+
+def _uses_shifted_overlap_features(feature_names: Sequence[str]) -> bool:
+    shifted_overlap_features = set(SHIFTED_OVERLAP_ASSOCIATION_FEATURES)
+    return any(
+        feature_name in shifted_overlap_features for feature_name in feature_names
+    )
 
 
 def _config_with_pairwise_kwargs_for_features(

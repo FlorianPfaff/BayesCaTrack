@@ -17,8 +17,11 @@ for _feature_name in _ORIGINAL_DEFAULT_ASSOCIATION_FEATURES:
     if _feature_name == "roi_feature_cost":
         continue
     if _feature_name == "cell_probability_cost":
-        _patched_default_association_features.extend(SPLIT_ROI_STAT_FEATURES)
-    _patched_default_association_features.append(_feature_name)
+        for _split_feature_name in SPLIT_ROI_STAT_FEATURES:
+            if _split_feature_name not in _patched_default_association_features:
+                _patched_default_association_features.append(_split_feature_name)
+    if _feature_name not in _patched_default_association_features:
+        _patched_default_association_features.append(_feature_name)
 DEFAULT_ASSOCIATION_FEATURES: tuple[str, ...] = tuple(
     _patched_default_association_features
 )

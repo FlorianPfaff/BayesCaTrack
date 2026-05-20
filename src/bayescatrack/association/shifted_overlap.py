@@ -106,8 +106,10 @@ def shifted_iou_pairwise_cost_matrix(
                 "shifted_iou_shift_penalty_scale must be strictly positive"
             )
 
+    return_components = bool(kwargs.get("return_components", False))
     uses_shifted_overlap = shifted_iou_radius > 0 and (
-        use_shifted_iou_for_iou_cost
+        return_components
+        or use_shifted_iou_for_iou_cost
         or shifted_iou_weight > 0.0
         or use_shifted_mask_cosine_for_mask_cosine_cost
         or shifted_mask_cosine_weight > 0.0
@@ -116,7 +118,6 @@ def shifted_iou_pairwise_cost_matrix(
     if not uses_shifted_overlap:
         return original_method(self, other, **kwargs)
 
-    return_components = bool(kwargs.get("return_components", False))
     similarity_epsilon = float(kwargs.get("similarity_epsilon", 1.0e-6))
     large_cost = float(kwargs.get("large_cost", 1.0e6))
     iou_weight = float(kwargs.get("iou_weight", 6.0) or 0.0)

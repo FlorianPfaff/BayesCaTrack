@@ -113,6 +113,44 @@ def test_shifted_iou_patch_replaces_registered_iou_cost():
     npt.assert_allclose(cost, np.zeros((1, 1)))
 
 
+def test_shifted_iou_components_can_be_collected_without_changing_base_cost():
+    reference = np.zeros((1, 10, 10), dtype=bool)
+    measurement = np.zeros((1, 10, 10), dtype=bool)
+    reference[0, 2:4, 2:4] = True
+    measurement[0, 2:4, 4:6] = True
+
+    reference_plane = CalciumPlaneData(reference)
+    measurement_plane = CalciumPlaneData(measurement)
+    exact_kwargs = registered_iou_cost_kwargs()
+    shifted_component_kwargs = registered_iou_cost_kwargs()
+    shifted_component_kwargs.update(
+        {
+            "shifted_iou_radius": 2,
+            "return_components": True,
+        }
+    )
+
+    original_method = install_shifted_overlap_cost_patch()
+    try:
+        exact_cost, exact_components = reference_plane.build_pairwise_cost_matrix(
+            measurement_plane,
+            **{**exact_kwargs, "return_components": True},
+        )
+        shifted_cost, shifted_components = reference_plane.build_pairwise_cost_matrix(
+            measurement_plane,
+            **shifted_component_kwargs,
+        )
+    finally:
+        CalciumPlaneData.build_pairwise_cost_matrix = original_method  # type: ignore[method-assign]
+
+    npt.assert_allclose(shifted_cost, exact_cost)
+    assert exact_components["iou"][0, 0] == 0.0
+    assert shifted_components["iou"][0, 0] == 0.0
+    assert shifted_components["shifted_iou"][0, 0] == 1.0
+    assert shifted_components["shifted_iou_shift_x"][0, 0] == -2.0
+    assert shifted_components["iou_for_cost"][0, 0] == 0.0
+
+
 def test_shifted_iou_shift_penalty_prefers_smaller_residual_shift():
     reference = np.zeros((1, 10, 10), dtype=bool)
     measurement = np.zeros((2, 10, 10), dtype=bool)

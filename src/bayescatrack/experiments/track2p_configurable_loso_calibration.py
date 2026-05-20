@@ -47,6 +47,7 @@ from bayescatrack.experiments.track2p_loso_calibration import (
     LosoCalibrationFold,
     LosoCalibrationResult,
     SubjectCalibrationData,
+    _config_with_pairwise_kwargs_for_features,
     _load_subject_calibration_data,
     _reference_training_options,
     _score_holdout_calibration,
@@ -112,8 +113,9 @@ def run_track2p_configurable_loso_calibration(
         raise ValueError(
             "LOSO calibration requires method='global-assignment' and cost='calibrated'"
         )
-    subjects = _load_subjects(config)
     feature_names = tuple(feature_names)
+    config = _config_with_pairwise_kwargs_for_features(config, feature_names)
+    subjects = _load_subjects(config)
     sample_weight_strategy = _validate_sample_weight_strategy(sample_weight_strategy)
     model_kind = _validate_calibration_model_kind(model_kind)
     model_kwargs = _model_kwargs(model_kind, model_kwargs)
@@ -187,6 +189,8 @@ def run_track2p_configurable_loso_calibration(
             ),
             "calibration_sample_weight_strategy": sample_weight_strategy,
             "calibration_class_weight": _class_weight_label(model_kwargs),
+            "calibration_feature_count": int(len(feature_names)),
+            "calibration_feature_names": ",".join(feature_names),
             **_hard_negative_scores(hard_negative_options),
             **calibration_scores,
         }
@@ -396,7 +400,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--input-format", default="auto", choices=("auto", "suite2p", "npy")
     )
     parser.add_argument("--curated-only", action="store_true")
-    parser.add_argument("--include-non-cells", action="store_true")
+    parser.add_argument(
+        "--include-non-cells",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Keep all Suite2p stat.npy rows and use iscell probability as evidence."
+        ),
+    )
     parser.add_argument(
         "--include-behavior", action=argparse.BooleanOptionalAction, default=True
     )
@@ -464,13 +475,13 @@ def main(argv: list[str] | None = None) -> int:
     config = _config_from_args(args)
     result = run_track2p_configurable_loso_calibration(
         config,
+        feature_names=calibration_feature_names(args.calibration_feature_set),
         sample_weight_strategy=args.sample_weight_strategy,
         model_kind=args.calibration_model,
         model_kwargs=_json_object(
             args.calibration_model_kwargs_json,
             "--calibration-model-kwargs-json",
         ),
-        feature_names=calibration_feature_names(args.calibration_feature_set),
         hard_negative_options=_hard_negative_options(args),
     )
     rows = result.to_rows()
@@ -514,6 +525,7 @@ def _config_from_args(args: argparse.Namespace) -> Track2pBenchmarkConfig:
             args.pairwise_cost_kwargs_json,
             "--pairwise-cost-kwargs-json",
         ),
+        calibration_feature_set=args.calibration_feature_set,
         progress=args.progress,
     )
 

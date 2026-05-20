@@ -316,18 +316,20 @@ def test_ground_truth_csv_validation_catches_filtered_stat_rows(tmp_path):
         subject_dir, ("2024-05-01_a", "2024-05-02_a"), ((0, 0), (1, 1))
     )
 
-    config = Track2pBenchmarkConfig(
-        data=subject_dir, method="track2p-baseline", input_format="suite2p"
+    hard_filter_config = Track2pBenchmarkConfig(
+        data=subject_dir,
+        method="track2p-baseline",
+        input_format="suite2p",
+        include_non_cells=False,
     )
-    with pytest.raises(ValueError, match="--include-non-cells"):
-        run_track2p_benchmark(config)
+    with pytest.raises(ValueError, match="--no-include-non-cells"):
+        run_track2p_benchmark(hard_filter_config)
 
     rows = run_track2p_benchmark(
         Track2pBenchmarkConfig(
             data=subject_dir,
             method="track2p-baseline",
             input_format="suite2p",
-            include_non_cells=True,
         )
     )
 
@@ -336,6 +338,26 @@ def test_ground_truth_csv_validation_catches_filtered_stat_rows(tmp_path):
     assert result["pairwise_recall"] == pytest.approx(1.0)
     assert result["pairwise_precision"] == pytest.approx(1.0)
     assert result["dropped_prediction_tracks"] == 1
+
+
+def test_benchmark_cli_keeps_suite2p_non_cells_by_default(tmp_path):
+    parser = build_arg_parser()
+
+    default_args = parser.parse_args(
+        ["--data", str(tmp_path), "--method", "track2p-baseline"]
+    )
+    assert default_args.include_non_cells is True
+
+    hard_filter_args = parser.parse_args(
+        [
+            "--data",
+            str(tmp_path),
+            "--method",
+            "track2p-baseline",
+            "--no-include-non-cells",
+        ]
+    )
+    assert hard_filter_args.include_non_cells is False
 
 
 def test_ground_truth_scoring_filters_predictions_to_reference_seed_rois(tmp_path):
