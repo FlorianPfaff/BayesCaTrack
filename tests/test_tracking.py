@@ -88,6 +88,40 @@ def _install_fake_point_set_registration(monkeypatch) -> None:
 # jscpd:ignore-end
 
 
+def _install_fake_multisession_assignment(monkeypatch) -> None:
+    fake_assignment = types.ModuleType("pyrecest.utils.multisession_assignment")
+
+    class Result:
+        def __init__(self) -> None:
+            self.tracks = [
+                {0: 0, 1: 0, 2: 0},
+                {0: 1, 2: 1},
+                {0: 2, 1: 2, 2: 2},
+            ]
+            self.matched_edges = []
+            self.total_cost = 0.0
+
+    def solve_multisession_assignment(pairwise_costs, **kwargs):
+        assert (0, 1) in pairwise_costs
+        assert (0, 2) in pairwise_costs
+        assert (1, 2) in pairwise_costs
+        assert kwargs["session_sizes"] == (3, 3, 3)
+        assert kwargs["start_cost"] == pytest.approx(5.0)
+        assert kwargs["end_cost"] == pytest.approx(5.0)
+        assert kwargs["gap_penalty"] == pytest.approx(1.0)
+        assert kwargs["cost_threshold"] == pytest.approx(6.0)
+        return Result()
+
+    setattr(
+        fake_assignment,
+        "solve_multisession_assignment",
+        solve_multisession_assignment,
+    )
+    monkeypatch.setitem(
+        sys.modules, "pyrecest.utils.multisession_assignment", fake_assignment
+    )
+
+
 def _write_raw_npy_session(
     subject_dir: Path,
     session_name: str,
@@ -256,6 +290,8 @@ def test_run_registered_subject_tracking_pairwise_ablation_builds_full_track_row
     assert np.all(np.isfinite(result.link_costs))
     assert len(result.registered_bundles.bundles) == 2
     assert [match.n_matches for match in result.match_results] == [3, 3]
+    assert result.solver == "pairwise"
+    assert result.global_assignment is None
 
     scores = result.score_summary()
     assert scores["n_tracks_started"] == 3
@@ -272,6 +308,63 @@ def test_run_registered_subject_tracking_pairwise_ablation_builds_full_track_row
     npt.assert_array_equal(export["track_rows"], result.track_rows)
     npt.assert_array_equal(export["track_lengths"], np.array([3, 3, 3], dtype=int))
     npt.assert_array_equal(export["complete_track_mask"], np.array([True, True, True]))
+
+
+def test_run_registered_subject_tracking_uses_global_assignment_by_default(
+    tmp_path: Path, monkeypatch
+):
+    _install_fake_point_set_registration(monkeypatch)
+    _install_fake_multisession_assignment(monkeypatch)
+
+    from bayescatrack.association import pyrecest_global_assignment as global_assignment
+
+    subject_dir = tmp_path / "jm271"
+    for session_name, shift_x, offset in (
+        ("2024-05-01_a", 0, 0.0),
+        ("2024-05-02_a", 1, 10.0),
+        ("2024-05-03_a", 2, 20.0),
+    ):
+        _write_raw_npy_session(
+            subject_dir,
+            session_name,
+            _make_three_roi_masks(shift_x),
+            offset=offset,
+        )
+
+    monkeypatch.setattr(
+        global_assignment,
+        "register_plane_pair",
+        lambda _reference, moving, **_kwargs: moving,
+    )
+
+    result = run_registered_subject_tracking(
+        subject_dir,
+        plane_name="plane0",
+        input_format="auto",
+        include_behavior=False,
+        pairwise_cost_kwargs={"max_centroid_distance": 5.0, "roi_feature_weight": 0.0},
+    )
+
+    assert result.solver == "global-assignment"
+    assert result.global_assignment is not None
+    assert result.match_results == ()
+    assert len(result.registered_bundles.bundles) == 0
+    assert result.session_names == ("2024-05-01_a", "2024-05-02_a", "2024-05-03_a")
+    npt.assert_array_equal(
+        result.track_rows,
+        np.array([[0, 0, 0], [1, -1, 1], [2, 2, 2]], dtype=int),
+    )
+    assert result.link_costs.shape == (3, 2)
+    assert np.isfinite(result.link_costs[0, 0])
+    assert np.isfinite(result.link_costs[0, 1])
+    assert np.isfinite(result.link_costs[1, 0])
+
+    scores = result.score_summary()
+    assert scores["solver"] == "global-assignment"
+    assert scores["n_tracks_started"] == 3
+    assert scores["n_complete_tracks"] == 2
+    assert scores["n_pairwise_matches"] == 5
+    assert [pair["n_matches"] for pair in scores["pairs"]] == [2, 1, 2]
 
 
 def test_run_registered_subject_tracking_handles_single_session(tmp_path: Path):

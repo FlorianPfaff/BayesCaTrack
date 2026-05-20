@@ -18,10 +18,9 @@ from bayescatrack.core.bridge import CalciumPlaneData
 from bayescatrack.experiments.track2p_benchmark import (
     Track2pBenchmarkConfig,
     _config_from_args,
-    _csv_fieldnames,
+    _format_table_value,
     build_arg_parser,
     run_track2p_benchmark,
-    write_results,
 )
 
 _SHIFTED_SWEEP_COSTS = (
@@ -40,7 +39,10 @@ class ShiftedIouSetting:
 
     cost: AssociationCost
     radius: int
+    additive_weight: float
+    mask_cosine_weight: float
     shift_penalty_weight: float
+    shift_penalty_scale: float | None
     transform_type: str
     weighted_masks: bool
     sweep_index: int = 1
@@ -59,6 +61,16 @@ def _add_shifted_iou_options(parser: Any) -> None:
         ),
     )
     parser.add_argument(
+        "--shifted-iou-radii",
+        "--shifted-iou-radius-sweep",
+        dest="shifted_iou_radii",
+        default=None,
+        help=(
+            "Optional comma-separated shifted-IoU radii to sweep. When omitted, "
+            "the single --shifted-iou-radius value is used."
+        ),
+    )
+    parser.add_argument(
         "--shifted-iou-additive-weight",
         type=float,
         default=0.0,
@@ -68,10 +80,30 @@ def _add_shifted_iou_options(parser: Any) -> None:
         ),
     )
     parser.add_argument(
+        "--shifted-iou-additive-weights",
+        "--shifted-iou-additive-weight-sweep",
+        dest="shifted_iou_additive_weights",
+        default=None,
+        help=(
+            "Optional comma-separated additive shifted-IoU weights to sweep. "
+            "When omitted, the single --shifted-iou-additive-weight value is used."
+        ),
+    )
+    parser.add_argument(
         "--shifted-mask-cosine-weight",
         type=float,
         default=0.0,
         help="Optional additive best-shift mask-cosine cost weight.",
+    )
+    parser.add_argument(
+        "--shifted-mask-cosine-weights",
+        "--shifted-mask-cosine-weight-sweep",
+        dest="shifted_mask_cosine_weights",
+        default=None,
+        help=(
+            "Optional comma-separated best-shift mask-cosine weights to sweep. "
+            "When omitted, the single --shifted-mask-cosine-weight value is used."
+        ),
     )
     parser.add_argument(
         "--shifted-iou-shift-penalty-weight",
@@ -100,14 +132,6 @@ def _add_shifted_iou_options(parser: Any) -> None:
         ),
     )
     parser.add_argument(
-        "--shifted-iou-radii",
-        default=None,
-        help=(
-            "Comma-separated shifted-IoU radii for a sweep, e.g. 0,1,2,3,4. "
-            "Defaults to the scalar --shifted-iou-radius value."
-        ),
-    )
-    parser.add_argument(
         "--shifted-iou-shift-penalty-weights",
         "--shift-penalty-weights",
         dest="shifted_iou_shift_penalty_weights",
@@ -116,6 +140,17 @@ def _add_shifted_iou_options(parser: Any) -> None:
             "Comma-separated residual-shift penalty weights for a sweep, e.g. "
             "0,0.1,0.25,0.5. Defaults to the scalar "
             "--shifted-iou-shift-penalty-weight value."
+        ),
+    )
+    parser.add_argument(
+        "--shifted-iou-shift-penalty-scales",
+        "--shifted-iou-shift-penalty-scale-sweep",
+        dest="shifted_iou_shift_penalty_scales",
+        default=None,
+        help=(
+            "Comma-separated residual-shift penalty scales for a sweep. Use "
+            "'none' for the default scale equal to the radius. Defaults to the "
+            "scalar --shifted-iou-shift-penalty-scale value."
         ),
     )
     parser.add_argument(
@@ -141,13 +176,12 @@ def _write_stdout(rows: list[dict[str, Any]], output_format: str) -> None:
         print(json.dumps(rows, indent=2))
         return
     if output_format == "csv":
-        writer = csv.DictWriter(sys.stdout, fieldnames=_csv_fieldnames(rows))
+        writer = csv.DictWriter(sys.stdout, fieldnames=_shifted_iou_fieldnames(rows))
         writer.writeheader()
         writer.writerows(rows)
         return
-    from bayescatrack.experiments.track2p_benchmark import format_benchmark_table
 
-    print(format_benchmark_table(rows))
+    print(format_shifted_iou_table(rows))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -169,7 +203,10 @@ def main(argv: list[str] | None = None) -> int:
                 ShiftedIouSetting(
                     cost=cast(AssociationCost, config.cost),
                     radius=int(args.shifted_iou_radius),
+                    additive_weight=float(args.shifted_iou_additive_weight),
+                    mask_cosine_weight=float(args.shifted_mask_cosine_weight),
                     shift_penalty_weight=float(args.shifted_iou_shift_penalty_weight),
+                    shift_penalty_scale=args.shifted_iou_shift_penalty_scale,
                     transform_type=config.transform_type,
                     weighted_masks=config.weighted_masks,
                 ),
@@ -178,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         CalciumPlaneData.build_pairwise_cost_matrix = original_pairwise_cost  # type: ignore[method-assign]
 
     if args.output is not None:
-        write_results(rows, Path(args.output), args.format)
+        write_shifted_iou_results(rows, Path(args.output), args.format)
     else:
         _write_stdout(rows, args.format)
     return 0
@@ -206,7 +243,10 @@ def _uses_sweep_args(args: Any) -> bool:
         for name in (
             "costs",
             "shifted_iou_radii",
+            "shifted_iou_additive_weights",
+            "shifted_mask_cosine_weights",
             "shifted_iou_shift_penalty_weights",
+            "shifted_iou_shift_penalty_scales",
             "transform_types",
             "weighted_mask_states",
         )
@@ -229,10 +269,10 @@ def _run_shifted_iou_setting(
     pairwise_cost_kwargs = _shifted_pairwise_cost_kwargs(
         base_config.pairwise_cost_kwargs,
         radius=setting.radius,
-        additive_weight=float(args.shifted_iou_additive_weight),
-        mask_cosine_weight=float(args.shifted_mask_cosine_weight),
+        additive_weight=setting.additive_weight,
+        mask_cosine_weight=setting.mask_cosine_weight,
         shift_penalty_weight=setting.shift_penalty_weight,
-        shift_penalty_scale=args.shifted_iou_shift_penalty_scale,
+        shift_penalty_scale=setting.shift_penalty_scale,
     )
     config = replace(
         base_config,
@@ -245,9 +285,6 @@ def _run_shifted_iou_setting(
     _add_shifted_iou_metadata(
         rows,
         setting=setting,
-        additive_weight=float(args.shifted_iou_additive_weight),
-        mask_cosine_weight=float(args.shifted_mask_cosine_weight),
-        shift_penalty_scale=args.shifted_iou_shift_penalty_scale,
     )
     return rows
 
@@ -271,7 +308,9 @@ def _shifted_pairwise_cost_kwargs(
             "shifted_iou_shift_penalty_weight": float(shift_penalty_weight),
         }
     )
-    if shift_penalty_scale is not None:
+    if shift_penalty_scale is None:
+        pairwise_cost_kwargs.pop("shifted_iou_shift_penalty_scale", None)
+    else:
         pairwise_cost_kwargs["shifted_iou_shift_penalty_scale"] = float(shift_penalty_scale)
     return pairwise_cost_kwargs
 
@@ -280,19 +319,18 @@ def _add_shifted_iou_metadata(
     rows: list[dict[str, Any]],
     *,
     setting: ShiftedIouSetting,
-    additive_weight: float,
-    mask_cosine_weight: float,
-    shift_penalty_scale: float | None,
 ) -> None:
     for row in rows:
         row["association_cost"] = setting.cost
         row["transform_type"] = setting.transform_type
         row["weighted_masks"] = bool(setting.weighted_masks)
         row["shifted_iou_radius"] = int(setting.radius)
-        row["shifted_iou_additive_weight"] = float(additive_weight)
-        row["shifted_mask_cosine_weight"] = float(mask_cosine_weight)
+        row["shifted_iou_additive_weight"] = float(setting.additive_weight)
+        row["shifted_mask_cosine_weight"] = float(setting.mask_cosine_weight)
         row["shifted_iou_shift_penalty_weight"] = float(setting.shift_penalty_weight)
-        row["shifted_iou_shift_penalty_scale"] = "" if shift_penalty_scale is None else float(shift_penalty_scale)
+        row["shifted_iou_shift_penalty_scale"] = (
+            "" if setting.shift_penalty_scale is None else float(setting.shift_penalty_scale)
+        )
         if setting.sweep_count > 1:
             row["sweep_index"] = int(setting.sweep_index)
             row["sweep_count"] = int(setting.sweep_count)
@@ -305,10 +343,25 @@ def _sweep_settings(args: Any, base_config: Track2pBenchmarkConfig) -> tuple[Shi
         default=(int(args.shifted_iou_radius),),
         name="--shifted-iou-radii",
     )
+    additive_weights = _parse_nonnegative_float_values(
+        args.shifted_iou_additive_weights,
+        default=(float(args.shifted_iou_additive_weight),),
+        name="--shifted-iou-additive-weights",
+    )
+    mask_cosine_weights = _parse_nonnegative_float_values(
+        args.shifted_mask_cosine_weights,
+        default=(float(args.shifted_mask_cosine_weight),),
+        name="--shifted-mask-cosine-weights",
+    )
     shift_penalty_weights = _parse_nonnegative_float_values(
         args.shifted_iou_shift_penalty_weights,
         default=(float(args.shifted_iou_shift_penalty_weight),),
         name="--shifted-iou-shift-penalty-weights",
+    )
+    shift_penalty_scales = _parse_positive_float_or_none_values(
+        args.shifted_iou_shift_penalty_scales,
+        default=(args.shifted_iou_shift_penalty_scale,),
+        name="--shifted-iou-shift-penalty-scales",
     )
     transform_types = _parse_string_values(
         args.transform_types,
@@ -321,19 +374,42 @@ def _sweep_settings(args: Any, base_config: Track2pBenchmarkConfig) -> tuple[Shi
         name="--weighted-mask-states",
     )
 
-    raw_settings = list(product(costs, radii, shift_penalty_weights, transform_types, weighted_mask_states))
+    raw_settings = list(
+        product(
+            costs,
+            radii,
+            additive_weights,
+            mask_cosine_weights,
+            shift_penalty_weights,
+            shift_penalty_scales,
+            transform_types,
+            weighted_mask_states,
+        )
+    )
     sweep_count = len(raw_settings)
     return tuple(
         ShiftedIouSetting(
             cost=cost,
             radius=radius,
+            additive_weight=additive_weight,
+            mask_cosine_weight=mask_cosine_weight,
             shift_penalty_weight=shift_penalty_weight,
+            shift_penalty_scale=shift_penalty_scale,
             transform_type=transform_type,
             weighted_masks=weighted_masks,
             sweep_index=index + 1,
             sweep_count=sweep_count,
         )
-        for index, (cost, radius, shift_penalty_weight, transform_type, weighted_masks) in enumerate(raw_settings)
+        for index, (
+            cost,
+            radius,
+            additive_weight,
+            mask_cosine_weight,
+            shift_penalty_weight,
+            shift_penalty_scale,
+            transform_type,
+            weighted_masks,
+        ) in enumerate(raw_settings)
     )
 
 
@@ -370,6 +446,29 @@ def _parse_nonnegative_float_values(raw: str | None, *, default: Sequence[float]
     return values
 
 
+def _parse_positive_float_or_none_values(
+    raw: str | None,
+    *,
+    default: Sequence[float | None],
+    name: str,
+) -> tuple[float | None, ...]:
+    if raw is None:
+        return tuple(default)
+    values: list[float | None] = []
+    for value in _parse_string_values(raw, default=(), name=name):
+        if value.casefold() in {"none", "null", "default"}:
+            values.append(None)
+            continue
+        try:
+            parsed = float(value)
+        except ValueError as exc:
+            raise ValueError(f"{name} must contain comma-separated numbers or none") from exc
+        if parsed <= 0.0 or not isfinite(parsed):
+            raise ValueError(f"{name} values must be strictly positive finite numbers or none")
+        values.append(parsed)
+    return tuple(values)
+
+
 def _parse_bool_values(raw: str | None, *, default: Sequence[bool], name: str) -> tuple[bool, ...]:
     if raw is None:
         return tuple(bool(value) for value in default)
@@ -383,6 +482,85 @@ def _parse_bool_values(raw: str | None, *, default: Sequence[bool], name: str) -
         else:
             raise ValueError(f"{name} values must be booleans, got {value!r}")
     return tuple(values)
+
+
+def write_shifted_iou_results(
+    rows: Sequence[dict[str, Any]], output_path: Path, output_format: str
+) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_format == "json":
+        output_path.write_text(json.dumps(list(rows), indent=2) + "\n", encoding="utf-8")
+        return
+    if output_format == "csv":
+        with output_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=_shifted_iou_fieldnames(rows))
+            writer.writeheader()
+            writer.writerows(rows)
+        return
+    output_path.write_text(format_shifted_iou_table(rows) + "\n", encoding="utf-8")
+
+
+def format_shifted_iou_table(rows: Sequence[dict[str, Any]]) -> str:
+    columns = [
+        "subject",
+        "association_cost",
+        "transform_type",
+        "weighted_masks",
+        "shifted_iou_radius",
+        "shifted_iou_shift_penalty_weight",
+        "shifted_iou_shift_penalty_scale",
+        "shifted_iou_additive_weight",
+        "shifted_mask_cosine_weight",
+        "pairwise_f1",
+        "complete_track_f1",
+        "pairwise_precision",
+        "pairwise_recall",
+    ]
+    header = "| " + " | ".join(columns) + " |"
+    separator = "| " + " | ".join(["---"] + ["---:"] * (len(columns) - 1)) + " |"
+    body = [header, separator]
+    for row in rows:
+        body.append(
+            "| "
+            + " | ".join(_format_table_value(row.get(column, "")) for column in columns)
+            + " |"
+        )
+    return "\n".join(body)
+
+
+def _shifted_iou_fieldnames(rows: Sequence[dict[str, Any]]) -> list[str]:
+    preferred = [
+        "subject",
+        "variant",
+        "method",
+        "association_cost",
+        "transform_type",
+        "weighted_masks",
+        "n_sessions",
+        "reference_source",
+        "sweep_index",
+        "sweep_count",
+        "shifted_iou_radius",
+        "shifted_iou_additive_weight",
+        "shifted_mask_cosine_weight",
+        "shifted_iou_shift_penalty_weight",
+        "shifted_iou_shift_penalty_scale",
+        "pairwise_f1",
+        "complete_track_f1",
+        "pairwise_precision",
+        "pairwise_recall",
+        "complete_tracks",
+        "mean_track_length",
+        "seed_session",
+        "reference_seed_rois",
+        "evaluated_prediction_tracks",
+        "dropped_prediction_tracks",
+        "training_examples",
+        "positive_examples",
+        "negative_examples",
+    ]
+    remaining = sorted({key for row in rows for key in row} - set(preferred))
+    return [key for key in preferred if any(key in row for row in rows)] + remaining
 
 
 def _parse_string_values(raw: str | None, *, default: Sequence[str], name: str) -> tuple[str, ...]:

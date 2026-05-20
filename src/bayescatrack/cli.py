@@ -63,6 +63,10 @@ def _handle_benchmark(args: list[str]) -> int:
             help="Sweep weak activity tie-breaker weights for Track2p global assignment",
         )
         subparsers.add_parser(
+            "track2p-mask-input-sweep",
+            help="Sweep Suite2p ROI filtering, weighted masks, and overlap-pixel handling",
+        )
+        subparsers.add_parser(
             "track2p-solver-prior-loso",
             help="Tune Track2p global-assignment solver priors inside LOSO folds",
         )
@@ -145,6 +149,12 @@ def _handle_benchmark(args: list[str]) -> int:
         )
 
         return int(_track2p_activity_tie_breaker_sweep_main(args[1:]))
+    if args[0] == "track2p-mask-input-sweep":
+        from bayescatrack.experiments.track2p_mask_input_sweep import (
+            main as _track2p_mask_input_sweep_main,
+        )
+
+        return int(_track2p_mask_input_sweep_main(args[1:]))
     if args[0] == "track2p-solver-prior-loso":
         from bayescatrack.experiments.solver_prior_tuning import (
             main as _track2p_solver_prior_loso_main,

@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import numpy as np
+from bayescatrack.association.higher_order_consistency import (
+    HigherOrderConsistencyConfig,
+)
 from bayescatrack.association.pyrecest_global_assignment import (
     AssociationCost,
     GlobalAssignmentRun,

@@ -15,6 +15,17 @@ from ._bridge_impl import (
 
 _LOCAL_EVIDENCE_INSTALLED_ATTR = "_bayescatrack_local_evidence_installed"
 
+LOCAL_EVIDENCE_ASSOCIATION_FEATURES = (
+    "weighted_dice_cost",
+    "overlap_fraction_cost",
+    "containment_asymmetry_cost",
+    "distance_transform_cost",
+    "image_patch_cost",
+    "image_patch_valid",
+    "neighbor_constellation_cost",
+    "centroid_rank_cost",
+)
+
 
 def install_local_evidence_pairwise_features(calcium_plane_cls: type[Any]) -> None:
     """Install optional local-evidence terms on ``CalciumPlaneData``.

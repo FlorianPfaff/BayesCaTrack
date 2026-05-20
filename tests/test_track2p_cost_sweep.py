@@ -15,9 +15,12 @@ from bayescatrack.experiments.track2p_cost_sweep import (
     _parse_nonnegative_values,
     _parse_positive_values,
     _parse_thresholds,
+    format_sweep_selection_table,
     format_sweep_table,
     run_track2p_cost_sweep,
+    summarize_sweep_results,
     write_sweep_results_incrementally,
+    write_sweep_selection_results,
 )
 
 
@@ -134,6 +137,85 @@ def test_track2p_cost_sweep_reuses_costs_and_varies_solver_knobs(
     assert "cost_scale" in table
     assert "start_cost" in table
     assert "cost_threshold_admitted_fraction" in table
+
+
+def test_cost_sweep_selection_summary_prefers_complete_track_f1():
+    rows = [
+        {
+            "subject": "jm001",
+            "cost_scale": 0.5,
+            "cost_threshold": "none",
+            "start_cost": 5.0,
+            "end_cost": 5.0,
+            "gap_penalty": 1.0,
+            "pairwise_f1": 0.95,
+            "complete_track_f1": 0.40,
+        },
+        {
+            "subject": "jm002",
+            "cost_scale": 0.5,
+            "cost_threshold": "none",
+            "start_cost": 5.0,
+            "end_cost": 5.0,
+            "gap_penalty": 1.0,
+            "pairwise_f1": 0.95,
+            "complete_track_f1": 0.50,
+        },
+        {
+            "subject": "jm001",
+            "cost_scale": 2.0,
+            "cost_threshold": "none",
+            "start_cost": 5.0,
+            "end_cost": 5.0,
+            "gap_penalty": 1.0,
+            "pairwise_f1": 0.70,
+            "complete_track_f1": 0.80,
+        },
+        {
+            "subject": "jm002",
+            "cost_scale": 2.0,
+            "cost_threshold": "none",
+            "start_cost": 5.0,
+            "end_cost": 5.0,
+            "gap_penalty": 1.0,
+            "pairwise_f1": 0.65,
+            "complete_track_f1": 0.90,
+        },
+    ]
+
+    selection = summarize_sweep_results(rows)
+
+    assert [row["cost_scale"] for row in selection] == [2.0, 0.5]
+    assert [row["selection_rank"] for row in selection] == [1, 2]
+    assert selection[0]["selection_metric"] == "complete_track_f1"
+    assert selection[0]["selection_metric_mean"] == pytest.approx(0.85)
+    assert selection[1]["pairwise_f1_mean"] == pytest.approx(0.95)
+    table = format_sweep_selection_table(selection)
+    assert "selection_rank" in table
+    assert "complete_track_f1" in table
+
+
+def test_write_sweep_selection_results_writes_csv(tmp_path):
+    selection = summarize_sweep_results(
+        [
+            {
+                "subject": "jm001",
+                "cost_scale": 1.0,
+                "cost_threshold": 4.0,
+                "start_cost": 5.0,
+                "end_cost": 5.0,
+                "gap_penalty": 1.0,
+                "complete_track_f1": 0.75,
+            }
+        ]
+    )
+    output = tmp_path / "selection.csv"
+
+    write_sweep_selection_results(selection, output, "csv")
+
+    parsed_rows = list(csv.DictReader(output.open(newline="", encoding="utf-8")))
+    assert parsed_rows[0]["selection_rank"] == "1"
+    assert parsed_rows[0]["selection_metric"] == "complete_track_f1"
 
 
 def test_track2p_cost_sweep_varies_start_end_and_gap(

@@ -25,6 +25,12 @@ from bayescatrack.association.shifted_overlap import (
     install_shifted_overlap_cost_patch,
     pairwise_kwargs_use_shifted_overlap,
 )
+from bayescatrack.core._local_evidence import (
+    LOCAL_EVIDENCE_ASSOCIATION_FEATURES as _LOCAL_EVIDENCE_ASSOCIATION_FEATURES,
+)
+from bayescatrack.core._roi_stat_features import (
+    SPLIT_ROI_STAT_FEATURES as _SPLIT_ROI_STAT_FEATURES,
+)
 from bayescatrack.core.bridge import (
     CalciumPlaneData,
     SessionAssociationBundle,
@@ -66,6 +72,14 @@ _ACTIVITY_FEATURES = {
     "trace_std_available",
 }
 
+SPLIT_ROI_STAT_FEATURES: tuple[str, ...] = _SPLIT_ROI_STAT_FEATURES
+LOCAL_EVIDENCE_ASSOCIATION_FEATURES: tuple[str, ...] = (
+    _LOCAL_EVIDENCE_ASSOCIATION_FEATURES
+)
+_OPTIONAL_ZERO_FEATURES = frozenset(
+    (*_ACTIVITY_FEATURES, *LOCAL_EVIDENCE_ASSOCIATION_FEATURES)
+)
+
 DEFAULT_ASSOCIATION_FEATURES = (
     "centroid_distance",
     "mahalanobis_centroid_distance",
@@ -74,24 +88,11 @@ DEFAULT_ASSOCIATION_FEATURES = (
     "area_ratio_cost",
     "covariance_shape_cost",
     "covariance_logdet_cost",
-    "roi_feature_cost",
+    *SPLIT_ROI_STAT_FEATURES,
     "cell_probability_cost",
     "activity_similarity_cost",
     "activity_similarity_available",
     "session_gap",
-)
-SPLIT_ROI_STAT_FEATURES: tuple[str, ...] = ()
-LOCAL_EVIDENCE_ASSOCIATION_FEATURES: tuple[str, ...] = (
-    "one_minus_weighted_dice",
-    "one_minus_overlap_min_fraction",
-    "weighted_dice_cost",
-    "overlap_fraction_cost",
-    "containment_asymmetry_cost",
-    "distance_transform_cost",
-    "image_patch_cost",
-    "image_patch_valid",
-    "neighbor_constellation_cost",
-    "centroid_rank_cost",
 )
 _LOCAL_EVIDENCE_DIRECT_COMPONENT_FEATURES = frozenset(
     feature_name
@@ -454,7 +455,7 @@ def _feature_transforms_for(
             transforms[feature_name] = lambda components: 1.0 - _finite_component(
                 components, "activity_similarity"
             )
-        elif feature_name in _ACTIVITY_FEATURES:
+        elif feature_name in _OPTIONAL_ZERO_FEATURES:
             transforms[feature_name] = _optional_zero_component_transform(feature_name)
         elif feature_name == "one_minus_weighted_dice":
             transforms[feature_name] = _optional_one_minus_component_transform(
@@ -503,6 +504,26 @@ def _session_gap_transform(pairwise_components: Mapping[str, Any]) -> np.ndarray
     return _finite_component(pairwise_components, "session_gap")
 
 
+def _pairwise_cost_kwargs_for_training_features(
+    pairwise_cost_kwargs: Mapping[str, Any] | None,
+    *,
+    feature_names: Sequence[str],
+) -> dict[str, Any] | None:
+    """Return cost kwargs needed to materialize the requested feature planes."""
+
+    kwargs = dict(pairwise_cost_kwargs or {})
+    if _uses_local_evidence_features(feature_names):
+        kwargs.setdefault("local_evidence_components", True)
+    return kwargs or None
+
+
+def _uses_local_evidence_features(feature_names: Sequence[str]) -> bool:
+    local_evidence_features = frozenset(LOCAL_EVIDENCE_ASSOCIATION_FEATURES)
+    return any(
+        feature_name in local_evidence_features for feature_name in feature_names
+    )
+
+
 def _build_training_bundle(
     sessions: Sequence[Track2pSession],
     session_a: int,
@@ -517,8 +538,12 @@ def _build_training_bundle(
     registered_measurement_plane, _ = replace_empty_registered_masks(
         registered_measurement_plane
     )
+    pairwise_cost_kwargs = _pairwise_cost_kwargs_for_training_features(
+        options.pairwise_cost_kwargs,
+        feature_names=options.feature_names,
+    )
     previous_pairwise_cost_method = None
-    if pairwise_kwargs_use_shifted_overlap(options.pairwise_cost_kwargs):
+    if pairwise_kwargs_use_shifted_overlap(pairwise_cost_kwargs):
         previous_pairwise_cost_method = install_shifted_overlap_cost_patch()
     try:
         bundle = build_session_pair_association_bundle(
@@ -529,7 +554,7 @@ def _build_training_bundle(
             weighted_centroids=options.weighted_centroids,
             velocity_variance=options.velocity_variance,
             regularization=options.regularization,
-            pairwise_cost_kwargs=options.pairwise_cost_kwargs,
+            pairwise_cost_kwargs=pairwise_cost_kwargs,
             return_pairwise_components=True,
         )
     finally:

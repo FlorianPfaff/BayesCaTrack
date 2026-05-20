@@ -59,7 +59,7 @@ class GlobalAssignmentRun:
 
 def registered_iou_cost_kwargs(
     *, similarity_epsilon: float = 1.0e-6
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Return cost kwargs for a Track2p-style registered IoU ablation."""
 
     return {
@@ -75,11 +75,10 @@ def registered_iou_cost_kwargs(
 
 def registered_soft_iou_cost_kwargs(
     *, similarity_epsilon: float = 1.0e-6
-) -> dict[str, float]:
-    """Return a registered-mask ablation using soft mask overlap."""
+) -> dict[str, Any]:
+    """Return cost kwargs for registered IoU using weighted mask overlap."""
     kwargs = registered_iou_cost_kwargs(similarity_epsilon=similarity_epsilon)
-    kwargs["iou_weight"] = 0.0
-    kwargs["mask_cosine_weight"] = 1.0
+    kwargs["soft_iou"] = True
     return kwargs
 
 

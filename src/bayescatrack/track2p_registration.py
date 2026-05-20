@@ -20,6 +20,7 @@ from bayescatrack.nonrigid_registration import (
 )
 
 RegistrationTransform = Literal[
+    "auto",
     "affine",
     "rigid",
     "fov-translation",
@@ -34,6 +35,7 @@ RegistrationTransform = Literal[
     "none",
 ]
 REGISTRATION_TRANSFORM_TYPES: tuple[str, ...] = (
+    "auto",
     "affine",
     "rigid",
     "fov-translation",
@@ -164,6 +166,13 @@ def register_plane_pair(
     if transform_type not in REGISTRATION_TRANSFORM_TYPES:
         valid_types = ", ".join(repr(value) for value in REGISTRATION_TRANSFORM_TYPES)
         raise ValueError(f"transform_type must be one of {valid_types}")
+    if transform_type == "auto":
+        from bayescatrack.registration_selection import select_registration_transform
+
+        return select_registration_transform(
+            reference_plane,
+            moving_plane,
+        ).registered_plane
     if transform_type == "none":
         if reference_plane.image_shape != moving_plane.image_shape:
             raise ValueError("transform_type='none' requires matching image shapes")

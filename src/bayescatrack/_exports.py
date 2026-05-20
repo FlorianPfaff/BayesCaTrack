@@ -73,6 +73,7 @@ TRACK2P_REGISTRATION_PUBLIC_NAMES = _public_names(
 
 TRACKING_PUBLIC_NAMES = _public_names(
     "SubjectTrackingResult",
+    "SubjectTrackingSolver",
     "run_registered_subject_tracking",
 )
 

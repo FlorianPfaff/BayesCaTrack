@@ -84,6 +84,10 @@ class SubjectTrackingResult:
         return int(self.track_rows.shape[0])
 
     @property
+    def solver(self) -> str:
+        return "global-assignment" if self.tracking_method == "global" else "pairwise"
+
+    @property
     def n_sessions(self) -> int:
         return int(self.track_rows.shape[1])
 
@@ -116,12 +120,16 @@ class SubjectTrackingResult:
             )
             for pair_index, match_result in enumerate(self.match_results)
         ]
+        n_pairwise_matches = int(
+            sum(summary["n_matches"] for summary in pair_summaries)
+        )
         global_session_edges: tuple[tuple[int, int], ...] = ()
         if self.global_assignment is not None:
             global_session_edges = tuple(self.global_assignment.session_edges)
 
         return {
             "tracking_method": self.tracking_method,
+            "solver": self.solver,
             "n_sessions": self.n_sessions,
             "session_names": self.session_names,
             "global_session_edges": global_session_edges,
@@ -133,9 +141,7 @@ class SubjectTrackingResult:
             "mean_track_length": _mean_or_nan(track_lengths),
             "median_track_length": _median_or_nan(track_lengths),
             "max_track_length": int(np.max(track_lengths)) if track_lengths.size else 0,
-            "n_pairwise_matches": int(
-                sum(summary["n_matches"] for summary in pair_summaries)
-            ),
+            "n_pairwise_matches": int(n_pairwise_matches),
             "mean_link_cost": _mean_or_nan(finite_link_costs),
             "median_link_cost": _median_or_nan(finite_link_costs),
             "max_link_cost": _max_or_nan(finite_link_costs),
@@ -156,6 +162,7 @@ class SubjectTrackingResult:
             "complete_track_mask": self.complete_track_mask(),
             "fill_value": np.asarray(self.fill_value, dtype=int),
             "tracking_method": np.asarray(self.tracking_method, dtype=object),
+            "solver": np.asarray(self.solver, dtype=object),
             "scores": self.score_summary(),
         }
 

@@ -216,6 +216,7 @@ class CalciumPlaneData:
         cell_probability_weight: float = 0.0,
         large_cost: float = 1.0e6,
         similarity_epsilon: float = 1.0e-6,
+        soft_iou: bool = False,
         return_components: bool = False,
     ) -> (
         np.ndarray | tuple[np.ndarray, dict[str, np.ndarray]]
@@ -242,6 +243,9 @@ class CalciumPlaneData:
         centroid_scale
             Characteristic spatial scale in pixels. If omitted, it is estimated
             from the pooled ROI areas as an equivalent-cell diameter.
+        soft_iou
+            If true, compute IoU from non-negative mask weights using
+            ``sum(min(mask_a, mask_b)) / sum(max(mask_a, mask_b))``.
         max_centroid_distance
             Optional hard gate in pixels. Pairs beyond the threshold are set to
             ``large_cost``.
@@ -297,7 +301,10 @@ class CalciumPlaneData:
             centroid_cost = zero_cost
 
         if iou_weight > 0.0 or return_components:
-            iou_matrix = _pairwise_iou_matrix(self.roi_masks, other.roi_masks)
+            if soft_iou:
+                iou_matrix = _pairwise_soft_iou_matrix(self.roi_masks, other.roi_masks)
+            else:
+                iou_matrix = _pairwise_iou_matrix(self.roi_masks, other.roi_masks)
             iou_cost = -np.log(np.clip(iou_matrix, similarity_epsilon, 1.0))
             if iou_weight > 0.0:
                 total_cost += iou_weight * iou_cost
@@ -1333,6 +1340,98 @@ def _pairwise_iou_matrix(
     valid = unions > 0.0
     iou[valid] = intersections[valid] / unions[valid]
     return iou
+
+
+def _pairwise_soft_iou_matrix(
+    reference_masks: np.ndarray, measurement_masks: np.ndarray
+) -> np.ndarray:
+    """Return weighted Jaccard overlap for non-negative ROI mask weights.
+
+    The binary IoU path intentionally measures support overlap. This soft variant
+    keeps Suite2p ``lam`` values meaningful when ``--weighted-masks`` is used by
+    replacing support intersections/unions with per-pixel min/max sums.
+    """
+    reference_array = _nonnegative_mask_array(reference_masks)
+    measurement_array = _nonnegative_mask_array(measurement_masks)
+    if reference_array.shape[1:] != measurement_array.shape[1:]:
+        raise ValueError("Mask stacks must have matching spatial shapes")
+    intersections = _pairwise_sparse_mask_min_sum(reference_array, measurement_array)
+    areas_reference = np.sum(reference_array, axis=(1, 2), dtype=float)
+    areas_measurement = np.sum(measurement_array, axis=(1, 2), dtype=float)
+    unions = areas_reference[:, None] + areas_measurement[None, :] - intersections
+    iou = np.zeros_like(intersections, dtype=float)
+    valid = unions > 0.0
+    iou[valid] = intersections[valid] / unions[valid]
+    return np.clip(iou, 0.0, 1.0)
+
+
+def _nonnegative_mask_array(masks: np.ndarray) -> np.ndarray:
+    mask_array = np.asarray(masks, dtype=float)
+    if mask_array.ndim != 3:
+        raise ValueError("masks must have shape (n_roi, height, width)")
+    return np.nan_to_num(
+        np.maximum(mask_array, 0.0), nan=0.0, posinf=1.0e6, neginf=0.0
+    )
+
+
+def _pairwise_sparse_mask_min_sum(
+    reference_masks: np.ndarray, measurement_masks: np.ndarray
+) -> np.ndarray:
+    reference_array = np.asarray(reference_masks, dtype=float)
+    measurement_array = np.asarray(measurement_masks, dtype=float)
+    if reference_array.shape[1:] != measurement_array.shape[1:]:
+        raise ValueError("Mask stacks must have matching spatial shapes")
+    n_reference = int(reference_array.shape[0])
+    n_measurement = int(measurement_array.shape[0])
+    result = np.zeros((n_reference, n_measurement), dtype=float)
+    if n_reference == 0 or n_measurement == 0:
+        return result
+
+    reference_flat = reference_array.reshape(n_reference, -1)
+    measurement_flat = measurement_array.reshape(n_measurement, -1)
+    reference_roi, reference_pixel = np.nonzero(reference_flat > 0.0)
+    measurement_roi, measurement_pixel = np.nonzero(measurement_flat > 0.0)
+    if reference_pixel.size == 0 or measurement_pixel.size == 0:
+        return result
+    reference_values = reference_flat[reference_roi, reference_pixel]
+    measurement_values = measurement_flat[measurement_roi, measurement_pixel]
+
+    reference_order = np.argsort(reference_pixel, kind="stable")
+    measurement_order = np.argsort(measurement_pixel, kind="stable")
+    reference_pixel = reference_pixel[reference_order]
+    reference_roi = reference_roi[reference_order]
+    reference_values = reference_values[reference_order]
+    measurement_pixel = measurement_pixel[measurement_order]
+    measurement_roi = measurement_roi[measurement_order]
+    measurement_values = measurement_values[measurement_order]
+
+    reference_index = 0
+    measurement_index = 0
+    while (
+        reference_index < reference_pixel.size
+        and measurement_index < measurement_pixel.size
+    ):
+        reference_current_pixel = reference_pixel[reference_index]
+        measurement_current_pixel = measurement_pixel[measurement_index]
+        if reference_current_pixel < measurement_current_pixel:
+            reference_index = _advance_equal_values(reference_pixel, reference_index)
+            continue
+        if measurement_current_pixel < reference_current_pixel:
+            measurement_index = _advance_equal_values(measurement_pixel, measurement_index)
+            continue
+        reference_stop = _advance_equal_values(reference_pixel, reference_index)
+        measurement_stop = _advance_equal_values(measurement_pixel, measurement_index)
+        reference_slice = slice(reference_index, reference_stop)
+        measurement_slice = slice(measurement_index, measurement_stop)
+        result[
+            np.ix_(reference_roi[reference_slice], measurement_roi[measurement_slice])
+        ] += np.minimum(
+            reference_values[reference_slice, None],
+            measurement_values[measurement_slice][None, :],
+        )
+        reference_index = reference_stop
+        measurement_index = measurement_stop
+    return result
 
 
 def _pairwise_sparse_mask_dot(
